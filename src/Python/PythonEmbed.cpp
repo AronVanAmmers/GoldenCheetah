@@ -195,6 +195,8 @@ bool PythonEmbed::pythonInstalled(QString &pybin, QString &pypath, QString PYTHO
     return false;
 }
 
+bool PythonEmbed::showErrorDialogs = true;
+
 PythonEmbed::PythonEmbed(const bool verbose, const bool interactive) : verbose(verbose), interactive(interactive)
 {
     loaded = false;
@@ -336,6 +338,10 @@ PythonEmbed::PythonEmbed(const bool verbose, const bool interactive) : verbose(v
     // Notify user of the problem (they can disable Python in preferences if they don't want to see this)
     // Note: We don't permanently disable Python here - the user might fix the issue (install Python,
     // fix PYTHONHOME, etc.) and we should try again on next startup.
+    if (!showErrorDialogs) {
+        loaded=false;
+        return;
+    }
     QMessageBox msg(QMessageBox::Warning, QObject::tr("Python not available"),
                     QObject::tr("GoldenCheetah was built with Python 3.%1 but could not initialize Python.\n\n"
                                 "Please ensure Python 3.%1 is installed and in your PATH.\n"
@@ -364,6 +370,7 @@ void PythonEmbed::runline(ScriptContext scriptContext, QString line)
 
     // run and generate errors etc
     messages.clear();
+    lastRunFailed = false;
 
     if (scriptContext.interactiveShell) {
         PyObject *m, *d, *v;
@@ -372,7 +379,7 @@ void PythonEmbed::runline(ScriptContext scriptContext, QString line)
         v = PyRun_StringFlags(line.toStdString().c_str(), Py_single_input, d, d, 0);
         if (v) Py_DECREF(v);
     } else {
-        PyRun_SimpleString(line.toStdString().c_str());
+        lastRunFailed = PyRun_SimpleString(line.toStdString().c_str()) != 0;
     }
 
     PyErr_Print();

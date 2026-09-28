@@ -25,7 +25,11 @@ public:
     int run(QString source, QString scriptKey, QString &errText);
     static void execScript(FixPyRunParams *params);
 
+    // did the last run() raise an error (run() returns 0 for script errors)
+    bool failed() const { return scriptFailed; }
+
 private:
+    bool scriptFailed = false;
     Context *context;
     RideFile *rideFile;
     RideItem *rideItem;

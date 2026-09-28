@@ -34,6 +34,7 @@
 #include "ErgFile.h"
 
 #include "JsonRideFile.h" // for DATETIME_FORMAT
+#include "RideFileCommand.h"
 
 #ifdef SLOW_REFRESH
 #include "unistd.h"
@@ -439,7 +440,7 @@ RideCache::removeRide(const QString& filenameToDelete) {
     if (select) {
 
         // we don't want the whole delete, select next flicker
-        context->mainWindow->setUpdatesEnabled(false);
+        if (context->mainWindow) context->mainWindow->setUpdatesEnabled(false);
 
         // select a different ride
         context->ride = select;
@@ -448,7 +449,7 @@ RideCache::removeRide(const QString& filenameToDelete) {
         context->notifyRideDeleted(todelete);
 
         // now we can update
-        context->mainWindow->setUpdatesEnabled(true);
+        if (context->mainWindow) context->mainWindow->setUpdatesEnabled(true);
         QApplication::processEvents();
 
         // now select another ride
@@ -540,10 +541,10 @@ RideCache::removeRides
         }
 
         if (select) {
-            context->mainWindow->setUpdatesEnabled(false);
+            if (context->mainWindow) context->mainWindow->setUpdatesEnabled(false);
             context->ride = select;
             context->notifyRideDeleted(todelete);
-            context->mainWindow->setUpdatesEnabled(true);
+            if (context->mainWindow) context->mainWindow->setUpdatesEnabled(true);
             QApplication::processEvents();
             context->notifyRideSelected(select);
         } else {
@@ -730,6 +731,8 @@ RideCache::refresh()
             staleCount++;
     }
 
+    lastStaleCount_ = staleCount;
+
     // start if there is work to do
     // and future watcher can notify of updates
     if (staleCount)  {
@@ -762,7 +765,8 @@ RideCache::refresh()
 
 
         // wait five seconds, so mainwindow can get up and running...
-        QTimer::singleShot(5000, context, SLOT(notifyRefreshEnd()));
+        // (no need to wait when there is no main window)
+        QTimer::singleShot(context->isHeadless() ? 0 : 5000, context, SLOT(notifyRefreshEnd()));
     }
 }
 
@@ -1767,6 +1771,99 @@ RideCache::shiftPlannedActivities
 }
 
 
+//----------------------------------------------------------------------
+// Silently save ride and convert to GC format without warning user
+// (used by the GUI save paths and by headless sessions)
+//----------------------------------------------------------------------
+void
+RideCache::saveSilent(RideItem *rideItem)
+{
+    if (context->mainWindow) QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+    QFile   currentFile(rideItem->path + QDir::separator() + rideItem->fileName);
+    QFileInfo currentFI(currentFile);
+    QString currentType =  currentFI.completeSuffix().toUpper();
+    QFile   savedFile;
+    bool    convert;
+
+    // Do we need to convert the file type?
+    if (currentType != "JSON") convert = true;
+    else convert = false;
+
+    // Has the date/time changed?
+    QDateTime ridedatetime = rideItem->ride()->startTime();
+    QChar zero = QLatin1Char ( '0' );
+    QString targetnosuffix = QString ( "%1_%2_%3_%4_%5_%6" )
+                               .arg ( ridedatetime.date().year(), 4, 10, zero )
+                               .arg ( ridedatetime.date().month(), 2, 10, zero )
+                               .arg ( ridedatetime.date().day(), 2, 10, zero )
+                               .arg ( ridedatetime.time().hour(), 2, 10, zero )
+                               .arg ( ridedatetime.time().minute(), 2, 10, zero )
+                               .arg ( ridedatetime.time().second(), 2, 10, zero );
+
+    // if there is a notes file we need to rename it (cpi we will ignore)
+    QFile notesFile(currentFI.canonicalPath() + QDir::separator() + currentFI.baseName() + ".notes");
+    if (notesFile.exists()) notesFile.remove();
+
+    // When datetime changes we need to update
+    // the filename & rename/delete old file
+    // we also need to preserve the notes file
+    if (currentFI.baseName() != targetnosuffix) {
+
+        // rename as backup current if converting, or just delete it if its already .gc
+        // unlink previous .bak if it is already there
+        if (convert) {
+            QFile::remove(currentFile.fileName()+".bak"); // ignore errors if not there
+            currentFile.rename(currentFile.fileName(), currentFile.fileName() + ".bak");
+        } else currentFile.remove();
+        convert = false; // we just did it already!
+
+        // set the new filename & Start time everywhere
+        currentFile.setFileName(rideItem->path + QDir::separator() + targetnosuffix + ".json");
+        rideItem->setFileName(QFileInfo(currentFile).canonicalPath(), QFileInfo(currentFile).fileName());
+    }
+
+    // set target filename
+    if (convert) {
+        // rename the source
+        savedFile.setFileName(currentFI.canonicalPath() + QDir::separator() + currentFI.baseName() + ".json");
+    } else {
+        savedFile.setFileName(currentFile.fileName());
+    }
+
+    // run the data processors configured to run "on save"
+    DataProcessorFactory::instance().autoProcess(rideItem->ride(), "Save", "UPDATE");
+
+    // update the change history
+    QString log = rideItem->ride()->getTag("Change History", "");
+    log +=  tr("Changes on ");
+    log +=  QDateTime::currentDateTime().toString() + ":";
+    log += '\n' + rideItem->ride()->command->changeLog();
+    rideItem->ride()->setTag("Change History", log);
+
+    // save in GC format
+    JsonFileReader reader;
+    reader.writeRideFile(context, rideItem->ride(), savedFile);
+
+    // rename the file and update the rideItem list to reflect the change
+    if (convert) {
+
+        // rename on disk
+        QFile::remove(currentFile.fileName()+".bak"); // ignore errors if not there
+        currentFile.rename(currentFile.fileName(), currentFile.fileName() + ".bak");
+
+        // rename in memory
+        rideItem->setFileName(QFileInfo(savedFile).canonicalPath(), QFileInfo(savedFile).fileName());
+    }
+
+
+    // mark clean as we have now saved the data
+    rideItem->ride()->emitSaved();
+
+    // model estimates (lazy refresh)
+    estimator->refresh();
+    if (context->mainWindow) QGuiApplication::restoreOverrideCursor();
+}
+
 bool
 RideCache::saveActivity
 (RideItem *item, QString &error)
@@ -1777,7 +1874,7 @@ RideCache::saveActivity
         return false;
     }
     if (item->isDirty()) {
-        context->mainWindow->saveSilent(context, item);
+        saveSilent(item);
         item->setDirty(false);
         emit itemSaved(item);
     }
