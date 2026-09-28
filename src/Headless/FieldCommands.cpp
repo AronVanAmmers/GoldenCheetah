@@ -110,18 +110,11 @@ fieldJson(const FieldDefinition &f)
 }
 
 static CommandResult
-rootWritable(const CommandEnvironment &env)
+listFields(CommandEnvironment &env, const CommandRequest &request)
 {
-    QString who = athletesInUse(env.home);
-    if (!who.isEmpty())
-        return CommandResult::failure(Status::Locked,
-                    QString("%1; settings shared by all athletes can't be changed while GoldenCheetah is using them").arg(who));
-    return CommandResult::success();
-}
+    CommandResult home = requireHome(env);
+    if (!home.ok()) return home;
 
-static CommandResult
-listFields(CommandEnvironment &, const CommandRequest &request)
-{
     MetadataConfig config;
     config.read();
 
@@ -140,7 +133,7 @@ listFields(CommandEnvironment &, const CommandRequest &request)
 static CommandResult
 addFields(CommandEnvironment &env, const CommandRequest &request)
 {
-    CommandResult writable = rootWritable(env);
+    CommandResult writable = sharedSettingsWritable(env);
     if (!writable.ok()) return writable;
 
     GcFieldType type = typeFromName(request.args.value("type").toString());
@@ -220,7 +213,7 @@ addFields(CommandEnvironment &env, const CommandRequest &request)
 static CommandResult
 removeFields(CommandEnvironment &env, const CommandRequest &request)
 {
-    CommandResult writable = rootWritable(env);
+    CommandResult writable = sharedSettingsWritable(env);
     if (!writable.ok()) return writable;
 
     MetadataConfig config;

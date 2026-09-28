@@ -38,6 +38,8 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QUrl>
+#include <memory>
 #include <csignal>
 #include <cstdio>
 
@@ -93,6 +95,7 @@ reason(int status)
     case 207: return "Multi-Status";
     case 400: return "Bad Request";
     case 401: return "Unauthorized";
+    case 403: return "Forbidden";
     case 404: return "Not Found";
     case 405: return "Method Not Allowed";
     case 409: return "Conflict";
@@ -125,7 +128,7 @@ RestHandler::sendError(HttpResponse &response, int status, const QString &messag
 {
     QJsonObject o;
     o.insert("ok", false);
-    o.insert("status", status == 404 ? "not_found" : status == 401 ? "unauthorized" : "usage");
+    o.insert("status", status == 404 ? "not_found" : status == 401 ? "unauthorized" : status == 403 ? "forbidden" : "usage");
     o.insert("error", message);
     sendJson(response, status, o);
 }
@@ -138,6 +141,26 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
     QString method = QString::fromLatin1(request.getMethod()).toUpper();
     QString path = QString::fromUtf8(request.getPath());
     while (path.length() > 1 && path.endsWith("/")) path.chop(1);
+
+    // only for this machine's own clients, not for web pages it happens to
+    // be browsing: a page on another site may not call the API (its
+    // requests carry an Origin), and the Host must be us (DNS rebinding)
+    QString origin = QString::fromUtf8(request.getHeader("Origin"));
+    QString host = QString::fromUtf8(request.getHeader("Host")).toLower();
+    QStringList selves;
+    for (const QString &name : { QString("127.0.0.1"), QString("localhost"), QString("[::1]"), options.host.toLower() })
+        selves << QString("%1:%2").arg(name).arg(options.port);
+    bool anyHost = options.host == "0.0.0.0" || options.host == "::";
+    if (!origin.isEmpty() && !selves.contains(QUrl(origin).authority().toLower())) {
+        sendError(response, 403, "requests from web pages on other sites are not allowed");
+        log(method, path, 403, timer.elapsed());
+        return;
+    }
+    if (!anyHost && !host.isEmpty() && !selves.contains(host)) {
+        sendError(response, 403, QString("unexpected Host '%1'").arg(host));
+        log(method, path, 403, timer.elapsed());
+        return;
+    }
 
     // authentication
     if (!options.token.isEmpty()) {
@@ -167,8 +190,15 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
 
     // uploaded files become paths in a temporary folder that lives until
     // the command is done
-    QTemporaryDir uploads;
+    // created when the first file arrives
     QJsonArray uploadedPaths;
+    std::unique_ptr<QTemporaryDir> uploadDir;
+    auto uploadFolder = [&]() -> QString {
+        if (!uploadDir) uploadDir.reset(new QTemporaryDir());
+        QString folder = uploadDir->filePath(QString::number(uploadedPaths.count() + 1));
+        QDir().mkpath(folder);
+        return folder;
+    };
     QMultiMap<QString, QString> query;
     QMultiMap<QByteArray, QByteArray> params = request.getParameterMap();
     for (auto it = params.constBegin(); it != params.constEnd(); ++it) {
@@ -178,9 +208,7 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
             if (name.isEmpty()) name = QString("upload-%1").arg(uploadedPaths.count() + 1);
             // keep the original name: the import takes the start time from
             // file names like 2024_01_31_10_00_00.fit, as the GUI does
-            QString folder = uploads.filePath(QString::number(uploadedPaths.count() + 1));
-            QDir().mkpath(folder);
-            QString target = QDir(folder).filePath(name);
+            QString target = QDir(uploadFolder()).filePath(name);
             file->seek(0);
             QFile out(target);
             if (out.open(QFile::WriteOnly)) {
@@ -196,9 +224,16 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
     QByteArray body = request.getBody();
     QByteArray contentType = request.getHeader("Content-Type").toLower();
     bool formLike = contentType.isEmpty() || contentType.startsWith("application/x-www-form-urlencoded");
-    bool looksJson = contentType.contains("json") || body.trimmed().startsWith("{");
+    bool looksJson = contentType.startsWith("application/json");
     bool rawUpload = !looksJson && !body.isEmpty() && !contentType.contains("multipart")
                      && (!formLike || query.contains("filename") || !request.getHeader("X-Filename").isEmpty());
+
+    // curl -d '{...}' sends form data: say what to do rather than guessing
+    if (formLike && !rawUpload && body.trimmed().startsWith("{")) {
+        sendError(response, 400, "send JSON with 'Content-Type: application/json'");
+        log(method, path, 400, timer.elapsed());
+        return;
+    }
 
     // curl -d and --data-binary send x-www-form-urlencoded by default, and the
     // http library then reads the body as form parameters too: undo that when
@@ -225,9 +260,7 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
             return;
         }
         query.remove("filename");
-        QString folder = uploads.filePath(QString::number(uploadedPaths.count() + 1));
-        QDir().mkpath(folder);
-        QString target = QDir(folder).filePath(name);
+        QString target = QDir(uploadFolder()).filePath(name);
         QFile out(target);
         if (out.open(QFile::WriteOnly)) {
             out.write(body);
@@ -276,8 +309,8 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
     }
 
     // report uploads by the name the client sent, not our temporary path
-    if (!uploadedPaths.isEmpty() && result.data.value("files").isArray()) {
-        QString prefix = QDir(uploads.path()).absolutePath() + "/";
+    if (uploadDir && result.data.value("files").isArray()) {
+        QString prefix = QDir(uploadDir->path()).absolutePath() + "/";
         QJsonArray files = result.data.value("files").toArray();
         for (int i = 0; i < files.count(); i++) {
             QJsonObject f = files.at(i).toObject();
@@ -304,6 +337,13 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
 int
 RestServer::run(const Options &options)
 {
+    // anyone on the network could run commands, including Python
+    bool loopback = options.host == "127.0.0.1" || options.host == "localhost" || options.host == "::1";
+    if (!loopback && options.token.isEmpty()) {
+        fprintf(stderr, "error: listening on %s needs a token (--token or GC_API_TOKEN)\n", options.host.toLocal8Bit().constData());
+        return int(Status::Usage);
+    }
+
     // the listener reads its configuration from QSettings
     QTemporaryDir config;
     QSettings *settings = new QSettings(config.filePath("httpserver.ini"), QSettings::IniFormat);

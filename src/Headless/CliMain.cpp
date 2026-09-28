@@ -159,6 +159,7 @@ cliMain(int argc, char **argv)
     HeadlessApp::Options appOptions;
     appOptions.python = !g.noPython;
     appOptions.verbose = g.verbose;
+    HeadlessApp::setOptions(appOptions);
     if (QFileInfo(home).isDir()) {
         QString error;
         if (!HeadlessApp::initialise(home, appOptions, error)) {

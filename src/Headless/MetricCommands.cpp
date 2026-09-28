@@ -41,13 +41,6 @@
 
 namespace Headless {
 
-static QJsonValue
-num(double v)
-{
-    if (std::isnan(v) || std::isinf(v)) return QJsonValue();
-    return QJsonValue(QString::number(v, 'g', 10).toDouble());
-}
-
 //
 // MetricData.h
 //
@@ -195,16 +188,13 @@ aggregateMetrics(CommandEnvironment &env, const CommandRequest &request)
 
     bool metricUnits = !request.args.value("imperial").toBool(false);
     QJsonObject values;
-    for (const QJsonValue &v : request.args.value("metric").toArray()) {
-        for (QString symbol : v.toString().split(",", Qt::SkipEmptyParts)) {
-            symbol = symbol.trimmed();
-            if (!RideMetricFactory::instance().haveMetric(symbol))
-                return CommandResult::failure(Status::Usage, QString("unknown metric '%1', see 'metric list'").arg(symbol));
-            QString value = env.session->rideCache()->getAggregate(symbol, spec, metricUnits, true);
-            bool ok = false;
-            double d = value.toDouble(&ok);
-            values.insert(symbol, ok ? num(d) : QJsonValue(value));
-        }
+    for (const QString &symbol : splitList(request.args.value("metric"))) {
+        if (!RideMetricFactory::instance().haveMetric(symbol))
+            return CommandResult::failure(Status::Usage, QString("unknown metric '%1', see 'metric list'").arg(symbol));
+        QString value = env.session->rideCache()->getAggregate(symbol, spec, metricUnits, true);
+        bool ok = false;
+        double d = value.toDouble(&ok);
+        values.insert(symbol, ok ? jsonNumber(d) : QJsonValue(value));
     }
     QJsonObject data;
     data.insert("activities", items.count());
@@ -233,11 +223,11 @@ pmcCommand(CommandEnvironment &env, const CommandRequest &request)
             if (d < pmc->start() || d > pmc->end()) continue;
             QJsonObject o;
             o.insert("date", d.toString(Qt::ISODate));
-            o.insert("stress", num(pmc->stress(d)));
-            o.insert("ctl", num(pmc->lts(d)));
-            o.insert("atl", num(pmc->sts(d)));
-            o.insert("tsb", num(pmc->sb(d)));
-            o.insert("rr", num(pmc->rr(d)));
+            o.insert("stress", jsonNumber(pmc->stress(d)));
+            o.insert("ctl", jsonNumber(pmc->lts(d)));
+            o.insert("atl", jsonNumber(pmc->sts(d)));
+            o.insert("tsb", jsonNumber(pmc->sb(d)));
+            o.insert("rr", jsonNumber(pmc->rr(d)));
             days.append(o);
         }
     }
@@ -276,7 +266,7 @@ meanMaxCommand(CommandEnvironment &env, const CommandRequest &request)
         if (data[secs] <= 0) continue;
         QJsonObject o;
         o.insert("secs", secs);
-        o.insert("value", num(data[secs]));
+        o.insert("value", jsonNumber(data[secs]));
         points.append(o);
     }
     QJsonObject out;
@@ -304,10 +294,10 @@ cpCommand(CommandEnvironment &env, const CommandRequest &request)
     out.insert("model", model->name());
     out.insert("code", model->code());
     out.insert("activities", count);
-    if (model->hasCP()) out.insert("cp", num(model->CP()));
-    if (model->hasWPrime()) out.insert("wprime", num(model->WPrime()));
-    if (model->hasPMax()) out.insert("pmax", num(model->PMax()));
-    if (model->hasFTP()) out.insert("ftp", num(model->FTP()));
+    if (model->hasCP()) out.insert("cp", jsonNumber(model->CP()));
+    if (model->hasWPrime()) out.insert("wprime", jsonNumber(model->WPrime()));
+    if (model->hasPMax()) out.insert("pmax", jsonNumber(model->PMax()));
+    if (model->hasFTP()) out.insert("ftp", jsonNumber(model->FTP()));
     out.insert("summary", model->fitsummary.trimmed());
     return CommandResult::success(out);
 }
@@ -334,10 +324,10 @@ estimatesCommand(CommandEnvironment &env, const CommandRequest &request)
         o.insert("to", e.to.toString(Qt::ISODate));
         o.insert("model", e.model);
         o.insert("sport", e.sport);
-        o.insert("cp", num(e.CP));
-        o.insert("wprime", num(e.WPrime));
-        o.insert("pmax", num(e.PMax));
-        o.insert("ftp", num(e.FTP));
+        o.insert("cp", jsonNumber(e.CP));
+        o.insert("wprime", jsonNumber(e.WPrime));
+        o.insert("pmax", jsonNumber(e.PMax));
+        o.insert("ftp", jsonNumber(e.FTP));
         list.append(o);
     }
     QJsonObject data;

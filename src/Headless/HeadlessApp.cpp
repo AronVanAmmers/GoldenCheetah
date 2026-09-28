@@ -46,6 +46,7 @@ extern QApplication *application;
 namespace Headless {
 
 static bool initialised = false;
+static HeadlessApp::Options lastOptions;
 static bool verboseMessages = false;
 static QString rootFolder;
 
@@ -82,6 +83,9 @@ HeadlessApp::createApplication(int &argc, char **argv)
 #endif
 
     qInstallMessageHandler(messageHandler);
+
+    // from here on nothing may wait for a user to click a dialog away
+    GlobalContext::setHeadless(true);
 
     // widgets are still needed: metadata and charts are QWidgets
     application = new QApplication(argc, argv);
@@ -138,10 +142,23 @@ HeadlessApp::home()
     return rootFolder;
 }
 
+void
+HeadlessApp::setOptions(const Options &options)
+{
+    lastOptions = options;
+    verboseMessages = options.verbose;
+}
+
+bool
+HeadlessApp::initialise(const QString &home, QString &error)
+{
+    return initialise(home, lastOptions, error);
+}
+
 bool
 HeadlessApp::initialise(const QString &home, const Options &options, QString &error)
 {
-    verboseMessages = options.verbose;
+    setOptions(options);
 
     QFileInfo info(home);
     if (!info.exists() || !info.isDir()) {

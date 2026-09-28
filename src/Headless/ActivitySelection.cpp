@@ -183,12 +183,21 @@ activityStart(RideItem *item)
     return item->dateTime.toLocalTime().toString("yyyy-MM-ddTHH:mm:ss");
 }
 
-static QJsonValue
-number(double v)
+QJsonValue
+jsonNumber(double v)
 {
     if (std::isnan(v) || std::isinf(v)) return QJsonValue();
-    // avoid 12.300000000001 noise in output
     return QJsonValue(QString::number(v, 'g', 12).toDouble());
+}
+
+QStringList
+splitList(const QJsonValue &v)
+{
+    QJsonArray values = v.isArray() ? v.toArray() : (v.isString() ? QJsonArray{ v } : QJsonArray());
+    QStringList list;
+    for (const QJsonValue &x : values)
+        for (const QString &part : x.toString().split(",", Qt::SkipEmptyParts)) list << part.trimmed();
+    return list;
 }
 
 QJsonObject
@@ -200,8 +209,8 @@ activitySummary(RideItem *item)
     o.insert("start", activityStart(item));
     o.insert("sport", item->sport);
     if (item->planned) o.insert("planned", true);
-    o.insert("duration", number(item->getForSymbol("workout_time")));
-    o.insert("distance", number(item->getForSymbol("total_distance")));
+    o.insert("duration", jsonNumber(item->getForSymbol("workout_time")));
+    o.insert("distance", jsonNumber(item->getForSymbol("total_distance")));
     o.insert("data", item->present);
     return o;
 }
@@ -214,7 +223,7 @@ addMetrics(QJsonObject &o, RideItem *item, const QStringList &symbols, bool metr
     const RideMetricFactory &factory = RideMetricFactory::instance();
     for (const QString &symbol : symbols) {
         if (!factory.haveMetric(symbol)) continue;
-        m.insert(symbol, number(item->getForSymbol(symbol, metricUnits)));
+        m.insert(symbol, jsonNumber(item->getForSymbol(symbol, metricUnits)));
     }
     o.insert("metrics", m);
 }

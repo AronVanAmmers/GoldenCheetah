@@ -49,6 +49,10 @@ class HeadlessApp
         // sets error when the folder can't be used
         static bool initialise(const QString &home, const Options &options, QString &error);
 
+        // the same, with the options last given (see setOptions)
+        static bool initialise(const QString &home, QString &error);
+        static void setOptions(const Options &options);
+
         static bool isInitialised();
 
         // the athletes folder GoldenCheetah would use: $GC_HOME, the configured

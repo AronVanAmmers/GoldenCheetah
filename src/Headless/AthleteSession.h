@@ -91,10 +91,22 @@ class AthleteSession
         int refreshedOnOpen_ = 0;
 };
 
+// a plain folder name, no path separators and not hidden
+bool isAthleteName(const QString &name);
+
 // settings shared by all athletes (metadata fields, python processors) live
 // in the athletes folder; returns a description of who is using an athlete
 // there, or an empty string when none is open elsewhere
 QString athletesInUse(const QString &home);
+
+class CommandEnvironment;
+
+// commands on the athletes folder: it must exist and be set up
+CommandResult requireHome(const CommandEnvironment &env);
+
+// ...and settings shared by all athletes may only change when no other
+// GoldenCheetah is using an athlete in the folder (it would overwrite them)
+CommandResult sharedSettingsWritable(const CommandEnvironment &env);
 
 // what a command handler gets to work with
 class CommandEnvironment

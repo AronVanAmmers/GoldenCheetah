@@ -36,17 +36,6 @@
 
 namespace Headless {
 
-static QStringList
-stringList(const QJsonValue &v)
-{
-    QStringList list;
-    for (const QJsonValue &x : v.toArray()) {
-        // accept "a,b,c" as well as repeated options
-        for (const QString &part : x.toString().split(",", Qt::SkipEmptyParts)) list << part.trimmed();
-    }
-    return list;
-}
-
 static CommandResult
 listActivities(CommandEnvironment &env, const CommandRequest &request)
 {
@@ -56,8 +45,8 @@ listActivities(CommandEnvironment &env, const CommandRequest &request)
     Status status;
     if (!selection.resolve(*env.session, items, error, status)) return CommandResult::failure(status, error);
 
-    QStringList metrics = stringList(request.args.value("metric"));
-    QStringList fields = stringList(request.args.value("field"));
+    QStringList metrics = splitList(request.args.value("metric"));
+    QStringList fields = splitList(request.args.value("field"));
     bool metricUnits = !request.args.value("imperial").toBool(false);
 
     for (const QString &m : metrics)
@@ -95,7 +84,7 @@ showActivity(CommandEnvironment &env, const CommandRequest &request)
         QString symbol = factory.metricName(i);
         double v = item->getForSymbol(symbol, metricUnits);
         if (std::isnan(v) || std::isinf(v) || v == 0) continue;
-        metrics.insert(symbol, QString::number(v, 'g', 12).toDouble());
+        metrics.insert(symbol, jsonNumber(v));
     }
     o.insert("metrics", metrics);
 

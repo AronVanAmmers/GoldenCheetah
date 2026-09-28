@@ -135,8 +135,7 @@ activityChart(CommandEnvironment &env, const CommandRequest &request)
     if (!ride) return CommandResult::failure(Status::Failed, "can't open the activity file");
 
     QStringList wanted;
-    for (const QJsonValue &v : request.args.value("series").toArray())
-        for (const QString &s : v.toString().split(",", Qt::SkipEmptyParts)) wanted << s.trimmed().toLower();
+    for (const QString &s : splitList(request.args.value("series"))) wanted << s.toLower();
     bool automatic = wanted.isEmpty();
     int window = request.args.value("smooth").toInt(1);
     bool byDistance = request.args.value("distance").toBool(false);
@@ -364,14 +363,14 @@ trendChart(CommandEnvironment &env, const CommandRequest &request)
     QString by = request.args.value("by").toString();
     bool average = m->type() == RideMetric::Average || m->type() == RideMetric::Peak || m->type() == RideMetric::Low;
 
-    // bucket by period start
-    QMap<QDate, QPair<double,int>> buckets;
+    // bucket by period start, by activity every activity is its own bucket
+    QMap<QDateTime, QPair<double,int>> buckets;
     for (RideItem *item : items) {
         QDate d = item->dateTime.date();
-        QDate key = d;
-        if (by == "week") key = d.addDays(1 - d.dayOfWeek());
-        else if (by == "month") key = QDate(d.year(), d.month(), 1);
-        else if (by == "year") key = QDate(d.year(), 1, 1);
+        QDateTime key = by == "activity" ? item->dateTime : QDateTime(d, QTime(0, 0));
+        if (by == "week") key = QDateTime(d.addDays(1 - d.dayOfWeek()), QTime(0, 0));
+        else if (by == "month") key = QDateTime(QDate(d.year(), d.month(), 1), QTime(0, 0));
+        else if (by == "year") key = QDateTime(QDate(d.year(), 1, 1), QTime(0, 0));
         double v = item->getForSymbol(metric);
         if (!std::isfinite(v)) continue;
         auto &b = buckets[key];
@@ -391,7 +390,8 @@ trendChart(CommandEnvironment &env, const CommandRequest &request)
         if (average && m->type() != RideMetric::Peak && it.value().second) v /= it.value().second;
         bars.x << i;
         bars.y << v;
-        QString label = by == "month" ? it.key().toString("MMM yy") : by == "year" ? it.key().toString("yyyy") : it.key().toString("d MMM");
+        QDate day = it.key().date();
+        QString label = by == "month" ? day.toString("MMM yy") : by == "year" ? day.toString("yyyy") : day.toString("d MMM yy");
         labels << label;
     }
 
