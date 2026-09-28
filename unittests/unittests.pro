@@ -12,7 +12,13 @@ equals(GC_UNITTESTS, active) {
 			   Core/utils \
 			   Core/signalSafety \
 			   Core/splineCrash \
-			   Gui/calendarData
+			   Gui/calendarData \
+			   Headless/commandRegistry \
+			   Headless/cliParser \
+			   Headless/restRouter \
+			   Headless/resultFormat \
+			   Headless/athleteLock \
+			   Headless/chartRenderer
 	CONFIG += ordered
 } else {
 	message("Unittests are disabled; to enable copy unittests/unittests.pri.in to unittests/unittests.pri")
