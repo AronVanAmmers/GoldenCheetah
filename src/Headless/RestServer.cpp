@@ -377,7 +377,7 @@ RestServer::run(const Options &options)
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);
     QTimer poll;
-    QObject::connect(&poll, &QTimer::timeout, []() { if (stopRequested) QCoreApplication::quit(); });
+    QObject::connect(&poll, &QTimer::timeout, &poll, []() { if (stopRequested) QCoreApplication::quit(); });
     poll.start(200);
 
     int ret = QCoreApplication::exec();
