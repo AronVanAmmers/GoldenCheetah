@@ -630,6 +630,7 @@ class TestRest(Headless):
                                     headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
         self.assertEqual(status, 200, data)
         self.assertEqual(json.loads(data)["data"]["files"][0]["sport"], "Run")
+        self.assertEqual(json.loads(data)["data"]["files"][0]["source"], "run.fit")
 
         # already imported: skipped
         with open(RIDE_POWER, "rb") as f:

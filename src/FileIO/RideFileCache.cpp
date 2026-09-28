@@ -892,11 +892,15 @@ RideFileCache::refreshCache()
 
         // popup the first time...
         writeerror = true;
-        QMessageBox err;
         QString errMessage = QString("Cannot create cache file %1.").arg(cacheFileName);
-        err.setText(errMessage);
-        err.setIcon(QMessageBox::Warning);
-        err.exec();
+        if (GlobalContext::isHeadless()) {
+            qWarning() << errMessage;
+        } else {
+            QMessageBox err;
+            err.setText(errMessage);
+            err.setIcon(QMessageBox::Warning);
+            err.exec();
+        }
         return;
 
     } else {

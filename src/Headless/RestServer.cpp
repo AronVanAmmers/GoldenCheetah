@@ -28,6 +28,7 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -175,7 +176,11 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
         if (file) {
             QString name = QFileInfo(QString::fromUtf8(it.value())).fileName();
             if (name.isEmpty()) name = QString("upload-%1").arg(uploadedPaths.count() + 1);
-            QString target = uploads.filePath(QString("%1-%2").arg(uploadedPaths.count() + 1).arg(name));
+            // keep the original name: the import takes the start time from
+            // file names like 2024_01_31_10_00_00.fit, as the GUI does
+            QString folder = uploads.filePath(QString::number(uploadedPaths.count() + 1));
+            QDir().mkpath(folder);
+            QString target = QDir(folder).filePath(name);
             file->seek(0);
             QFile out(target);
             if (out.open(QFile::WriteOnly)) {
@@ -220,7 +225,9 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
             return;
         }
         query.remove("filename");
-        QString target = uploads.filePath(name);
+        QString folder = uploads.filePath(QString::number(uploadedPaths.count() + 1));
+        QDir().mkpath(folder);
+        QString target = QDir(folder).filePath(name);
         QFile out(target);
         if (out.open(QFile::WriteOnly)) {
             out.write(body);
@@ -266,6 +273,19 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
     {
         QMutexLocker locker(&serial);
         QMetaObject::invokeMethod(dispatcher, [&]() { result = dispatcher->execute(cmd); }, Qt::BlockingQueuedConnection);
+    }
+
+    // report uploads by the name the client sent, not our temporary path
+    if (!uploadedPaths.isEmpty() && result.data.value("files").isArray()) {
+        QString prefix = QDir(uploads.path()).absolutePath() + "/";
+        QJsonArray files = result.data.value("files").toArray();
+        for (int i = 0; i < files.count(); i++) {
+            QJsonObject f = files.at(i).toObject();
+            QString source = f.value("source").toString();
+            if (source.startsWith(prefix)) f.insert("source", source.mid(prefix.length()).section('/', 1));
+            files[i] = f;
+        }
+        result.data.insert("files", files);
     }
 
     int status = httpStatusFor(result.status);

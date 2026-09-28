@@ -424,7 +424,8 @@ RideCache::removeRide(const QString& filenameToDelete) {
     QFile::remove(context->athlete->home->fileBackup().canonicalPath() + "/" + strNewName);
 
     if (!file.rename(context->athlete->home->fileBackup().canonicalPath() + "/" + strNewName)) {
-        QMessageBox::critical(NULL, "Rename Error", tr("Can't rename %1 to %2 in %3")
+        if (GlobalContext::isHeadless()) qWarning() << "can't move" << filenameToDelete << "to the backup folder";
+        else QMessageBox::critical(NULL, "Rename Error", tr("Can't rename %1 to %2 in %3")
             .arg(filenameToDelete).arg(strNewName).arg(context->athlete->home->fileBackup().canonicalPath()));
     }
 
@@ -527,7 +528,8 @@ RideCache::removeRides
         QString strNewName = filenameToDelete + ".bak";
         QFile::remove(context->athlete->home->fileBackup().canonicalPath() + "/" + strNewName);
         if (! file.rename(context->athlete->home->fileBackup().canonicalPath() + "/" + strNewName)) {
-            QMessageBox::critical(NULL, "Rename Error", tr("Can't rename %1 to %2 in %3")
+            if (GlobalContext::isHeadless()) qWarning() << "can't move" << filenameToDelete << "to the backup folder";
+            else QMessageBox::critical(NULL, "Rename Error", tr("Can't rename %1 to %2 in %3")
                                                           .arg(filenameToDelete)
                                                           .arg(strNewName)
                                                           .arg(context->athlete->home->fileBackup().canonicalPath()));
