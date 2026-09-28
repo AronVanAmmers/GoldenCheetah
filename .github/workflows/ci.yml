@@ -40,6 +40,8 @@ jobs:
           git log -1 >> GCversionMacOS_arm64.txt
           shasum -a 256 GoldenCheetah_v*_arm64.dmg | cut -f 1 -d ' ' >> GCversionMacOS_arm64.txt
           cat GCversionMacOS_arm64.txt
+      - name: Headless tests
+        run: python3 unittests/Headless/integration/test_headless.py -v
       - name: Upload dmg
         uses: actions/upload-artifact@v7
         with:
