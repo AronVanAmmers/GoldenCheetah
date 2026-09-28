@@ -193,7 +193,9 @@ AthleteSession::findActivity(const QString &id, QString &error) const
     }
 
     // start date and time, in local time as shown by the GUI
-    QDateTime when = QDateTime::fromString(key, Qt::ISODate);
+    // (a bare date parses as midnight, it is handled below)
+    QDateTime when;
+    if (key.contains(':')) when = QDateTime::fromString(key, Qt::ISODate);
     if (!when.isValid()) when = QDateTime::fromString(key, "yyyy-MM-dd HH:mm:ss");
     if (!when.isValid()) when = QDateTime::fromString(key, "yyyy-MM-dd HH:mm");
     if (when.isValid()) {

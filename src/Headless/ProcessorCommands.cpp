@@ -86,8 +86,13 @@ findProcessor(const QString &name)
     DataProcessorFactory &factory = DataProcessorFactory::instance();
     DataProcessor *dp = factory.getProcessor(name);
     if (dp) return dp;
-    for (DataProcessor *p : factory.getProcessors().values())
-        if (p->name().compare(name, Qt::CaseInsensitive) == 0 || p->id().compare(name, Qt::CaseInsensitive) == 0) return p;
+    // built in ids look like "::FixSpikes", accept "fixspikes" too
+    for (DataProcessor *p : factory.getProcessors().values()) {
+        QString id = p->id();
+        if (id.startsWith("::")) id = id.mid(2);
+        if (p->name().compare(name, Qt::CaseInsensitive) == 0 || id.compare(name, Qt::CaseInsensitive) == 0
+            || p->id().compare(name, Qt::CaseInsensitive) == 0) return p;
+    }
     return nullptr;
 }
 
