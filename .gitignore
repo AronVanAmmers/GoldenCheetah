@@ -86,3 +86,9 @@ _pch/
 *_yacc.h
 qrc_*.cpp
 
+unittests/Headless/athleteLock/testAthleteLock
+unittests/Headless/chartRenderer/testChartRenderer
+unittests/Headless/cliParser/testCliParser
+unittests/Headless/commandRegistry/testCommandRegistry
+unittests/Headless/restRouter/testRestRouter
+unittests/Headless/resultFormat/testResultFormat

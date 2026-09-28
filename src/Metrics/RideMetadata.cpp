@@ -1672,6 +1672,10 @@ RideMetadata::serialize(QString filename, QList<KeywordDefinition>keywordDefinit
     // open file - truncate contents
     QFile file(filename);
     if (!file.open(QFile::WriteOnly)) {
+        if (GlobalContext::isHeadless()) {
+            qWarning() << "can't write" << filename;
+            return;
+        }
         QMessageBox msgBox;
         msgBox.setIcon(QMessageBox::Critical);
         msgBox.setText(tr("Problem Saving Meta Data"));

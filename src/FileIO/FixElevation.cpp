@@ -19,6 +19,7 @@
 
 #include "DataProcessor.h"
 #include "Settings.h"
+#include "Context.h"
 #include "Units.h"
 #include "HelpWhatsThis.h"
 #include <algorithm>
@@ -183,9 +184,11 @@ FixElevation::postProcess(RideFile *ride, DataProcessorConfig *config=0, QString
     } catch (QString err) {
 
         qDebug() << "Cannot fetch elevation data: " << err;
-        QMessageBox oops(QMessageBox::Critical, tr("Fix Elevation Data not possible"),
-                         tr("The following problem occured: %1").arg(err));
-        oops.exec();
+        if (!GlobalContext::isHeadless()) {
+            QMessageBox oops(QMessageBox::Critical, tr("Fix Elevation Data not possible"),
+                             tr("The following problem occured: %1").arg(err));
+            oops.exec();
+        }
         // close LUW
         ride->command->endLUW();
         return false;
