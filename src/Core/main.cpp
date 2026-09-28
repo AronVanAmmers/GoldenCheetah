@@ -28,6 +28,7 @@
 #include "PowerProfile.h"
 #include "GcCrashDialog.h" // for versionHTML
 #include "OverviewItems.h"
+#include "CliMain.h"
 
 #include <QApplication>
 #include <QtGui>
@@ -221,6 +222,10 @@ main(int argc, char *argv[])
 {
     int ret=2; // return code from qapplication, default to error
 
+    // command line (headless) use: GoldenCheetah --cli <command> ...
+    // runs the command and exits without ever creating a window
+    if (Headless::isCliInvocation(argc, argv)) return Headless::cliMain(argc, argv);
+
 #ifdef Q_OS_WIN
     // On Windows without console, we try to attach to the parent's console
     // and redirect stderr and stdout on success, to have a more Unix-like
@@ -284,6 +289,7 @@ main(int argc, char *argv[])
             fprintf(stderr, "--version           to print detailed version information and exit\n");
 #ifdef GC_WANT_HTTP
             fprintf(stderr, "--server            to run as an API server\n");
+            fprintf(stderr, "--cli               to run commands without a window, see --cli --help\n");
 #endif
 #ifdef GC_DEBUG
             fprintf(stderr, "--debug             to turn on redirection of messages to goldencheetah.log [debug build]\n");

@@ -443,6 +443,27 @@ DEFINES += GC_WANT_HTTP
 HEADERS +=  Core/APIWebService.h
 SOURCES +=  Core/APIWebService.cpp
 
+###=====================================================
+### HEADLESS - command line and REST API over one core
+###=====================================================
+
+INCLUDEPATH += ./Headless
+
+# the core: commands, athlete sessions, charts
+HEADERS +=  Headless/AthleteLock.h Headless/HeadlessCommand.h Headless/CommandRegistry.h \
+            Headless/HeadlessApp.h Headless/AthleteSession.h Headless/ActivitySelection.h \
+            Headless/HeadlessCommands.h Headless/MetricData.h Headless/ChartRenderer.h \
+            Headless/ResultFormat.h
+SOURCES +=  Headless/AthleteLock.cpp Headless/CommandRegistry.cpp Headless/HeadlessApp.cpp \
+            Headless/AthleteSession.cpp Headless/ActivitySelection.cpp Headless/HeadlessCommands.cpp \
+            Headless/AthleteCommands.cpp Headless/ActivityCommands.cpp Headless/ImportCommands.cpp \
+            Headless/FieldCommands.cpp Headless/ProcessorCommands.cpp Headless/MetricCommands.cpp \
+            Headless/ChartCommands.cpp Headless/ChartRenderer.cpp Headless/ResultFormat.cpp
+
+# the entry points: command line and REST
+HEADERS +=  Headless/CliParser.h Headless/CliMain.h Headless/RestRouter.h Headless/RestServer.h
+SOURCES +=  Headless/CliParser.cpp Headless/CliMain.cpp Headless/RestRouter.cpp Headless/RestServer.cpp
+
 HEADERS +=  $$HTPATH/httpglobal.h \
             $$HTPATH/httplistener.h \
             $$HTPATH/httpconnectionhandler.h \
