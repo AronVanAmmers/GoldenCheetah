@@ -146,6 +146,10 @@ bool Context::isValid(Context *p) { return p != NULL &&_contexts.contains(p); }
 Context::Context(MainWindow *mainWindow): mainWindow(mainWindow)
 {
     ride = NULL;
+    tab = NULL;
+    rideNavigator = NULL;
+    athlete = NULL;
+    nav = NULL;
     workout = NULL;
     videosync = NULL;
     isfiltered = ishomefiltered = false;
