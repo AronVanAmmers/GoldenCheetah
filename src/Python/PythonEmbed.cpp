@@ -22,6 +22,7 @@
 #include "PythonEmbed.h"
 #include "Utils.h"
 #include "Settings.h"
+#include "Context.h"
 #include <stdexcept>
 
 #include <QtGlobal>
@@ -195,8 +196,6 @@ bool PythonEmbed::pythonInstalled(QString &pybin, QString &pypath, QString PYTHO
     return false;
 }
 
-bool PythonEmbed::showErrorDialogs = true;
-
 PythonEmbed::PythonEmbed(const bool verbose, const bool interactive) : verbose(verbose), interactive(interactive)
 {
     loaded = false;
@@ -272,7 +271,7 @@ PythonEmbed::PythonEmbed(const bool verbose, const bool interactive) : verbose(v
             version = QString(Py_GetVersion());
             version.replace("\n", " ");
 
-            fprintf(stderr, "Python loaded [%s]\n", version.toStdString().c_str()); fflush(stderr);
+            if (!GlobalContext::isHeadless()) { fprintf(stderr, "Python loaded [%s]\n", version.toStdString().c_str()); fflush(stderr); }
 
             // our base code - traps stdout and loads goldencheetan module
             // mapping all the bindings to a GC object.
@@ -338,7 +337,7 @@ PythonEmbed::PythonEmbed(const bool verbose, const bool interactive) : verbose(v
     // Notify user of the problem (they can disable Python in preferences if they don't want to see this)
     // Note: We don't permanently disable Python here - the user might fix the issue (install Python,
     // fix PYTHONHOME, etc.) and we should try again on next startup.
-    if (!showErrorDialogs) {
+    if (GlobalContext::isHeadless()) {
         loaded=false;
         return;
     }

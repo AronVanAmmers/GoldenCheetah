@@ -84,6 +84,10 @@ class GlobalContext : public QObject
 
         static GlobalContext *context();
 
+        // no user to answer dialogs: set by the command line and REST server
+        static bool isHeadless() { return headless_; }
+        static void setHeadless(bool x) { headless_ = x; }
+
         void notifyNamedSearchesChanged() { namedSearchesChanged(); }
         void notifyConfigChanged(qint32);
 
@@ -111,6 +115,8 @@ class GlobalContext : public QObject
         void namedSearchesChanged();
 
     private:
+        static bool headless_;
+
         // singleton pattern
         GlobalContext();
         GlobalContext(const GlobalContext&) = delete;

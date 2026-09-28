@@ -384,6 +384,8 @@ GcUpgrade::upgrade(const QDir &home)
 
         // Warn the user about upgrading layouts and data, giving the option to cancel when running
         // a previous version, this is not necessary for new users.
+        // without a user to confirm, leave upgrading old athletes to the GUI
+        if (last && GlobalContext::isHeadless()) return -1;
         if (last && QMessageBox::warning(NULL,
                                          tr("Upgrade to v3.6"),
                                          tr("We are about to upgrade your data and layouts to v3.6, please note Ride Summary chart was deprecated, and to use v3.5 again you will need to restore a backup"),
@@ -473,7 +475,8 @@ GcUpgrade::upgrade(const QDir &home)
     // or we're upgrading from a version older than 3.8.
     int numIcons = IconManager::instance().listIconFiles().count();
     bool passedDefaultIconsQuestion = appsettings->value(nullptr, GC_PASSED_DIALOG_DEFAULT_ICONS, false).toBool();
-    if (numIcons == 0 && (! passedDefaultIconsQuestion || last < VERSION38_BUILD)) {
+    // (headless: nobody to ask, the GUI asks next time it opens the athlete)
+    if (numIcons == 0 && (! passedDefaultIconsQuestion || last < VERSION38_BUILD) && ! GlobalContext::isHeadless()) {
         if (QMessageBox::question(nullptr,
                                   tr("Download Default Icons"),
                                   tr("Since version 3.8, GoldenCheetah supports icons for sports and subsports. The default icons are distributed separately. Would you like to download them now?<br><br>You can also download the icons later under <code>Preferences > Data Fields > Icons</code>."),
@@ -831,7 +834,7 @@ GcUpgrade::upgradeLate(Context *context)
 
         // show upgrade log
         upgradeLog->enableButtons();
-        upgradeLog->exec();
+        if (! GlobalContext::isHeadless()) upgradeLog->exec();
 
         // user can only select "Accept" to end with the upgrade step
         return 0;
