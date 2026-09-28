@@ -60,6 +60,16 @@ selectedFiles(AthleteSession &session, const QJsonObject &args, QList<RideItem*>
     return selection.resolve(session, items, error, status);
 }
 
+QJsonObject
+powerSelection(const QJsonObject &args)
+{
+    // power-duration bests only make sense for one sport, cycling unless
+    // activities are named or another sport is asked for
+    QJsonObject out = args;
+    if (!out.contains("sport") && out.value("activity").toArray().isEmpty()) out.insert("sport", "Bike");
+    return out;
+}
+
 static QVector<double>
 meanMaxOf(Context *context, const QList<RideItem*> &items, bool allRides, QDate from, QDate to,
           RideFile::SeriesType series)
@@ -249,7 +259,7 @@ meanMaxCommand(CommandEnvironment &env, const CommandRequest &request)
     QString error;
     Status status;
     int count = 0;
-    QVector<double> data = meanMax(*env.session, request.args, series, error, status, count);
+    QVector<double> data = meanMax(*env.session, powerSelection(request.args), series, error, status, count);
     if (!error.isEmpty()) return CommandResult::failure(status, error);
 
     // the standard durations, unless all were asked for
@@ -283,7 +293,7 @@ cpCommand(CommandEnvironment &env, const CommandRequest &request)
     QString error;
     Status status;
     int count = 0;
-    QVector<double> data = meanMax(*env.session, request.args, RideFile::watts, error, status, count);
+    QVector<double> data = meanMax(*env.session, powerSelection(request.args), RideFile::watts, error, status, count);
     if (!error.isEmpty()) return CommandResult::failure(status, error);
     if (data.count() < 2) return CommandResult::failure(Status::Failed, "no power data in the chosen activities");
 

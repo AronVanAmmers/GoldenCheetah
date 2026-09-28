@@ -190,10 +190,27 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
 
     QByteArray body = request.getBody();
     QByteArray contentType = request.getHeader("Content-Type").toLower();
+    bool formLike = contentType.isEmpty() || contentType.startsWith("application/x-www-form-urlencoded");
+    bool looksJson = contentType.contains("json") || body.trimmed().startsWith("{");
+    bool rawUpload = !looksJson && !body.isEmpty() && !contentType.contains("multipart")
+                     && (!formLike || query.contains("filename") || !request.getHeader("X-Filename").isEmpty());
+
+    // curl -d and --data-binary send x-www-form-urlencoded by default, and the
+    // http library then reads the body as form parameters too: undo that when
+    // the body is really JSON or a file
+    if (formLike && !body.isEmpty() && (looksJson || rawUpload)) {
+        for (const QByteArray &part : body.split('&')) {
+            int eq = part.indexOf('=');
+            QString name = QString::fromUtf8(HttpRequest::urlDecode(eq >= 0 ? part.left(eq).trimmed() : part));
+            QString value = QString::fromUtf8(HttpRequest::urlDecode(eq >= 0 ? part.mid(eq + 1).trimmed() : QByteArray()));
+            query.remove(name, value);
+        }
+    }
+
     QByteArray jsonBody;
-    if (contentType.contains("json") || body.trimmed().startsWith("{")) {
+    if (looksJson) {
         jsonBody = body;
-    } else if (!body.isEmpty() && !contentType.contains("multipart") && !contentType.contains("x-www-form-urlencoded")) {
+    } else if (rawUpload) {
         // a raw file upload, e.g. curl --data-binary @ride.fit '...?filename=ride.fit'
         QString name = QFileInfo(query.value("filename")).fileName();
         if (name.isEmpty()) name = QFileInfo(QString::fromUtf8(request.getHeader("X-Filename"))).fileName();
