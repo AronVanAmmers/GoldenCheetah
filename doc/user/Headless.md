@@ -59,11 +59,12 @@ Charts and exports are written to `--output FILE`, or to a file named after the 
 | Athletes | `athlete list`, `athlete create`, `athlete show`, `athlete refresh [--rebuild]` |
 | Import | `import FILE-OR-FOLDER... [--recursive] [--dry-run]`, `formats` |
 | Activities | `activity list`, `activity show`, `activity export --as tcx`, `activity set --set 'Field=value'`, `activity delete`, `activity eval --expression '...'` |
+| Intervals | `interval list ACTIVITY [--type user,effort] [--metric ...]`, `interval show ACTIVITY NUMBER-OR-NAME` |
 | Fields | `field list`, `field add NAME... --type double --tab TAB`, `field remove` |
 | Processors | `processor list`, `processor show`, `processor install NAME --file script.py`, `processor configure`, `processor remove`, `processor run NAME ...` |
 | Metrics | `metric list`, `metric aggregate`, `pmc`, `meanmax`, `cp`, `cp estimates` |
 | Zones and measures | `zones show`, `zones set`, `measures list`, `measures add` |
-| Charts | `chart activity`, `chart meanmax`, `chart pmc`, `chart zones`, `chart trend` (`--as png\|svg\|pdf`, `--width`, `--height`, `--dark`) |
+| Charts | `chart activity`, `chart meanmax`, `chart pmc`, `chart zones [--type power\|hr\|pace\|fatigue]`, `chart trend` (`--as png\|svg\|pdf`, `--width`, `--height`, `--dark`) |
 | Server | `serve` (see [REST API](#rest-api)) |
 
 ### Choosing activities
@@ -77,6 +78,25 @@ Commands that work on several activities accept the same selection options:
 - **`--from DATE --to DATE`**, **`--sport Bike`**, **`--limit N`** (the most recent N), **`--planned`**.
 
 All given criteria must match. `processor run` and `activity set` change nothing unless activities are chosen or `--all` is given.
+
+### What the activity view shows
+
+| In the GUI | On the command line |
+|---|---|
+| Date, Sport, Workout Code, Notes, RPE and other fields | `activity show` (`metadata`) |
+| Totals, Averages, Maximum, Metrics and single metric tiles | `activity show` (`metrics`, every metric with a value, keyed by symbol; see `metric list` for names and units) |
+| Power, heart rate, pace and W' balance (fatigue) zone tables | `activity show` (`zones`: name, description, low, high, time and % of the recording time, as the GUI) |
+| Form, Fitness, Fatigue and Risk | `activity show` (`pmc`: `tsb`, `ctl`, `atl`, `rr` on the day, from GOVSS for runs, SwimScore for swims and TSS otherwise; `--pmc-metric` to choose) |
+| Intervals sidebar and interval tables | `interval list` (the sidebar's metrics, or `--metric`), `interval show` (every metric) |
+| Route and data series | `activity export --as gpx`, `--as csv` or `--as json` |
+| Zone and PMC charts | `chart zones`, `chart pmc`, `chart activity` |
+
+Intervals are numbered in the order `interval list` shows them: usually the entire activity, the laps and marked intervals, then the efforts, climbs and segments GoldenCheetah found. `--type` takes `user`, `all`, `device`, `peakpower`, `peakpace`, `effort`, `route` or `climb`.
+
+```sh
+gc-cli -a Joe interval list last --type user --metric pace,average_power,average_hr,1m_peak_hr
+gc-cli -a Joe interval show last "Lap 3" --format json
+```
 
 ## Example: estimating power
 
@@ -127,6 +147,8 @@ This serves every command as JSON under `http://127.0.0.1:12022/v1` until interr
 | `GET /v1/athletes` | `athlete list` |
 | `GET /v1/athletes/Joe/activities?filter=isRun%3D0&metric=coggan_tss` | `activity list` |
 | `GET /v1/athletes/Joe/activities/last` | `activity show last` |
+| `GET /v1/athletes/Joe/activities/last/intervals?type=user` | `interval list last --type user` |
+| `GET /v1/athletes/Joe/activities/last/intervals/Lap%203` | `interval show last "Lap 3"` |
 | `POST /v1/athletes/Joe/imports` (multipart, or the raw file with `?filename=`) | `import` |
 | `POST /v1/fields` `{"name": ["EP CdA"], "type": "double"}` | `field add` |
 | `PUT /v1/processors/estimate-power` `{"file": "/path/script.py"}` | `processor install` |

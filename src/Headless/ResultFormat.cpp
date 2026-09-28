@@ -98,7 +98,7 @@ ResultFormat::table(const QJsonArray &rows)
         flat << o;
     }
 
-    static const QStringList preferred = { "id", "name", "activity", "start", "date", "status", "sport", "symbol" };
+    static const QStringList preferred = { "number", "id", "name", "type", "activity", "start", "stop", "duration", "date", "status", "sport", "symbol" };
     for (const QString &p : preferred)
         for (const QJsonObject &o : flat) if (o.contains(p) && !columns.contains(p)) { columns << p; break; }
     for (const QJsonObject &o : flat)

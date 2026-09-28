@@ -28,6 +28,7 @@ namespace Headless {
 void registerSystemCommands(CommandRegistry &registry);
 void registerAthleteCommands(CommandRegistry &registry);
 void registerActivityCommands(CommandRegistry &registry);
+void registerIntervalCommands(CommandRegistry &registry);
 void registerImportCommands(CommandRegistry &registry);
 void registerFieldCommands(CommandRegistry &registry);
 void registerProcessorCommands(CommandRegistry &registry);
