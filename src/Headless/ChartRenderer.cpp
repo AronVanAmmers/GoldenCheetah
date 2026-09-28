@@ -235,9 +235,16 @@ buildPanel(const ChartPanel &panel, const ChartSpec &spec, bool last, const Them
     case ChartPanel::Plain:
         break;
     }
-    if (panel.xAxis != ChartPanel::LogDuration && panel.xAxis != ChartPanel::Categories
-        && std::isfinite(xmin) && xmax > xmin)
+    if (panel.xAxis == ChartPanel::Duration && std::isfinite(xmin) && xmax > xmin) {
+        // round minutes rather than whatever divides the range evenly
+        static const double steps[] = { 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 3600, 7200, 10800, 21600 };
+        double step = steps[0];
+        for (double st : steps) { step = st; if ((xmax - xmin) / st <= 10) break; }
+        plot->setAxisScale(QwtAxis::XBottom, xmin, xmax, step);
+    } else if (panel.xAxis != ChartPanel::LogDuration && panel.xAxis != ChartPanel::Categories
+        && std::isfinite(xmin) && xmax > xmin) {
         plot->setAxisScale(QwtAxis::XBottom, xmin, xmax);
+    }
 
     if (std::isfinite(panel.yMin) || std::isfinite(panel.yMax)) {
         plot->updateAxes();

@@ -192,7 +192,7 @@ meanMaxChart(CommandEnvironment &env, const CommandRequest &request)
     QString error;
     Status status;
     int count = 0;
-    QVector<double> data = meanMax(*env.session, request.args, RideFile::watts, error, status, count);
+    QVector<double> data = meanMax(*env.session, powerSelection(request.args), RideFile::watts, error, status, count);
     if (!error.isEmpty()) return CommandResult::failure(status, error);
     if (data.count() < 2) return CommandResult::failure(Status::Failed, "no power data in the chosen activities");
 

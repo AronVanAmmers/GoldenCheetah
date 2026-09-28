@@ -39,6 +39,9 @@ class AthleteSession;
 bool selectedFiles(AthleteSession &session, const QJsonObject &args, QList<RideItem*> &items,
                    QString &error, Status &status);
 
+// selection args with the sport defaulted to Bike for power-duration work
+QJsonObject powerSelection(const QJsonObject &args);
+
 // mean maximal values for the chosen activities (index = seconds)
 QVector<double> meanMax(AthleteSession &session, const QJsonObject &args, RideFile::SeriesType series,
                         QString &error, Status &status, int &count);
