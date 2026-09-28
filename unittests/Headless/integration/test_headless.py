@@ -436,6 +436,27 @@ class TestLivesWithOtherTools(Headless):
             with open(ini, "w") as f:
                 f.write(text)
 
+    def test_zones_and_measures_commands(self):
+        before = self.gcj("activity", "list", self.activity, "--metric", "coggan_tss")["data"]["activities"][0]["metrics"]["coggan_tss"]
+        env = self.gcj("zones", "set", "--from", "2019-06-01", "--cp", "300", "--w", "25000")
+        self.assertEqual(env["data"]["status"], "added")
+        self.assertGreaterEqual(env["data"]["refreshed"], 1)
+        after = self.gcj("activity", "list", self.activity, "--metric", "coggan_tss")["data"]["activities"][0]["metrics"]["coggan_tss"]
+        self.assertLess(after, before)   # higher CP, lower stress
+        env = self.gcj("zones", "set", "--from", "2019-06-01", "--cp", "250")
+        self.assertEqual(env["data"]["status"], "updated")
+        self.gcj("zones", "set", "--from", "2019-06-01", expect=2)   # power needs --cp
+        env = self.gcj("zones", "set", "--type", "hr", "--from", "2019-06-01", "--lthr", "172")
+        self.assertEqual(env["data"]["hr"]["ranges"][-1]["lthr"], 172)
+
+        env = self.gcj("measures", "add", "--when", "2020-01-20", "--set", "WEIGHTKG=72.5")
+        self.assertGreaterEqual(env["data"]["refreshed"], 1)
+        rows = self.gcj("measures", "list", "--group", "Body")["data"]["measures"]
+        self.assertEqual(rows[-1]["WEIGHTKG"], 72.5)
+        self.gcj("measures", "add", "--when", "2020-01-20", "--set", "NOPE=1", expect=2)
+        self.gcj("measures", "list", "--group", "nothing", expect=3)
+        self.assertClosed()
+
     def test_refresh_rebuild(self):
         env = self.gcj("athlete", "refresh", "--rebuild")
         self.assertEqual(env["data"]["refreshed"], env["data"]["activities"])

@@ -224,8 +224,9 @@ RideCache::garbageCollect()
 void
 RideCache::initEstimates()
 {
-    // kickoff first calculation
-    if (first) {
+    // kickoff first calculation, headless sessions compute estimates only
+    // when a command asks for them rather than racing the athlete closing
+    if (first && !context->isHeadless()) {
         first = false;
         estimator->calculate();
     }
