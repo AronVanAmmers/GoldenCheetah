@@ -24,6 +24,7 @@
 #include "RideFile.h"
 
 #include <QDir>
+#include <QSysInfo>
 #include <QFileInfo>
 #include <exception>
 
@@ -121,6 +122,7 @@ versionCommand(CommandEnvironment &, const CommandRequest &)
     data.insert("metrics", RideMetricFactory::instance().metricCount());
     data.insert("qt", QString(qVersion()));
     data.insert("python", HeadlessApp::pythonAvailable());
+    data.insert("host", QSysInfo::machineHostName()); // as recorded in athlete locks
     QJsonArray formats;
     for (const QString &s : RideFileFactory::instance().suffixes()) formats.append(s);
     data.insert("import_formats", formats.count());

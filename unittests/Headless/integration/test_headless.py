@@ -434,7 +434,7 @@ class TestLivesWithOtherTools(Headless):
         try:
             lock = os.path.join(self.folder, "athlete.lock")
             with open(lock, "w") as f:
-                f.write("%d\nsleep\n%s\n" % (holder.pid, socket.gethostname()))
+                f.write("%d\nsleep\n%s\n" % (holder.pid, self.gcj("version")["data"]["host"]))
             r = self.gc("--athlete", self.athlete, "activity", "list")
             self.assertEqual(r.code, 4, r)
             self.assertIn(b"in use", r.err)

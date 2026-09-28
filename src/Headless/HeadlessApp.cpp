@@ -73,8 +73,17 @@ HeadlessApp::createApplication(int &argc, char **argv)
 {
     if (application) return;
 
-    // no display is needed or wanted, but the caller may override
-    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
+    // no display is needed or wanted, but the caller may override. Qt tries
+    // the platforms in order, a deployed app may not ship the offscreen one
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
+#if defined(Q_OS_MACOS)
+        qputenv("QT_QPA_PLATFORM", "offscreen;cocoa");
+#elif defined(Q_OS_WIN)
+        qputenv("QT_QPA_PLATFORM", "offscreen;windows");
+#else
+        qputenv("QT_QPA_PLATFORM", "offscreen;minimal;xcb;wayland");
+#endif
+    }
 
     // offscreen rendering has no fonts configured by default on some systems
     // and complains loudly, the GUI does the same unset
