@@ -466,7 +466,7 @@ DataFilter::completerList(Context *context, bool withSymbols)
     }
 
     // get sorted list of metrics and metadata fields
-    QStringList names = context->rideNavigator->logicalHeadings;
+    QStringList names = context->rideNavigator ? context->rideNavigator->logicalHeadings : QStringList();
 
     std::sort(names.begin(), names.end(), insensitiveLessThan);
 

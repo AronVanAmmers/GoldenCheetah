@@ -136,8 +136,8 @@ RideCacheModel::itemChanged(RideItem *item)
     if (row >= 0 && row <= rideCache->count()) {
         emit dataChanged(createIndex(row,0), createIndex(row,columns_-1));
     }
-    //XXX hack to get the navigator to redraw
-    context->tab->view(1)->sidebar()->update();
+    //XXX hack to get the navigator to redraw (there is none when headless)
+    if (context->tab) context->tab->view(1)->sidebar()->update();
 }
 
 void RideCacheModel::beginReset() { beginResetModel(); }
