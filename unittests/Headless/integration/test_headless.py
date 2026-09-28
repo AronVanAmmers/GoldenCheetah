@@ -22,6 +22,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -557,6 +558,61 @@ class TestActivitiesMetricsCharts(Headless):
         zones = self.gcj("zones", "show")["data"]
         self.assertEqual(zones["power"]["ranges"][0]["cp"], 250)
 
+    def test_intervals(self):
+        run = "2024_07_09_15_12_48"
+        env = self.gcj("interval", "list", run)["data"]
+        intervals = env["intervals"]
+        self.assertEqual(intervals[0]["type"], "ALL")
+        laps = [i for i in intervals if i["type"] == "USER"]
+        self.assertGreater(len(laps), 5)
+        # the intervals sidebar's metrics by default, relevant ones only
+        self.assertIn("pace", laps[0]["metrics"])
+        self.assertNotIn("pace_swim", laps[0]["metrics"])
+        self.assertAlmostEqual(laps[0]["duration"], laps[0]["stop"] - laps[0]["start"])
+
+        only = self.gcj("interval", "list", run, "--type", "user", "--metric", "average_power,1m_peak_hr")["data"]["intervals"]
+        self.assertEqual([i["name"] for i in only], [i["name"] for i in laps])
+        self.assertEqual(sorted(only[0]["metrics"]), ["1m_peak_hr", "average_power"])
+        self.gcj("interval", "list", run, "--type", "bogus", expect=2)
+        self.gcj("interval", "list", run, "--metric", "nonsense", expect=2)
+
+        # by number or by name, with every metric
+        lap = self.gcj("interval", "show", run, str(laps[1]["number"]))["data"]
+        self.assertEqual(lap["name"], laps[1]["name"])
+        self.assertGreater(len(lap["metrics"]), 50)
+        self.assertEqual(lap["metrics"]["average_power"], only[1]["metrics"]["average_power"])
+        self.assertEqual(self.gcj("interval", "show", run, laps[1]["name"].upper())["data"]["number"], laps[1]["number"])
+        self.gcj("interval", "show", run, "999", expect=3)
+        self.gcj("interval", "show", run, "no such lap", expect=3)
+
+    def test_activity_zones_and_pmc(self):
+        run = self.gcj("activity", "show", "2024_07_09_15_12_48")["data"]
+        self.assertEqual(sorted(run["zones"]), ["fatigue", "hr", "pace", "power"])
+        hr = run["zones"]["hr"]
+        self.assertEqual(hr["lthr"], 165)
+        # percentages of the recording time, as the GUI
+        self.assertAlmostEqual(sum(z["seconds"] for z in hr["zones"]), hr["total_seconds"], delta=5)
+        self.assertAlmostEqual(sum(z["percent"] for z in hr["zones"]), 100, delta=1)
+        pace = run["zones"]["pace"]
+        self.assertEqual(pace["units"], "min/km")
+        self.assertRegex(pace["zones"][1]["low"], r"^\d\d:\d\d$")
+        self.assertNotIn("high", pace["zones"][-1])  # open ended
+        self.assertEqual(run["pmc"]["metric"], "govss")
+        self.assertGreater(run["pmc"]["stress"], 0)
+        self.assertEqual(run["intervals"][0]["number"], 1)
+
+        ride = self.gcj("activity", "show", "2020_01_26_13_00_38", "--pmc-metric", "trimp_points")["data"]
+        self.assertNotIn("pace", ride["zones"])
+        self.assertEqual(ride["zones"]["power"]["cp"], 250)
+        self.assertEqual(ride["zones"]["fatigue"]["wprime"], 20000)
+        self.assertEqual(ride["pmc"]["metric"], "trimp_points")
+        self.gcj("activity", "show", "last", "--pmc-metric", "nonsense", expect=2)
+
+        zones = self.gcj("zones", "show", "--sport", "Run")["data"]
+        run_pace = [p for p in zones["pace"] if p["sport"] == "Run"][0]
+        self.assertEqual(run_pace["cv_pace"], "05:00")
+        self.assertGreater(len(run_pace["zones"]), 3)
+
     def test_charts(self):
         magic = {"png": b"\x89PNG", "svg": b"<?xml", "pdf": b"%PDF"}
         charts = [
@@ -566,6 +622,8 @@ class TestActivitiesMetricsCharts(Headless):
             ("pmc", "--from", "2019-12-01", "--to", "2024-08-01"),
             ("zones", "2020_01_26_13_00_38"),
             ("zones", "2020_01_26_13_00_38", "--type", "hr"),
+            ("zones", "2024_07_09_15_12_48", "--type", "pace"),
+            ("zones", "2020_01_26_13_00_38", "--type", "fatigue"),
             ("trend", "workout_time", "--by", "month"),
         ]
         for i, chart in enumerate(charts):
@@ -705,6 +763,11 @@ class TestRest(Headless):
         self.assertEqual(status, 200)
         self.assertEqual(ctype, "image/png")
         self.assertTrue(data.startswith(b"\x89PNG"))
+        env = self.jcall("GET", a + "/activities/last/intervals?type=user&metric=average_power")
+        lap = env["data"]["intervals"][0]
+        env = self.jcall("GET", a + "/activities/last/intervals/" + urllib.parse.quote(lap["name"]))
+        self.assertEqual(env["data"]["metrics"]["average_power"], lap["metrics"]["average_power"])
+        self.jcall("GET", a + "/activities/last/intervals/999", expect=404)
         env = self.jcall("GET", a + "/charts/pmc?envelope=1")
         self.assertGreater(env["data"]["payload_bytes"], 1000)
 

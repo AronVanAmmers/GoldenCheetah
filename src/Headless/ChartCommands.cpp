@@ -24,6 +24,7 @@
 #include "HeadlessCommands.h"
 #include "ChartRenderer.h"
 #include "MetricData.h"
+#include "ZoneData.h"
 #include "ActivitySelection.h"
 
 #include "Context.h"
@@ -299,35 +300,20 @@ zonesChart(CommandEnvironment &env, const CommandRequest &request)
     RideItem *item = env.session->findActivity(request.args.value("activity").toString(), error);
     if (!item) return CommandResult::failure(Status::NotFound, error);
 
-    bool hr = request.args.value("type").toString() == "hr";
+    QString type = request.args.value("type").toString();
+    ActivityZones zones;
+    if (!activityZones(env.session->athlete(), item, type, zones, error)) return CommandResult::failure(Status::Failed, error);
+
     QStringList names;
     ChartSeries bars;
     bars.style = ChartSeries::Bars;
     bars.name = "Time in zone";
-    bars.color = hr ? GColor(CHEARTRATE) : GColor(CPOWER);
-
-    if (hr) {
-        const HrZones *zones = env.session->athlete()->hrZones(item->sport);
-        int range = zones ? zones->whichRange(item->dateTime.date()) : -1;
-        if (range < 0) return CommandResult::failure(Status::Failed, "no heart rate zones for the activity date");
-        for (int z = 0; z < zones->numZones(range) && z < 10; z++) {
-            QString name, desc; int lo, hi; double trimp;
-            zones->zoneInfo(range, z, name, desc, lo, hi, trimp);
-            names << name;
-            bars.x << z;
-            bars.y << item->getForSymbol(QString("time_in_zone_H%1").arg(z + 1)) / 60.0;
-        }
-    } else {
-        const Zones *zones = env.session->athlete()->zones(item->sport);
-        int range = zones ? zones->whichRange(item->dateTime.date()) : -1;
-        if (range < 0) return CommandResult::failure(Status::Failed, "no power zones for the activity date");
-        for (int z = 0; z < zones->numZones(range) && z < 10; z++) {
-            QString name, desc; int lo, hi;
-            zones->zoneInfo(range, z, name, desc, lo, hi);
-            names << name;
-            bars.x << z;
-            bars.y << item->getForSymbol(QString("time_in_zone_L%1").arg(z + 1)) / 60.0;
-        }
+    bars.color = type == "hr" ? GColor(CHEARTRATE) : type == "pace" ? GColor(CSPEED)
+               : type == "fatigue" ? GColor(CWBAL) : GColor(CPOWER);
+    for (int z = 0; z < zones.rows.count(); z++) {
+        names << zones.rows[z].name;
+        bars.x << z;
+        bars.y << zones.rows[z].seconds / 60.0;
     }
 
     ChartPanel panel;
@@ -339,7 +325,7 @@ zonesChart(CommandEnvironment &env, const CommandRequest &request)
     panel.series << bars;
 
     ChartSpec spec;
-    spec.title = QString("%1 time in zone, %2").arg(hr ? "Heart rate" : "Power").arg(activityStart(item).replace("T", " "));
+    spec.title = QString("%1 time in zone, %2").arg(type == "hr" ? "Heart rate" : type == "pace" ? "Pace" : type == "fatigue" ? "W' balance" : "Power").arg(activityStart(item).replace("T", " "));
     spec.panels << panel;
 
     QJsonObject data;
@@ -465,10 +451,10 @@ registerChartCommands(CommandRegistry &registry)
 
     Command zones;
     zones.spec.name = "chart.zones";
-    zones.spec.summary = "draw time in power or heart rate zones for an activity";
+    zones.spec.summary = "draw time in power, heart rate, pace or W' balance zones for an activity";
     zones.spec.scope = Scope::Athlete;
     zones.spec.params << ParamSpec("activity", ParamType::String, "activity id, start time, date, 'first' or 'last'").req().pos();
-    zones.spec.params << ParamSpec("type", ParamType::String, "zones").def("power").oneOf({ "power", "hr" });
+    zones.spec.params << ParamSpec("type", ParamType::String, "zones").def("power").oneOf(zoneTypes());
     zones.spec.params << imageParams();
     zones.spec.httpMethod = "GET";
     zones.spec.httpPath = "/athletes/{athlete}/activities/{activity}/zones/chart";

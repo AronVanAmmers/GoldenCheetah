@@ -267,6 +267,7 @@ showZones(CommandEnvironment &env, const CommandRequest &request)
 {
     Athlete *athlete = env.session->athlete();
     QString sport = request.args.value("sport").toString();
+    bool metricUnits = !request.args.value("imperial").toBool(false);
 
     QJsonObject data;
     data.insert("sport", sport);
@@ -281,7 +282,27 @@ showZones(CommandEnvironment &env, const CommandRequest &request)
             QJsonObject range;
             range.insert("sport", swim ? "Swim" : "Run");
             range.insert("from", pz->getStartDate(r).toString(Qt::ISODate));
-            range.insert("cv", pz->getCV(r));
+            range.insert("cv", jsonNumber(pz->getCV(r)));
+            range.insert("cv_pace", pz->kphToPaceString(pz->getCV(r), metricUnits));
+            range.insert("units", pz->paceUnits(metricUnits));
+            // bounds in km/h, and as a pace the way the GUI shows them
+            QJsonArray list;
+            for (int z = 0; z < pz->numZones(r); z++) {
+                QString name, desc;
+                double low, high;
+                pz->zoneInfo(r, z, name, desc, low, high);
+                QJsonObject zone;
+                zone.insert("name", name);
+                zone.insert("description", desc);
+                zone.insert("low", jsonNumber(low));
+                zone.insert("low_pace", low > 0 ? QJsonValue(pz->kphToPaceString(low, metricUnits)) : QJsonValue());
+                if (high < INT_MAX) {
+                    zone.insert("high", jsonNumber(high));
+                    zone.insert("high_pace", pz->kphToPaceString(high, metricUnits));
+                }
+                list.append(zone);
+            }
+            range.insert("zones", list);
             pace.append(range);
         }
     }
@@ -531,6 +552,7 @@ registerAthleteCommands(CommandRegistry &registry)
     zones.spec.summary = "show power, heart rate and pace zones";
     zones.spec.scope = Scope::Athlete;
     zones.spec.params << ParamSpec("sport", ParamType::String, "sport the zones are for").def("Bike");
+    zones.spec.params << ParamSpec("imperial", ParamType::Bool, "paces per mile or 100 yards");
     zones.spec.httpMethod = "GET";
     zones.spec.httpPath = "/athletes/{athlete}/zones";
     zones.handler = showZones;

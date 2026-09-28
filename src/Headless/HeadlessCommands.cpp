@@ -40,6 +40,7 @@ commandRegistry()
         registerSystemCommands(registry);
         registerAthleteCommands(registry);
         registerActivityCommands(registry);
+        registerIntervalCommands(registry);
         registerImportCommands(registry);
         registerFieldCommands(registry);
         registerProcessorCommands(registry);

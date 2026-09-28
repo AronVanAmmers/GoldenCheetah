@@ -18,6 +18,8 @@
 
 #include "HeadlessCommands.h"
 #include "ActivitySelection.h"
+#include "MetricData.h"
+#include "ZoneData.h"
 
 #include "Context.h"
 #include "Athlete.h"
@@ -29,6 +31,7 @@
 #include "RideMetadata.h"
 #include "DataFilter.h"
 #include "CsvRideFile.h"
+#include "PMCData.h"
 
 #include <QFileInfo>
 #include <QTemporaryDir>
@@ -88,9 +91,44 @@ showActivity(CommandEnvironment &env, const CommandRequest &request)
     }
     o.insert("metrics", metrics);
 
+    // time in zones, as the overview's zone tables
+    QJsonObject zones;
+    for (const QString &type : zoneTypes()) {
+        ActivityZones z;
+        QString ignored;
+        if (!activityZones(env.session->athlete(), item, type, z, ignored)) continue;
+        // only zones for data the activity has
+        bool any = false;
+        for (const ZoneRow &r : z.rows) if (r.seconds > 0) any = true;
+        if (any) zones.insert(type, activityZonesJson(env.session->athlete(), z, metricUnits));
+    }
+    o.insert("zones", zones);
+
+    // form, fitness, fatigue and risk on the day, as the overview's PMC tile
+    // the default overview tiles use GOVSS for runs and SwimScore for swims
+    QString pmcMetric = request.args.value("pmc-metric").toString();
+    if (pmcMetric.isEmpty()) pmcMetric = item->isRun ? "govss" : item->isSwim ? "swimscore" : "coggan_tss";
+    if (!RideMetricFactory::instance().haveMetric(pmcMetric))
+        return CommandResult::failure(Status::Usage, QString("unknown metric '%1', see 'metric list'").arg(pmcMetric));
+    PMCData *pmc = pmcFor(*env.session, pmcMetric, -1, -1);
+    if (pmc) {
+        QDate day = item->dateTime.date();
+        QJsonObject p;
+        p.insert("metric", pmcMetric);
+        p.insert("stress", jsonNumber(pmc->stress(day)));
+        p.insert("ctl", jsonNumber(pmc->lts(day)));
+        p.insert("atl", jsonNumber(pmc->sts(day)));
+        p.insert("tsb", jsonNumber(pmc->sb(day)));
+        p.insert("rr", jsonNumber(pmc->rr(day)));
+        o.insert("pmc", p);
+    }
+
+    // in brief, 'interval list' and 'interval show' have their metrics
     QJsonArray intervals;
+    int number = 0;
     for (IntervalItem *i : item->intervals()) {
         QJsonObject io;
+        io.insert("number", ++number);
         io.insert("name", i->name);
         io.insert("type", RideFileInterval::typeDescription(i->type));
         io.insert("start", i->start);
@@ -323,10 +361,11 @@ registerActivityCommands(CommandRegistry &registry)
 
     Command show;
     show.spec.name = "activity.show";
-    show.spec.summary = "show an activity: metadata, metrics, intervals and data series";
+    show.spec.summary = "show an activity: metadata, metrics, zones, PMC, intervals and data series";
     show.spec.scope = Scope::Athlete;
     show.spec.params << ParamSpec("activity", ParamType::String, "activity id, start time, date, 'first' or 'last'").req().pos();
     show.spec.params << ParamSpec("imperial", ParamType::Bool, "metric values in imperial units");
+    show.spec.params << ParamSpec("pmc-metric", ParamType::String, "stress metric for the performance manager values (default: govss for runs, swimscore for swims, else coggan_tss)");
     show.spec.httpMethod = "GET";
     show.spec.httpPath = "/athletes/{athlete}/activities/{activity}";
     show.handler = showActivity;
