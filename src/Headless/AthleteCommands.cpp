@@ -71,7 +71,7 @@ static CommandResult
 createAthlete(CommandEnvironment &env, const CommandRequest &request)
 {
     QString name = request.args.value("name").toString().trimmed();
-    if (name.isEmpty() || name.contains('/') || name.contains('\\') || name.startsWith("."))
+    if (!isAthleteName(name))
         return CommandResult::failure(Status::Usage, QString("'%1' is not a valid athlete name").arg(name));
 
     // the athletes folder may not exist yet
@@ -81,7 +81,7 @@ createAthlete(CommandEnvironment &env, const CommandRequest &request)
 
     if (!HeadlessApp::isInitialised()) {
         QString error;
-        if (!HeadlessApp::initialise(env.home, HeadlessApp::Options(), error))
+        if (!HeadlessApp::initialise(env.home, error))
             return CommandResult::failure(Status::Failed, error);
     }
 

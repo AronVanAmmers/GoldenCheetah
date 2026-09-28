@@ -66,6 +66,12 @@ QJsonObject activitySummary(RideItem *item);
 void addMetrics(QJsonObject &o, RideItem *item, const QStringList &symbols, bool metricUnits = true);
 void addMetadata(QJsonObject &o, RideItem *item, const QStringList &fields);
 
+// a metric value for json: no NaN/inf, no 12.300000000001 noise
+QJsonValue jsonNumber(double v);
+
+// values of a repeated parameter, each of which may be comma separated
+QStringList splitList(const QJsonValue &v);
+
 // local time, as the GUI shows it
 QString activityStart(RideItem *item);
 

@@ -179,6 +179,26 @@ class TestBasics(Headless):
         r = self.gc("activity", "list")
         self.assertEqual(r.code, 0, r)
 
+    def test_athlete_names_are_not_paths(self):
+        for name in ("..", "../x", "/etc", ".hidden"):
+            r = self.gc("--athlete", name, "activity", "list")
+            self.assertEqual(r.code, 2, (name, r))
+        os.makedirs(os.path.join(self.home, "NotAnAthlete", "random"))
+        r = self.gc("--athlete", "NotAnAthlete", "activity", "list")
+        self.assertEqual(r.code, 3, r)
+        self.assertIn(b"not an athlete folder", r.err)
+        # and nothing was created in it
+        self.assertEqual(os.listdir(os.path.join(self.home, "NotAnAthlete")), ["random"])
+
+    def test_shared_settings_need_an_athletes_folder(self):
+        missing = os.path.join(self.tmp, "missing")
+        r = subprocess.run([BINARY, "--cli", "--home", missing, "field", "add", "Foo"], capture_output=True, env=self.env, timeout=60)
+        self.assertEqual(r.returncode, 3, r)
+        r = subprocess.run([BINARY, "--cli", "--home", missing, "processor", "install", "x", "--source", "1"],
+                           capture_output=True, env=self.env, timeout=60)
+        self.assertEqual(r.returncode, 3, r)
+        self.assertFalse(os.path.exists(missing))
+
     def test_formats(self):
         env = self.gcj("formats")
         suffixes = {f["suffix"]: f for f in env["data"]["formats"]}
@@ -348,6 +368,13 @@ class TestEstimatePowerWorkflow(Headless):
         r = self.gc("--athlete", self.athlete, "processor", "run", "estimate-power", "--filter", "isRun=(")
         self.assertEqual(r.code, 2, r)
         self.assertIn(b"bad filter", r.err)
+
+    def test_4b_script_that_changes_nothing_is_skipped(self):
+        self.gcj("processor", "install", "noop", "--source", 'print("looked")\n')
+        env = self.gcj("processor", "run", "noop", "--all")
+        self.assertEqual(env["data"]["processed"], 0)
+        self.assertEqual(env["data"]["skipped"], 3)
+        self.assertEqual(env["data"]["activities"][0]["output"], "looked")
 
     def test_5_dry_run_saves_nothing(self):
         path = os.path.join(self.folder, "activities", self.activity_files()[0])
@@ -548,6 +575,8 @@ class TestActivitiesMetricsCharts(Headless):
                 self.assertEqual(r.code, 0, (chart, r))
                 data = open(out, "rb").read()
                 self.assertTrue(data.startswith(magic[fmt]), (chart, fmt, data[:20]))
+        env = self.gcj("-o", os.path.join(self.tmp, "t.png"), "chart", "trend", "workout_time", "--by", "activity")
+        self.assertEqual(env["data"]["periods"], env["data"]["activities"])
         r = self.gc("--athlete", self.athlete, "chart", "activity", "last", "--series", "nothing")
         self.assertEqual(r.code, 5, r)
 
@@ -663,8 +692,9 @@ class TestRest(Headless):
         env = self.jcall("POST", "/fields", body={"name": EP_FIELDS, "type": "double"})
         self.assertEqual(env["data"]["added"], len(EP_FIELDS))
         env = self.jcall("GET", a + "/activities?filter=isRun%3D0&metric=average_power")
-        self.assertEqual(len(env["data"]["activities"]), 1)
-        self.assertGreater(env["data"]["activities"][0]["metrics"]["average_power"], 50)
+        rides = {x["id"]: x for x in env["data"]["activities"]}
+        self.assertTrue(all(x["sport"] != "Run" for x in rides.values()))
+        self.assertGreater(rides["2020_01_26_13_00_38"]["metrics"]["average_power"], 50)
 
         # activity, patch fields, chart as an image and as an envelope
         env = self.jcall("GET", a + "/activities/last")
@@ -680,8 +710,8 @@ class TestRest(Headless):
 
         # generic command route
         env = self.jcall("POST", "/commands/metric.aggregate",
-                         body={"athlete": self.athlete, "args": {"metric": ["workout_time"]}})
-        self.assertEqual(env["data"]["activities"], 2)
+                         body={"athlete": self.athlete, "args": {"metric": ["workout_time"], "sport": "Run"}})
+        self.assertEqual(env["data"]["activities"], 1)
 
         # processor run over http
         env = self.jcall("POST", a + "/processors/fixspikes/runs", body={"all": True})
@@ -696,6 +726,35 @@ class TestRest(Headless):
         self.assertEqual(status, 405)
         self.jcall("POST", "/athletes/%s/imports" % self.athlete, raw=b"xx",
                    headers={"Content-Type": "application/octet-stream"}, expect=400)
+
+    def test_cross_site_requests_are_refused(self):
+        status, _, _ = self.call("GET", "/athletes", headers={"Origin": "http://evil.example"})
+        self.assertEqual(status, 403)
+        status, _, _ = self.call("GET", "/athletes", headers={"Origin": "http://127.0.0.1:%d" % self.port})
+        self.assertEqual(status, 200)
+        status, _, _ = self.call("GET", "/athletes", headers={"Host": "rebound.example:%d" % self.port})
+        self.assertEqual(status, 403)
+        # a JSON body must say so, a text/plain or form post is not JSON
+        status, _, data = self.call("POST", "/commands/processor.install", raw=b'{"args":{"name":"x","source":"1"}}',
+                                    headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(status, 400)
+        self.assertIn(b"application/json", data)
+        status, _, _ = self.call("POST", "/commands/processor.install", raw=b'{"args":{"name":"x","source":"1"}}',
+                                 headers={"Content-Type": "text/plain"})
+        self.assertNotEqual(status, 200)
+
+    def test_raw_upload_of_a_json_activity(self):
+        with open(os.path.join(TESTDATA, "rides", "2013_05_27_08_56_35.json"), "rb") as f:
+            status, _, data = self.call("POST", "/athletes/%s/imports?filename=ride.json" % self.athlete, raw=f.read(),
+                                        headers={"Content-Type": "application/octet-stream"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(json.loads(data)["data"]["files"][0]["status"], "imported")
+
+    def test_network_listening_needs_a_token(self):
+        r = subprocess.run([BINARY, "--cli", "--home", self.home, "serve", "--host", "0.0.0.0", "--port", str(free_port())],
+                           capture_output=True, timeout=60, env=self.env)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn(b"needs a token", r.stderr)
 
     def test_athlete_is_closed_between_requests(self):
         self.jcall("GET", "/athletes/%s" % self.athlete)

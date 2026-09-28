@@ -35,15 +35,35 @@
 
 namespace Headless {
 
+bool
+isAthleteName(const QString &name)
+{
+    if (name.isEmpty() || name.startsWith(".")) return false;
+    if (name.contains('/') || name.contains('\\') || name.contains(':')) return false;
+    return QFileInfo(name).fileName() == name;
+}
+
 std::unique_ptr<AthleteSession>
 AthleteSession::open(const QString &home, const QString &name, const Options &options, CommandResult &failure)
 {
+    // a plain folder name inside home, never a path: opening a folder as an
+    // athlete creates subfolders and runs the upgrade steps in it
+    if (!isAthleteName(name)) {
+        failure = CommandResult::failure(Status::Usage, QString("'%1' is not an athlete name").arg(name));
+        return nullptr;
+    }
+
     QDir root(home);
     QString folder = root.absoluteFilePath(name);
     QFileInfo info(folder);
 
-    if (name.isEmpty() || !info.exists() || !info.isDir()) {
+    if (!info.exists() || !info.isDir()) {
         failure = CommandResult::failure(Status::NotFound, QString("athlete '%1' not found in %2").arg(name).arg(home));
+        return nullptr;
+    }
+    if (!HeadlessApp::athletes(home).contains(name)) {
+        failure = CommandResult::failure(Status::NotFound,
+                    QString("%1 is not an athlete folder (it has no config or activities folder)").arg(info.absoluteFilePath()));
         return nullptr;
     }
     folder = info.canonicalFilePath();
@@ -229,6 +249,26 @@ athletesInUse(const QString &home)
         if (!probe.tryLock(0)) return QString("athlete '%1' is open in %2").arg(name).arg(probe.holder());
     }
     return QString();
+}
+
+CommandResult
+requireHome(const CommandEnvironment &env)
+{
+    if (!HeadlessApp::isInitialised())
+        return CommandResult::failure(Status::NotFound, QString("athletes folder '%1' does not exist").arg(env.home));
+    return CommandResult::success();
+}
+
+CommandResult
+sharedSettingsWritable(const CommandEnvironment &env)
+{
+    CommandResult home = requireHome(env);
+    if (!home.ok()) return home;
+    QString who = athletesInUse(env.home);
+    if (!who.isEmpty())
+        return CommandResult::failure(Status::Locked,
+                    QString("%1; settings shared by all athletes can't be changed while GoldenCheetah is using them").arg(who));
+    return CommandResult::success();
 }
 
 } // namespace Headless

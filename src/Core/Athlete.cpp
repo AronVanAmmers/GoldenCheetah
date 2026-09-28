@@ -264,11 +264,13 @@ Athlete::loadCharts()
 Athlete::~Athlete()
 {
     // close the ride cache down first
+    bool loaded = rideCache != nullptr;
     delete rideCache;
 
-    // save those preset charts
+    // save those preset charts, unless they were never loaded because the
+    // constructor stopped early (failed upgrade): that would wipe them
     LTMSettings reader;
-    reader.writeChartXML(home->config(), presets); // don't write it until we fix the code
+    if (loaded) reader.writeChartXML(home->config(), presets); // don't write it until we fix the code
                                                // all the changes to LTM settings and chart config
                                                // have not been reflected in the charts.xml file
 

@@ -85,18 +85,18 @@ class Athlete : public QObject
         const PaceZones *paceZones(bool isSwim) const { return pacezones_[isSwim]; }
         QHash<QString, Zones*> zones_;
         QHash<QString, HrZones*> hrzones_;
-        PaceZones *pacezones_[2];
+        PaceZones *pacezones_[2] = { nullptr, nullptr };
         void setCriticalPower(int cp);
 
         // Data
-        Seasons *seasons;
-        Routes *routes;
+        Seasons *seasons = nullptr;
+        Routes *routes = nullptr;
         QList<RideFileCache*> cpxCache;
-        RideCache *rideCache;
-        Measures *measures;
+        RideCache *rideCache = nullptr;
+        Measures *measures = nullptr;
 
         // cloud download
-        CloudServiceAutoDownload *cloudAutoDownload;
+        CloudServiceAutoDownload *cloudAutoDownload = nullptr;
 
         CalendarSync *calendarSync = nullptr;
 
@@ -120,8 +120,8 @@ class Athlete : public QObject
         double getHeight(RideFile *ride=NULL);
 
         // Athlete's autoimport handling
-        RideImportWizard *autoImport;
-        RideAutoImportConfig *autoImportConfig;
+        RideImportWizard *autoImport = nullptr;
+        RideAutoImportConfig *autoImportConfig = nullptr;
 
         // preset charts
         QList<LTMSettings> presets;

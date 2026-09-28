@@ -33,6 +33,7 @@
 #include "RideFile.h"
 #include "DataProcessor.h"
 #include "Settings.h"
+#include "JsonRideFile.h"
 
 #ifdef GC_WANT_PYTHON
 #include "FixPySettings.h"
@@ -121,8 +122,11 @@ processorJson(DataProcessor *dp, bool withSource)
 }
 
 static CommandResult
-listProcessors(CommandEnvironment &, const CommandRequest &request)
+listProcessors(CommandEnvironment &env, const CommandRequest &request)
 {
+    CommandResult home = requireHome(env);
+    if (!home.ok()) return home;
+
     loadPythonProcessors();
     QString type = request.args.value("type").toString();
     QJsonArray list;
@@ -140,8 +144,11 @@ listProcessors(CommandEnvironment &, const CommandRequest &request)
 }
 
 static CommandResult
-showProcessor(CommandEnvironment &, const CommandRequest &request)
+showProcessor(CommandEnvironment &env, const CommandRequest &request)
 {
+    CommandResult home = requireHome(env);
+    if (!home.ok()) return home;
+
     QString name = request.args.value("name").toString();
     DataProcessor *dp = findProcessor(name);
     if (!dp) return CommandResult::failure(Status::NotFound, QString("no data processor called '%1'").arg(name));
@@ -149,20 +156,10 @@ showProcessor(CommandEnvironment &, const CommandRequest &request)
 }
 
 static CommandResult
-rootWritable(const CommandEnvironment &env)
-{
-    QString who = athletesInUse(env.home);
-    if (!who.isEmpty())
-        return CommandResult::failure(Status::Locked,
-                    QString("%1; settings shared by all athletes can't be changed while GoldenCheetah is using them").arg(who));
-    return CommandResult::success();
-}
-
-static CommandResult
 installProcessor(CommandEnvironment &env, const CommandRequest &request)
 {
 #ifdef GC_WANT_PYTHON
-    CommandResult writable = rootWritable(env);
+    CommandResult writable = sharedSettingsWritable(env);
     if (!writable.ok()) return writable;
 
     if (!appsettings->value(nullptr, GC_EMBED_PYTHON, true).toBool())
@@ -242,7 +239,7 @@ static CommandResult
 removeProcessor(CommandEnvironment &env, const CommandRequest &request)
 {
 #ifdef GC_WANT_PYTHON
-    CommandResult writable = rootWritable(env);
+    CommandResult writable = sharedSettingsWritable(env);
     if (!writable.ok()) return writable;
 
     QString name = request.args.value("name").toString();
@@ -264,7 +261,7 @@ removeProcessor(CommandEnvironment &env, const CommandRequest &request)
 static CommandResult
 configureProcessor(CommandEnvironment &env, const CommandRequest &request)
 {
-    CommandResult writable = rootWritable(env);
+    CommandResult writable = sharedSettingsWritable(env);
     if (!writable.ok()) return writable;
 
     QString name = request.args.value("name").toString();
@@ -288,13 +285,16 @@ runOn(DataProcessor *dp, RideItem *item, QString &output, bool &changed)
     if (!dp->isCoreProcessor() && fixPySettings) {
         FixPyScript *script = fixPySettings->getScript(dp->id());
         if (script) {
-            // run the script as the processor would, but keep its output
+            // run the script as the processor would, but keep its output.
+            // scripts don't say whether they changed anything, compare
+            JsonFileReader json;
+            QByteArray before = json.toByteArray(item->context, ride, true, true, true, true);
             FixPyRunner runner(item->context, ride, item, true);
             QString text;
             runner.run(script->source, script->iniKey, text);
             output = text.trimmed();
             if (runner.failed()) return QString("the script raised an error");
-            changed = true;
+            changed = json.toByteArray(item->context, ride, true, true, true, true) != before;
             return QString();
         }
     }
