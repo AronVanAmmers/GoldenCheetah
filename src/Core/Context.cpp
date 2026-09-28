@@ -151,16 +151,20 @@ Context::Context(MainWindow *mainWindow): mainWindow(mainWindow)
     isRunning = isPaused = false;
     m_HtmlTrainingBridge = nullptr;
 
-    connect(this, SIGNAL(loadProgress(QString, double)), mainWindow, SLOT(loadProgress(QString, double)));
+    // headless sessions (command line, REST) have no main window
+    if (mainWindow) connect(this, SIGNAL(loadProgress(QString, double)), mainWindow, SLOT(loadProgress(QString, double)));
 
 #ifdef GC_HAS_CLOUD_DB
     cdbChartListDialog = NULL;
     cdbUserMetricListDialog = NULL;
 #endif
 
-    // WebEngineProfile - cookies and storage
-    webEngineProfile = new QWebEngineProfile("Default", this);
-    webEngineProfile->setPersistentCookiesPolicy(QWebEngineProfile::ForcePersistentCookies);
+    // WebEngineProfile - cookies and storage, only needed by GUI web views
+    webEngineProfile = nullptr;
+    if (mainWindow) {
+        webEngineProfile = new QWebEngineProfile("Default", this);
+        webEngineProfile->setPersistentCookiesPolicy(QWebEngineProfile::ForcePersistentCookies);
+    }
 
     _contexts.append(this);
 }
@@ -214,8 +218,8 @@ Context::notifyCompareDateRangesChanged()
 void
 Context::notifyConfigChanged(qint32 state)
 {
-    QApplication::setOverrideCursor(Qt::WaitCursor);
+    if (mainWindow) QApplication::setOverrideCursor(Qt::WaitCursor);
     emit configChanged(state);
-    QApplication::restoreOverrideCursor();
+    if (mainWindow) QApplication::restoreOverrideCursor();
 }
 

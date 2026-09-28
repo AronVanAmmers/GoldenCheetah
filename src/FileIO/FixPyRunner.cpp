@@ -12,8 +12,17 @@ FixPyRunner::FixPyRunner(Context *context, RideFile *rideFile, RideItem *rideIte
 
 int FixPyRunner::run(QString source, QString scriptKey, QString &errText)
 {
+    scriptFailed = false;
+
     if (source.isEmpty()) {
         return 1;
+    }
+
+    // embedded python may be disabled or failed to start
+    if (python == nullptr) {
+        errText = tr("Python is not available");
+        scriptFailed = true;
+        return 4;
     }
 
     // hourglass .. for long running ones this helps user know its busy
@@ -50,6 +59,8 @@ int FixPyRunner::run(QString source, QString scriptKey, QString &errText)
             execScript(&params);
         }
 
+        scriptFailed = python->lastRunFailed;
+
         // output on console
         if (python->messages.count()) {
             errText = python->messages.join("\n");
@@ -58,9 +69,11 @@ int FixPyRunner::run(QString source, QString scriptKey, QString &errText)
     } catch(std::exception& ex) {
         errText = QString("\n%1\n%2").arg(QString(ex.what())).arg(python->messages.join(""));
         result = 2;
+        scriptFailed = true;
     } catch(...) {
         errText = QString("\nerror: general exception.\n%1").arg(python->messages.join(""));
         result = 3;
+        scriptFailed = true;
     }
 
     python->messages.clear();

@@ -61,6 +61,7 @@ class DataFilterRuntime;
 class CloudServiceAutoDownload;
 class CalendarSync;
 class Banister;
+class AthleteLock;
 
 class Athlete : public QObject
 {
@@ -74,6 +75,7 @@ class Athlete : public QObject
         // basic athlete info
         QString cyclist; // the cyclist name
         QUuid id; // unique identifier
+        AthleteLock *lock = nullptr; // inter-process lock on the athlete folder
         AthleteDirectoryStructure *home;
         const AthleteDirectoryStructure *directoryStructure() const {return home; }
 

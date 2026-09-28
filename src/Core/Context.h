@@ -129,6 +129,9 @@ class Context : public QObject
         // check if valid (might be deleted)
         static bool isValid(Context *);
 
+        // no main window: opened by the command line or REST server
+        bool isHeadless() const { return mainWindow == nullptr; }
+
         // mainwindow state
         NavigationModel *nav;
         int viewIndex;

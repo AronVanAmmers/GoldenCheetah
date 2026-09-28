@@ -84,6 +84,12 @@ class RideCache : public QObject
         // is running ?
         bool isRunning() { return refreshThreads.count() != 0; }
 
+        // how many activities the last refresh() found out of date
+        int lastStaleCount() const { return lastStaleCount_; }
+
+        // model estimates (CP, W' ...) for the athlete
+        Estimator *getEstimator() const { return estimator; }
+
         // how is update going?
         QMutex updateMutex;
         int updates; // for watching progress
@@ -145,6 +151,10 @@ class RideCache : public QObject
 
         OperationPreCheck checkShiftPlannedActivities(const QDate &fromDate, int dayOffset);
         OperationResult shiftPlannedActivities(const QDate &fromDate, int dayOffset);
+
+        // write the activity to disk in GC (json) format, renaming and
+        // converting as needed, no questions asked
+        void saveSilent(RideItem *item);
 
         bool saveActivity(RideItem *item, QString &error);
         bool saveActivities(QList<RideItem*> items, QString &error);
@@ -229,6 +239,7 @@ class RideCache : public QObject
         RideItem* copyPlannedRideFile(RideItem *sourceItem, const QDate &newDate, const QTime &newTime, QString &error);
 
         bool isCancelled = false;
+        int lastStaleCount_ = 0;
         QThread *saveThread_ = nullptr;
         QObject *saveWorker_ = nullptr;
 };

@@ -52,6 +52,21 @@
 
 #include "GcUpgrade.h" // upgrade wizard
 #include "GcCrashDialog.h" // recovering from a crash?
+#include "AthleteLock.h"
+
+// report a problem reading configuration: a dialog in the GUI, a warning
+// when headless (a modal dialog would block a command line run forever)
+static void
+reportConfigProblem(Context *context, bool critical, const QString &title, const QString &text)
+{
+    if (context->isHeadless()) {
+        qWarning().noquote() << title << ":" << text;
+    } else if (critical) {
+        QMessageBox::critical(context->mainWindow, title, text);
+    } else {
+        QMessageBox::warning(context->mainWindow, title, text);
+    }
+}
 
 Athlete::Athlete(Context *context, const QDir &homeDir)
 {
@@ -60,6 +75,24 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
     this->context = context;
     context->athlete = this;
     cyclist = this->home->root().dirName();
+
+    // stop other GoldenCheetah processes (e.g. the command line tools) from
+    // modifying this athlete while it is open. Headless sessions take the
+    // lock before opening the athlete, in which case it is shared here.
+    lock = new AthleteLock(homeDir.canonicalPath());
+    while (!lock->tryLock(0)) {
+        if (context->isHeadless()) {
+            qWarning().noquote() << "athlete" << cyclist << "is in use by" << lock->holder();
+            break;
+        }
+        QMessageBox box(QMessageBox::Warning, tr("Athlete in use"),
+                        tr("The athlete %1 is being used by %2.\n\n"
+                           "Wait for it to finish and retry, or open the athlete anyway.")
+                        .arg(cyclist).arg(lock->holder()),
+                        QMessageBox::Retry | QMessageBox::Ignore);
+        box.setDefaultButton(QMessageBox::Retry);
+        if (box.exec() != QMessageBox::Retry) break;
+    }
 
     // get id and set id all at one
     id = QUuid(appsettings->cvalue(cyclist, GC_ATHLETE_ID, QUuid::createUuid().toString()).toString());
@@ -95,9 +128,9 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
         QFile zonesFile(home->config().canonicalPath() + "/" + zones_[i]->fileName());
         if (zonesFile.exists()) {
             if (!zones_[i]->read(zonesFile)) {
-                QMessageBox::critical(context->mainWindow, tr("Zones File %1 Error").arg(zones_[i]->fileName()), zones_[i]->errorString());
+                reportConfigProblem(context, true, tr("Zones File %1 Error").arg(zones_[i]->fileName()), zones_[i]->errorString());
             } else if (! zones_[i]->warningString().isEmpty()) {
-                QMessageBox::warning(context->mainWindow, tr("Reading Zones File %1").arg(zones_[i]->fileName()), zones_[i]->warningString());
+                reportConfigProblem(context, false, tr("Reading Zones File %1").arg(zones_[i]->fileName()), zones_[i]->warningString());
             }
         }
         if (i != "Bike" && zones_[i]->getRangeSize() == 0) { // No Power zones
@@ -115,9 +148,9 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
         QFile hrzonesFile(home->config().canonicalPath() + "/" + hrzones_[i]->fileName());
         if (hrzonesFile.exists()) {
             if (!hrzones_[i]->read(hrzonesFile)) {
-                QMessageBox::critical(context->mainWindow, tr("HR Zones File %1 Error").arg(hrzones_[i]->fileName()), hrzones_[i]->errorString());
+                reportConfigProblem(context, true, tr("HR Zones File %1 Error").arg(hrzones_[i]->fileName()), hrzones_[i]->errorString());
             } else if (! hrzones_[i]->warningString().isEmpty()) {
-                QMessageBox::warning(context->mainWindow, tr("Reading HR Zones File %1").arg(hrzones_[i]->fileName()), hrzones_[i]->warningString());
+                reportConfigProblem(context, false, tr("Reading HR Zones File %1").arg(hrzones_[i]->fileName()), hrzones_[i]->warningString());
             }
         }
         if (i != "Bike" && hrzones_[i]->getRangeSize() == 0) { // No HR zones
@@ -134,7 +167,7 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
         QFile pacezonesFile(home->config().canonicalPath() + "/" + pacezones_[i]->fileName());
         if (pacezonesFile.exists()) {
             if (!pacezones_[i]->read(pacezonesFile)) {
-                QMessageBox::critical(context->mainWindow, tr("Pace Zones File %1 Error").arg(pacezones_[i]->fileName()), pacezones_[i]->errorString());
+                reportConfigProblem(context, true, tr("Pace Zones File %1 Error").arg(pacezones_[i]->fileName()), pacezones_[i]->errorString());
             }
         }
     }
@@ -158,9 +191,10 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
     // Daily Measures
     measures = new Measures(home->config(), true);
 
-    // auto downloader
+    // auto downloader, not when headless: a command must only do what it was asked
     cloudAutoDownload = new CloudServiceAutoDownload(context);
-    connect(context, SIGNAL(refreshEnd()), cloudAutoDownload, SLOT(autoDownload()));
+    if (!context->isHeadless())
+        connect(context, SIGNAL(refreshEnd()), cloudAutoDownload, SLOT(autoDownload()));
 
     calendarSync = new CalendarSync(context);
 
@@ -171,7 +205,8 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
     connect(rideCache, SIGNAL(loadComplete()), this, SLOT(loadComplete()));
 
     // we need to block on load complete if first (before mainwindow ready)
-    if (context->mainWindow->isStarting()) {
+    // headless sessions always need the cache loaded before they continue
+    if (context->isHeadless() || context->mainWindow->isStarting()) {
         loop.exec();
     }
 }
@@ -185,7 +220,7 @@ Athlete::loadComplete()
     loadCharts();
 
     // Downloaders
-    MeasuresDownload::autoDownload(context);
+    if (!context->isHeadless()) MeasuresDownload::autoDownload(context);
 
     // trap signals
     connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
@@ -206,10 +241,13 @@ Athlete::close()
     appsettings->setCValue(context->athlete->home->root().dirName(), GC_VERSION_USED, VERSION_LATEST);
     appsettings->setCValue(context->athlete->home->root().dirName(), GC_SAFEEXIT, true);
 
-    // run autobackup on close (if configured)
-    AthleteBackup *backup = new AthleteBackup(context->athlete->home->root());
-    backup->backupOnClose();
-    delete backup;
+    // run autobackup on close (if configured), counted in GUI sessions only
+    // since every headless command opens and closes the athlete
+    if (!context->isHeadless()) {
+        AthleteBackup *backup = new AthleteBackup(context->athlete->home->root());
+        backup->backupOnClose();
+        delete backup;
+    }
 
 }
 void
@@ -241,6 +279,9 @@ Athlete::~Athlete()
     for (int i=0; i<2; i++) delete pacezones_[i];
     delete autoImportConfig;
     delete autoImport;
+
+    // last, everything is written
+    delete lock;
 
 }
 

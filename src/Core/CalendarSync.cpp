@@ -21,6 +21,8 @@
 #include "RideItem.h"
 #include "RideFile.h"
 #include "Season.h"
+#include "Athlete.h"
+#include "RideCache.h"
 
 
 //////////////////////////////////////////////////////////////////////////////
@@ -578,7 +580,7 @@ CalendarSync::syncActivity
         if (rideItem->ride()->id().isEmpty()) {
             if (! rideItem->isDirty()) {
                 rideItem->ride()->setId(QUuid::createUuid().toString());
-                context->mainWindow->saveSilent(context, rideItem);
+                context->athlete->rideCache->saveSilent(rideItem);
             } else {
                 errors << tr("%1: Can't add id to activity with unsaved changes. Save and retry").arg(calEntry.title);
                 return false;
