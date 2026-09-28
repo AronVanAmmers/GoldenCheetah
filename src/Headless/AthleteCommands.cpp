@@ -30,6 +30,8 @@
 #include "Zones.h"
 #include "HrZones.h"
 #include "PaceZones.h"
+#include "Measures.h"
+#include "RideFile.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -287,6 +289,182 @@ showZones(CommandEnvironment &env, const CommandRequest &request)
     return CommandResult::success(data);
 }
 
+// the GUI's zone pages re-read the file after writing and tell everyone
+static void
+zonesChanged(AthleteSession &s)
+{
+    s.context()->notifyConfigChanged(CONFIG_ZONES);
+    s.waitForRefresh();
+}
+
+static CommandResult
+setZones(CommandEnvironment &env, const CommandRequest &request)
+{
+    AthleteSession &s = *env.session;
+    Athlete *athlete = s.athlete();
+    QString sport = RideFile::sportTag(request.args.value("sport").toString());
+    QDate from = QDate::fromString(request.args.value("from").toString(), Qt::ISODate);
+    QString type = request.args.value("type").toString();
+    QJsonObject data;
+    data.insert("sport", sport);
+    data.insert("from", from.toString(Qt::ISODate));
+
+    auto has = [&](const char *k) { return request.args.contains(k); };
+    auto val = [&](const char *k) { return int(request.args.value(k).toInt()); };
+
+    if (type == "power") {
+        if (!athlete->zones_.contains(sport)) return CommandResult::failure(Status::NotFound, QString("no power zones for sport '%1'").arg(sport));
+        Zones *zones = athlete->zones_.value(sport);
+        if (!has("cp")) return CommandResult::failure(Status::Usage, "power zones need --cp");
+
+        int range = -1;
+        for (int r = 0; r < zones->getRangeSize(); r++) if (zones->getStartDate(r) == from) range = r;
+        bool added = range < 0;
+        if (added) {
+            range = zones->addZoneRange(from, val("cp"), has("aet") ? val("aet") : 0, has("ftp") ? val("ftp") : val("cp"),
+                                        has("w") ? val("w") : 20000, has("pmax") ? val("pmax") : 1000);
+        } else {
+            zones->setCP(range, val("cp"));
+            if (has("ftp")) zones->setFTP(range, val("ftp"));
+            if (has("aet")) zones->setAeT(range, val("aet"));
+            if (has("w")) zones->setWprime(range, val("w"));
+            if (has("pmax")) zones->setPmax(range, val("pmax"));
+            zones->setZonesFromCP(range);
+        }
+        zones->write(athlete->home->config());
+        QFile file(athlete->home->config().canonicalPath() + "/" + zones->fileName());
+        zones->read(file);
+        data.insert("status", added ? "added" : "updated");
+        data.insert("power", powerZonesJson(zones));
+
+    } else {
+        if (!athlete->hrzones_.contains(sport)) return CommandResult::failure(Status::NotFound, QString("no heart rate zones for sport '%1'").arg(sport));
+        HrZones *zones = athlete->hrzones_.value(sport);
+        if (!has("lthr")) return CommandResult::failure(Status::Usage, "heart rate zones need --lthr");
+
+        int range = -1;
+        for (int r = 0; r < zones->getRangeSize(); r++) if (zones->getStartDate(r) == from) range = r;
+        bool added = range < 0;
+        if (added) {
+            range = zones->addHrZoneRange(from, val("lthr"), has("aet") ? val("aet") : 0,
+                                          has("resthr") ? val("resthr") : 50, has("maxhr") ? val("maxhr") : 190);
+        } else {
+            zones->setLT(range, val("lthr"));
+            if (has("aet")) zones->setAeT(range, val("aet"));
+            if (has("resthr")) zones->setRestHr(range, val("resthr"));
+            if (has("maxhr")) zones->setMaxHr(range, val("maxhr"));
+            zones->setHrZonesFromLT(range);
+        }
+        zones->write(athlete->home->config());
+        QFile file(athlete->home->config().canonicalPath() + "/" + zones->fileName());
+        zones->read(file);
+        data.insert("status", added ? "added" : "updated");
+        data.insert("hr", hrZonesJson(zones));
+    }
+
+    zonesChanged(s);
+    data.insert("refreshed", s.rideCache()->lastStaleCount());
+    CommandResult result = CommandResult::success(data);
+    result.text = QString("%1 %2 zones for %3 from %4, %5 activities recomputed\n")
+                  .arg(data.value("status").toString()).arg(type).arg(sport).arg(from.toString(Qt::ISODate))
+                  .arg(s.rideCache()->lastStaleCount());
+    return result;
+}
+
+static MeasuresGroup *
+measuresGroup(Athlete *athlete, const QString &name)
+{
+    for (MeasuresGroup *g : athlete->measures->getGroups())
+        if (g->getSymbol().compare(name, Qt::CaseInsensitive) == 0 || g->getName().compare(name, Qt::CaseInsensitive) == 0) return g;
+    return nullptr;
+}
+
+static CommandResult
+listMeasures(CommandEnvironment &env, const CommandRequest &request)
+{
+    Athlete *athlete = env.session->athlete();
+    QString group = request.args.value("group").toString();
+    QDate from = QDate::fromString(request.args.value("from").toString(), Qt::ISODate);
+    QDate to = QDate::fromString(request.args.value("to").toString(), Qt::ISODate);
+
+    QJsonArray groups;
+    for (MeasuresGroup *g : athlete->measures->getGroups()) {
+        if (!group.isEmpty() && g->getSymbol().compare(group, Qt::CaseInsensitive) != 0
+            && g->getName().compare(group, Qt::CaseInsensitive) != 0) continue;
+        QJsonObject go;
+        go.insert("group", g->getSymbol());
+        go.insert("name", g->getName());
+        go.insert("fields", QJsonArray::fromStringList(g->getFieldSymbols()));
+        QJsonArray rows;
+        for (const Measure &m : g->measures()) {
+            if (from.isValid() && m.when.date() < from) continue;
+            if (to.isValid() && m.when.date() > to) continue;
+            QJsonObject row;
+            row.insert("when", m.when.toString(Qt::ISODate));
+            QStringList symbols = g->getFieldSymbols();
+            for (int i = 0; i < symbols.count() && i < MAX_MEASURES; i++) row.insert(symbols.at(i), m.values[i]);
+            if (!m.comment.isEmpty()) row.insert("comment", m.comment);
+            rows.append(row);
+        }
+        go.insert("measures", rows);
+        groups.append(go);
+    }
+    if (!group.isEmpty() && groups.isEmpty()) return CommandResult::failure(Status::NotFound, QString("no measures group '%1'").arg(group));
+
+    // one group asked for: just that group
+    if (!group.isEmpty()) return CommandResult::success(groups.first().toObject());
+    QJsonObject data;
+    data.insert("groups", groups);
+    return CommandResult::success(data);
+}
+
+static CommandResult
+addMeasure(CommandEnvironment &env, const CommandRequest &request)
+{
+    AthleteSession &s = *env.session;
+    MeasuresGroup *g = measuresGroup(s.athlete(), request.args.value("group").toString());
+    if (!g) return CommandResult::failure(Status::NotFound, QString("no measures group '%1'").arg(request.args.value("group").toString()));
+
+    QDateTime when = QDateTime::fromString(request.args.value("when").toString(), Qt::ISODate);
+    if (!when.isValid()) {
+        QDate d = QDate::fromString(request.args.value("when").toString(), Qt::ISODate);
+        if (d.isValid()) when = QDateTime(d, QTime(0, 0));
+    }
+    if (!when.isValid()) return CommandResult::failure(Status::Usage, "--when must be a date or date and time (yyyy-mm-ddThh:mm:ss)");
+
+    Measure m;
+    m.when = when;
+    m.comment = request.args.value("comment").toString();
+    QStringList symbols = g->getFieldSymbols();
+    for (const QJsonValue &v : request.args.value("set").toArray()) {
+        QString text = v.toString();
+        int eq = text.indexOf('=');
+        int field = eq > 0 ? symbols.indexOf(text.left(eq).trimmed()) : -1;
+        if (field < 0 || field >= MAX_MEASURES)
+            return CommandResult::failure(Status::Usage, QString("expected FIELD=VALUE with FIELD one of %1, got '%2'").arg(symbols.join(", ")).arg(text));
+        bool ok = false;
+        m.values[field] = text.mid(eq + 1).toDouble(&ok);
+        if (!ok) return CommandResult::failure(Status::Usage, QString("'%1' is not a number").arg(text.mid(eq + 1)));
+    }
+
+    // replace a reading at the same time
+    QList<Measure> list = g->measures();
+    for (int i = list.count() - 1; i >= 0; i--) if (list.at(i).when == when) list.removeAt(i);
+    list.append(m);
+    std::sort(list.begin(), list.end());
+    g->setMeasures(list);
+    g->write();
+
+    // weight feeds per kg metrics: recompute what changed
+    s.refresh();
+
+    QJsonObject data;
+    data.insert("group", g->getSymbol());
+    data.insert("when", when.toString(Qt::ISODate));
+    data.insert("refreshed", s.rideCache()->lastStaleCount());
+    return CommandResult::success(data);
+}
+
 void
 registerAthleteCommands(CommandRegistry &registry)
 {
@@ -357,6 +535,56 @@ registerAthleteCommands(CommandRegistry &registry)
     zones.spec.httpPath = "/athletes/{athlete}/zones";
     zones.handler = showZones;
     registry.add(zones);
+
+    Command setz;
+    setz.spec.name = "zones.set";
+    setz.spec.summary = "add or change a power or heart rate zone range, as the GUI's zones pages";
+    setz.spec.description =
+        "Sets the values for the range starting on --from (added when there is none),\n"
+        "writes the zones file and recomputes the activities it affects.";
+    setz.spec.scope = Scope::Athlete;
+    setz.spec.modifies = true;
+    setz.spec.params << ParamSpec("type", ParamType::String, "which zones").def("power").oneOf({ "power", "hr" });
+    setz.spec.params << ParamSpec("from", ParamType::Date, "first day the values apply").req();
+    setz.spec.params << ParamSpec("sport", ParamType::String, "sport").def("Bike");
+    setz.spec.params << ParamSpec("cp", ParamType::Int, "critical power (power)");
+    setz.spec.params << ParamSpec("ftp", ParamType::Int, "FTP (power, default: cp)");
+    setz.spec.params << ParamSpec("w", ParamType::Int, "W' in joules (power)");
+    setz.spec.params << ParamSpec("pmax", ParamType::Int, "maximal power (power)");
+    setz.spec.params << ParamSpec("aet", ParamType::Int, "aerobic threshold (power or hr)");
+    setz.spec.params << ParamSpec("lthr", ParamType::Int, "lactate threshold heart rate (hr)");
+    setz.spec.params << ParamSpec("resthr", ParamType::Int, "resting heart rate (hr)");
+    setz.spec.params << ParamSpec("maxhr", ParamType::Int, "maximum heart rate (hr)");
+    setz.spec.httpMethod = "PUT";
+    setz.spec.httpPath = "/athletes/{athlete}/zones";
+    setz.handler = setZones;
+    registry.add(setz);
+
+    Command mlist;
+    mlist.spec.name = "measures.list";
+    mlist.spec.summary = "list body, HRV and other daily measures";
+    mlist.spec.scope = Scope::Athlete;
+    mlist.spec.params << ParamSpec("group", ParamType::String, "measures group, e.g. Body or Hrv");
+    mlist.spec.params << ParamSpec("from", ParamType::Date, "first day");
+    mlist.spec.params << ParamSpec("to", ParamType::Date, "last day");
+    mlist.spec.httpMethod = "GET";
+    mlist.spec.httpPath = "/athletes/{athlete}/measures";
+    mlist.handler = listMeasures;
+    registry.add(mlist);
+
+    Command madd;
+    madd.spec.name = "measures.add";
+    madd.spec.summary = "record a measure, e.g. body weight, and recompute what depends on it";
+    madd.spec.scope = Scope::Athlete;
+    madd.spec.modifies = true;
+    madd.spec.params << ParamSpec("group", ParamType::String, "measures group").def("Body");
+    madd.spec.params << ParamSpec("when", ParamType::String, "date or date and time").req();
+    madd.spec.params << ParamSpec("set", ParamType::String, "FIELD=VALUE, e.g. WEIGHTKG=71.5").req().many();
+    madd.spec.params << ParamSpec("comment", ParamType::String, "comment");
+    madd.spec.httpMethod = "POST";
+    madd.spec.httpPath = "/athletes/{athlete}/measures";
+    madd.handler = addMeasure;
+    registry.add(madd);
 }
 
 } // namespace Headless
