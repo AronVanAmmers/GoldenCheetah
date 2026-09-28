@@ -88,7 +88,9 @@ class Headless(unittest.TestCase):
         cls.home = os.path.join(cls.tmp, "athletes")
         cls.env = dict(os.environ)
         cls.env["HOME"] = os.path.join(cls.tmp, "userhome")   # isolate system settings
-        cls.env["QT_QPA_PLATFORM"] = "offscreen"
+        # the app picks a platform itself (offscreen, else the native one: a
+        # deployed macOS bundle only ships cocoa)
+        cls.env.pop("QT_QPA_PLATFORM", None)
         cls.env.pop("GC_HOME", None)
         os.makedirs(cls.env["HOME"])
         r = cls.gc_class("athlete", "create", cls.athlete, "--cp", "250", "--weight", "70")
