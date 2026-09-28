@@ -70,9 +70,6 @@ class PythonEmbed {
     
     PythonEmbed(const bool verbose=false, const bool interactive=false);
 
-    // false when there is nobody to click a dialog away (command line, REST)
-    static bool showErrorDialogs;
-
     // did the last non-interactive runline() raise an uncaught exception?
     bool lastRunFailed = false;
     ~PythonEmbed();

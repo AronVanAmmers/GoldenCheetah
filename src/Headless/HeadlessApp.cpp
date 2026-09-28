@@ -158,6 +158,9 @@ HeadlessApp::initialise(const QString &home, const Options &options, QString &er
         return true;
     }
 
+    // nobody is there to answer a dialog
+    GlobalContext::setHeadless(true);
+
     // maths routines must not abort the process
     gsl_set_error_handler_off();
 
@@ -180,7 +183,6 @@ HeadlessApp::initialise(const QString &home, const Options &options, QString &er
     trainDB = new TrainDB(QDir(gcroot));
 
 #ifdef GC_WANT_PYTHON
-    PythonEmbed::showErrorDialogs = false;
     bool embed = appsettings->value(NULL, GC_EMBED_PYTHON, true).toBool();
     if (options.python && embed && python == nullptr) {
         python = new PythonEmbed();

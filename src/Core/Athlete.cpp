@@ -107,7 +107,9 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
         // XXXGcCrashDialog *crashed = new GcCrashDialog(homeDir);
         // XXXcrashed->exec();
     }
-    appsettings->setCValue(cyclist, GC_SAFEEXIT, false); // will be set to true on exit
+    // will be set to true on exit. Headless sessions rely on the athlete lock
+    // instead, whose stale lock detection copes with a crashed process.
+    if (!context->isHeadless()) appsettings->setCValue(cyclist, GC_SAFEEXIT, false);
 
     // make sure that the latest folder structure exists in Athlete Directory -
     // e.g. Cache could be deleted by mistake or empty folders are not copied

@@ -232,6 +232,8 @@ cliMain(int argc, char **argv)
         writeOut(QJsonDocument(ResultFormat::envelope(request.command, result)).toJson(QJsonDocument::Indented));
     } else {
         if (!result.ok() && result.status != Status::Partial) {
+            // a per item report says what went wrong where
+            if (!g.quiet && !result.text.isEmpty()) writeOut(result.text.toLocal8Bit());
             writeErr(QString("error: %1\n").arg(result.error));
         } else if (!g.quiet) {
             if (!written.isEmpty()) writeOut(QString("wrote %1 (%2 bytes)\n").arg(written).arg(result.payload.size()).toLocal8Bit());

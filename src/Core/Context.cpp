@@ -37,6 +37,8 @@
 
 static QList<Context*> _contexts;
 
+bool GlobalContext::headless_ = false;
+
 GlobalContext::GlobalContext()
 {
     rideMetadata = NULL;

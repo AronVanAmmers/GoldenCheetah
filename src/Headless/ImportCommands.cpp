@@ -41,6 +41,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <exception>
 
 namespace Headless {
 
@@ -192,8 +193,9 @@ class Importer
             RideFile *ride = RideFileFactory::instance().openRideFile(context, file, errors, &rides);
 
             if (rides.count() > 1) {
-                // as the wizard: write each one out as json and import those
-                delete ride;
+                // as the wizard: write each one out as json and import those.
+                // the returned ride may be one of the list, delete it only once
+                if (!rides.contains(ride)) delete ride;
                 ride = nullptr;
                 ImportItem summary;
                 summary.source = label;
@@ -203,6 +205,7 @@ class Importer
                 for (RideFile *extracted : rides) {
                     QString target = QDir(context->athlete->home->temp().absolutePath())
                                      .absoluteFilePath(QFileInfo(path).baseName() + QString("-%1.json").arg(++counter));
+                    extracted->context = context;
                     JsonFileReader writer;
                     QFile out(target);
                     writer.writeRideFile(context, extracted, out);
@@ -343,7 +346,16 @@ class Importer
             while (!pending.isEmpty()) {
                 QPair<QString,QString> next = pending.takeFirst();
                 env.report(QString("importing %1").arg(next.first));
-                results << importOne(next.first, next.second);
+                // a broken file must not take the whole import down
+                try {
+                    results << importOne(next.first, next.second);
+                } catch (const std::exception &e) {
+                    ImportItem failed;
+                    failed.source = next.first;
+                    failed.status = "failed";
+                    failed.message = QString("the file could not be read (%1)").arg(e.what());
+                    results << failed;
+                }
             }
 
             // new activities get their metrics like any other change
