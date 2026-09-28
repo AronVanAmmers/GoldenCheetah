@@ -125,7 +125,8 @@ ResultFormat::table(const QJsonArray &rows)
 
     QString text;
     QTextStream out(&text);
-    for (int c = 0; c < columns.count(); c++) out << (c ? "  " : "") << columns[c].leftJustified(widths[c]);
+    for (int c = 0; c < columns.count(); c++)
+        out << (c ? "  " : "") << (c == columns.count() - 1 ? columns[c] : columns[c].leftJustified(widths[c]));
     out << "\n";
     for (const QStringList &line : cells) {
         for (int c = 0; c < columns.count(); c++) {

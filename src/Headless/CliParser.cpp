@@ -267,7 +267,8 @@ paramSynopsis(const ParamSpec &p)
     } else if (p.type == ParamType::Bool) {
         s = "--" + p.name;
     } else {
-        s = QString("--%1 %2").arg(p.name).arg(p.name == "format" ? QString("FMT") : paramTypeName(p.type).toUpper());
+        QString value = (!p.choices.isEmpty() && p.choices.count() <= 5) ? p.choices.join("|") : paramTypeName(p.type).toUpper();
+        s = QString("--%1 %2").arg(p.name).arg(value);
         if (p.repeated) s += "...";
     }
     if (!p.required) s = "[" + s + "]";
