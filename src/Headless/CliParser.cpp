@@ -68,8 +68,8 @@ applyGlobal(GlobalOptions &g, CliParse &out, const QString &name, const QString 
     else if (name == "--output") g.output = value;
     else if (name == "--format") {
         QString f = value.toLower();
-        if (f != "text" && f != "json") {
-            out.error = QString("--format must be 'text' or 'json', not '%1'").arg(value);
+        if (f != "text" && f != "json" && f != "csv") {
+            out.error = QString("--format must be 'text', 'json' or 'csv', not '%1'").arg(value);
             return false;
         }
         g.format = f;
@@ -339,7 +339,7 @@ CliParser::usage(const CommandRegistry &registry, const QString &program)
         << "  --home DIR              athletes folder (default: the GoldenCheetah library folder)\n"
         << "  -a, --athlete NAME      athlete folder name inside --home\n"
         << "  --athlete-dir DIR       full path of an athlete folder (sets --home and --athlete)\n"
-        << "  -f, --format FMT        output format: text (default) or json\n"
+        << "  -f, --format FMT        output format: text (default), json or csv\n"
         << "  -o, --output FILE       write binary output (charts, exports) here, '-' for stdout\n"
         << "  -q, --quiet             print errors only\n"
         << "  -v, --verbose           print GoldenCheetah diagnostics to stderr\n"

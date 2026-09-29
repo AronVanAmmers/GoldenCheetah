@@ -70,6 +70,38 @@ private slots:
         QVERIFY(t.contains("sports:\n  Bike: 3"));
     }
 
+    void csvQuotesOnlyWhereNeeded() {
+        QCOMPARE(ResultFormat::csvLine({ "a", "b c", "" }), QString("a,b c,\n"));
+        QCOMPARE(ResultFormat::csvLine({ "x,y", "say \"hi\"", "two\nlines", " pad" }),
+                 QString("\"x,y\",\"say \"\"hi\"\"\",\"two\nlines\",\" pad\"\n"));
+        QCOMPARE(ResultFormat::csvValue(QJsonValue(159.82194)), QString("159.82194"));   // full precision
+        QCOMPARE(ResultFormat::csvValue(QJsonValue(3.0)), QString("3"));
+        QCOMPARE(ResultFormat::csvValue(QJsonValue()), QString());
+        QCOMPARE(ResultFormat::csvValue(QJsonValue(false)), QString("false"));
+    }
+
+    void csvSingleListIsTheTable() {
+        QJsonArray rows;
+        rows.append(QJsonObject{ { "name", "Lap 1" }, { "number", 2 }, { "metrics", QJsonObject{ { "average_power", 221.5 } } } });
+        rows.append(QJsonObject{ { "name", "Lap 2" }, { "number", 3 }, { "metrics", QJsonObject{ { "average_power", 112.9 } } } });
+        QString t = ResultFormat::csv(QJsonObject{ { "activity", "x" }, { "intervals", rows } });
+        QCOMPARE(t, QString("number,name,average_power\n2,Lap 1,221.5\n3,Lap 2,112.9\n"));
+
+        // a nested name that clashes with a column keeps its object's name
+        QJsonArray clash{ QJsonObject{ { "name", "a" }, { "metadata", QJsonObject{ { "name", "b" } } } } };
+        QCOMPARE(ResultFormat::csv(QJsonObject{ { "list", clash } }), QString("name,metadata.name\na,b\n"));
+    }
+
+    void csvAnythingElseIsKeyValue() {
+        QJsonObject data{ { "name", "Joe" }, { "metrics", QJsonObject{ { "tss", 50 } } },
+                          { "intervals", QJsonArray{ QJsonObject{ { "name", "Lap 1" } } } }, { "tags", QJsonArray{ "a", "b" } } };
+        QCOMPARE(ResultFormat::csv(data), QString("key,value\nintervals[0].name,Lap 1\nmetrics.tss,50\nname,Joe\ntags,a; b\n"));
+
+        CommandResult r = CommandResult::success(data);
+        r.csv = "own\n";
+        QCOMPARE(ResultFormat::csv(r), QString("own\n"));
+    }
+
     void handlerTextWins() {
         CommandResult r = CommandResult::success(QJsonObject{ { "a", 1 } });
         r.text = "custom\n";

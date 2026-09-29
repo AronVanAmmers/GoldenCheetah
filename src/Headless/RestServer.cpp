@@ -296,6 +296,15 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
     bool wantEnvelope = match.args.value("envelope").toVariant().toBool();
     match.args.remove("envelope");
 
+    // ?format=csv for the result as CSV, as --format csv (errors stay JSON)
+    QString format = match.args.value("format").toString().toLower();
+    match.args.remove("format");
+    if (!format.isEmpty() && format != "json" && format != "csv") {
+        sendError(response, 400, QString("format must be 'json' or 'csv', not '%1'").arg(format));
+        log(method, path, 400, timer.elapsed());
+        return;
+    }
+
     CommandRequest cmd;
     cmd.command = match.command;
     cmd.args = match.args;
@@ -327,6 +336,11 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
         response.setHeader("Content-Type", result.payloadType.toLatin1());
         response.setHeader("Content-Disposition", QString("inline; filename=\"%1\"").arg(result.payloadName).toUtf8());
         response.write(result.payload, true);
+    } else if (format == "csv" && (result.ok() || result.status == Status::Partial)) {
+        if (!result.payload.isEmpty()) result.data.insert("payload_bytes", result.payload.size());
+        response.setStatus(status, reason(status));
+        response.setHeader("Content-Type", "text/csv; charset=utf-8");
+        response.write(ResultFormat::csv(result).toUtf8(), true);
     } else {
         if (!result.payload.isEmpty()) result.data.insert("payload_bytes", result.payload.size());
         sendJson(response, status, ResultFormat::envelope(cmd.command, result));

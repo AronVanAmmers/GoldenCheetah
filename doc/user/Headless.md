@@ -38,6 +38,17 @@ The default output is text for people. With `--format json` every command prints
 { "ok": true, "status": "ok", "command": "activity.list", "data": { ... } }
 ```
 
+With `--format csv` the result is CSV, for spreadsheets and data tools. Only data goes to stdout, and errors go to stderr.
+
+- A result that is a list (activities, intervals, metrics, fields ...) is one table: a row per item, with nested values such as `metrics` as columns. Numbers are in full precision, or as the GUI shows them with `--display` where a command has it.
+- Other results (`activity show`, `zones show`, `version` ...) are `key,value` lines. Nested values have dotted paths, such as `metrics.average_power` or `zones.hr.zones[0].percent`.
+- `activity overview` with a single table tile (`--tile "Intervals Data"`) gives that table as the GUI shows it. The header has units in brackets, such as `Pace (min/km)`. With several tiles each value is a line: `tile,kind,row,column,units,value`.
+
+```sh
+gc-cli -a Joe --format csv interval list last --metric Average_Power,Duration > laps.csv
+gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > intervals.csv
+```
+
 Charts and exports are written to `--output FILE`, or to a file named after the activity or chart when that option is not given. `-o -` writes to stdout.
 
 | Exit | Meaning |
@@ -179,6 +190,7 @@ Notes:
 
 - Query parameters and JSON body fields have the same names as the command line options. Send JSON bodies with `Content-Type: application/json`.
 - Charts and exports come back as files. Add `?envelope=1` to get the JSON envelope instead.
+- Add `?format=csv` to get a result as CSV (`text/csv`), laid out as `--format csv` does. Errors are still JSON.
 - HTTP status codes follow the exit status: 400 bad arguments, 404 not found, 409 athlete in use, 422 failed.
 
 The server listens on 127.0.0.1 by default. It refuses requests from web pages on other sites and requests with an unexpected `Host`. Listening on another address requires `--token` (or `$GC_API_TOKEN`), and clients then send `Authorization: Bearer <token>`.

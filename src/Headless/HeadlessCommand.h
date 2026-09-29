@@ -141,6 +141,10 @@ struct CommandResult {
     // the generic formatter when present
     QString text;
 
+    // optional CSV rendering, for results the generic one can't lay out
+    // as a single table (see ResultFormat::csv)
+    QString csv;
+
     bool ok() const { return status == Status::Ok; }
 
     static CommandResult success(const QJsonObject &data = QJsonObject());

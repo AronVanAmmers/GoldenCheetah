@@ -19,6 +19,7 @@
 #include "ResultFormat.h"
 
 #include <QTextStream>
+#include <QJsonDocument>
 #include <QRegularExpression>
 #include <cmath>
 
@@ -67,6 +68,9 @@ ResultFormat::scalar(const QJsonValue &v)
     return QString();
 }
 
+// identifying columns come first in tables, in this order
+static const QStringList preferred = { "number", "id", "name", "type", "activity", "start", "stop", "duration", "date", "status", "sport", "symbol" };
+
 // flatten one level of nesting so metrics.x become columns
 static QJsonObject
 flatten(const QJsonObject &row)
@@ -98,7 +102,6 @@ ResultFormat::table(const QJsonArray &rows)
         flat << o;
     }
 
-    static const QStringList preferred = { "number", "id", "name", "type", "activity", "start", "stop", "duration", "date", "status", "sport", "symbol" };
     for (const QString &p : preferred)
         for (const QJsonObject &o : flat) if (o.contains(p) && !columns.contains(p)) { columns << p; break; }
     for (const QJsonObject &o : flat)
@@ -194,6 +197,126 @@ ResultFormat::render(const QJsonObject &data)
     QTextStream out(&text);
     renderInto(out, data, 0);
     return text;
+}
+
+//
+// CSV
+//
+
+QString
+ResultFormat::csvValue(const QJsonValue &v)
+{
+    switch (v.type()) {
+    case QJsonValue::Bool: return v.toBool() ? "true" : "false";
+    case QJsonValue::Double: {
+        double d = v.toDouble();
+        if (std::isnan(d) || std::isinf(d)) return QString();
+        if (d == std::floor(d) && std::fabs(d) < 1e15) return QString::number(qint64(d));
+        return QString::number(d, 'g', 12);
+    }
+    case QJsonValue::String: return v.toString();
+    case QJsonValue::Array: {
+        QStringList parts;
+        for (const QJsonValue &x : v.toArray()) parts << csvValue(x);
+        return parts.join("; ");
+    }
+    case QJsonValue::Object: return QString::fromUtf8(QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact));
+    default: return QString();
+    }
+}
+
+QString
+ResultFormat::csvLine(const QStringList &fields)
+{
+    QStringList out;
+    for (QString f : fields) {
+        if (f.contains(',') || f.contains('"') || f.contains('\n') || f.contains('\r')
+            || f.startsWith(' ') || f.endsWith(' ')) {
+            f.replace("\"", "\"\"");
+            f = "\"" + f + "\"";
+        }
+        out << f;
+    }
+    return out.join(",") + "\n";
+}
+
+// nested objects become columns named by their keys, as in the text table,
+// prefixed with the object's name where that would clash
+static QJsonObject
+csvFlatten(const QJsonObject &row)
+{
+    QJsonObject out;
+    for (const QString &k : row.keys()) if (!row.value(k).isObject()) out.insert(k, row.value(k));
+    for (const QString &k : row.keys()) {
+        if (!row.value(k).isObject()) continue;
+        QJsonObject inner = row.value(k).toObject();
+        for (const QString &ik : inner.keys()) {
+            QString name = out.contains(ik) ? k + "." + ik : ik;
+            out.insert(name, inner.value(ik));
+        }
+    }
+    return out;
+}
+
+// key,value lines for everything, arrays of objects by index
+static void
+csvPaths(QStringList &lines, const QString &path, const QJsonValue &v)
+{
+    if (v.isObject()) {
+        QJsonObject o = v.toObject();
+        for (const QString &k : o.keys()) csvPaths(lines, path.isEmpty() ? k : path + "." + k, o.value(k));
+    } else if (v.isArray() && !v.toArray().isEmpty() && (v.toArray().first().isObject() || v.toArray().first().isArray())) {
+        QJsonArray a = v.toArray();
+        for (int i = 0; i < a.count(); i++) csvPaths(lines, QString("%1[%2]").arg(path).arg(i), a.at(i));
+    } else {
+        lines << ResultFormat::csvLine({ path, ResultFormat::csvValue(v) });
+    }
+}
+
+QString
+ResultFormat::csv(const QJsonObject &data)
+{
+    // a list is the table when everything else is a plain value (a count,
+    // the activity), so nothing is lost by leaving those out
+    QString listKey;
+    int lists = 0, structured = 0;
+    for (const QString &k : data.keys()) {
+        QJsonValue v = data.value(k);
+        if (v.isArray() && (v.toArray().isEmpty() || v.toArray().first().isObject())) { listKey = k; lists++; }
+        if (v.isObject() || v.isArray()) structured++;
+    }
+
+    if (lists == 1 && structured == 1) {
+        QList<QJsonObject> flat;
+        for (const QJsonValue &r : data.value(listKey).toArray()) flat << csvFlatten(r.toObject());
+
+        // the text table's column order
+            QStringList columns;
+        for (const QString &p : preferred)
+            for (const QJsonObject &o : flat) if (o.contains(p) && !columns.contains(p)) { columns << p; break; }
+        for (const QJsonObject &o : flat)
+            for (const QString &k : o.keys()) if (!columns.contains(k)) columns << k;
+
+        QString text = csvLine(columns);
+        for (const QJsonObject &o : flat) {
+            QStringList fields;
+            for (const QString &c : columns) fields << csvValue(o.value(c));
+            text += csvLine(fields);
+        }
+        return text;
+    }
+
+    QStringList lines;
+    lines << csvLine({ "key", "value" });
+    csvPaths(lines, QString(), data);
+    return lines.join(QString());
+}
+
+QString
+ResultFormat::csv(const CommandResult &result)
+{
+    if (!result.csv.isEmpty()) return result.csv;
+    return csv(result.data);
 }
 
 QString
