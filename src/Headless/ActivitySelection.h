@@ -75,6 +75,17 @@ QStringList splitList(const QJsonValue &v);
 // local time, as the GUI shows it
 QString activityStart(RideItem *item);
 
+// a metric by symbol (average_power) or by the name formulas and the GUI's
+// tables use (Average_Power, W'_Work), any case; empty when unknown
+QString metricSymbol(const QString &name);
+QString metricFormulaName(const QString &symbol);
+
+// an interval type as interval list --type takes it (user, effort ...)
+QString intervalTypeKey(int type);
+
+// symbols for names, false and error for the first unknown one
+bool resolveMetrics(const QStringList &names, QStringList &symbols, QString &error);
+
 } // namespace Headless
 
 #endif

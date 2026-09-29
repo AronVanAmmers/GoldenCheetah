@@ -459,7 +459,7 @@ SOURCES +=  Headless/AthleteLock.cpp Headless/CommandRegistry.cpp Headless/Headl
             Headless/AthleteCommands.cpp Headless/ActivityCommands.cpp Headless/ImportCommands.cpp \
             Headless/FieldCommands.cpp Headless/ProcessorCommands.cpp Headless/MetricCommands.cpp \
             Headless/ChartCommands.cpp Headless/ChartRenderer.cpp Headless/ResultFormat.cpp \
-            Headless/IntervalCommands.cpp Headless/ZoneData.cpp
+            Headless/IntervalCommands.cpp Headless/ZoneData.cpp Headless/OverviewCommands.cpp
 
 # the entry points: command line and REST
 HEADERS +=  Headless/CliParser.h Headless/CliMain.h Headless/RestRouter.h Headless/RestServer.h

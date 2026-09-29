@@ -29,6 +29,7 @@
 #include "NamedSearch.h"
 
 #include <QSet>
+#include <QHash>
 #include <QFileInfo>
 #include <cmath>
 
@@ -198,6 +199,48 @@ splitList(const QJsonValue &v)
     for (const QJsonValue &x : values)
         for (const QString &part : x.toString().split(",", Qt::SkipEmptyParts)) list << part.trimmed();
     return list;
+}
+
+QString
+metricFormulaName(const QString &symbol)
+{
+    const RideMetric *m = RideMetricFactory::instance().rideMetric(symbol);
+    return m ? m->internalName().replace(" ", "_") : QString();
+}
+
+QString
+metricSymbol(const QString &name)
+{
+    // symbols, formula names (as DataFilter looks them up) and display names
+    static QHash<QString, QString> lookup;
+    const RideMetricFactory &factory = RideMetricFactory::instance();
+    if (lookup.isEmpty()) {
+        for (int i = 0; i < factory.metricCount(); i++) {
+            QString symbol = factory.metricName(i);
+            const RideMetric *m = factory.rideMetric(symbol);
+            if (!m) continue;
+            lookup.insert(m->name().replace(" ", "_").toLower(), symbol);
+            lookup.insert(metricFormulaName(symbol).toLower(), symbol);
+        }
+        for (int i = 0; i < factory.metricCount(); i++) lookup.insert(factory.metricName(i).toLower(), factory.metricName(i));
+    }
+    if (factory.haveMetric(name)) return name;
+    return lookup.value(QString(name).trimmed().replace(" ", "_").toLower());
+}
+
+bool
+resolveMetrics(const QStringList &names, QStringList &symbols, QString &error)
+{
+    symbols.clear();
+    for (const QString &n : names) {
+        QString symbol = metricSymbol(n);
+        if (symbol.isEmpty()) {
+            error = QString("unknown metric '%1', see 'metric list'").arg(n);
+            return false;
+        }
+        symbols << symbol;
+    }
+    return true;
 }
 
 QJsonObject

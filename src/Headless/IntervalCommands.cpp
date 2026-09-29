@@ -49,6 +49,25 @@ intervalTypes()
     return types;
 }
 
+QString
+intervalTypeKey(int type)
+{
+    for (const auto &t : intervalTypes()) if (t.second == type) return t.first;
+    return QString();
+}
+
+// a type by its key or by the group title the GUI shows (EFFORTS, PEAK POWER)
+static bool
+intervalTypeFromName(const QString &name, RideFileInterval::IntervalType &type)
+{
+    QString n = QString(name).remove(' ').toLower();
+    for (const auto &t : intervalTypes()) {
+        QString title = RideFileInterval::typeDescription(t.second).remove(' ').toLower();
+        if (n == t.first || n == title || n + "s" == title) { type = t.second; return true; }
+    }
+    return false;
+}
+
 static QStringList
 intervalTypeNames()
 {
@@ -79,7 +98,8 @@ intervalJson(IntervalItem *interval, int number)
     QJsonObject o;
     o.insert("number", number);
     o.insert("name", interval->name);
-    o.insert("type", RideFileInterval::typeDescription(interval->type));
+    o.insert("type", intervalTypeKey(interval->type));
+    o.insert("group", RideFileInterval::typeDescription(interval->type));   // as the sidebar titles it
     o.insert("start", jsonNumber(interval->start));
     o.insert("stop", jsonNumber(interval->stop));
     o.insert("duration", jsonNumber(interval->stop - interval->start));
@@ -90,9 +110,10 @@ intervalJson(IntervalItem *interval, int number)
     return o;
 }
 
-// metric values, all non-zero ones when no symbols are given
+// metric values, every one relevant for the activity when no symbols are
+// given; as numbers, or with display as the GUI formats them ("51:51")
 static QJsonObject
-intervalMetrics(IntervalItem *interval, const QStringList &symbols, bool metricUnits)
+intervalMetrics(IntervalItem *interval, QStringList symbols, bool metricUnits, bool display)
 {
     const RideMetricFactory &factory = RideMetricFactory::instance();
     QJsonObject m;
@@ -101,27 +122,15 @@ intervalMetrics(IntervalItem *interval, const QStringList &symbols, bool metricU
 
     if (symbols.isEmpty()) {
         for (int i = 0; i < factory.metricCount(); i++) {
-            QString symbol = factory.metricName(i);
-            double v = interval->getForSymbol(symbol, metricUnits);
-            if (std::isnan(v) || std::isinf(v) || v == 0) continue;
-            m.insert(symbol, jsonNumber(v));
+            const RideMetric *metric = factory.rideMetric(factory.metricName(i));
+            if (metric && interval->rideItem() && metric->isRelevantForRide(interval->rideItem())) symbols << metric->symbol();
         }
-    } else {
-        for (const QString &symbol : symbols) m.insert(symbol, jsonNumber(interval->getForSymbol(symbol, metricUnits)));
+    }
+    for (const QString &symbol : symbols) {
+        if (display) m.insert(symbol, interval->getStringForSymbol(symbol, metricUnits));
+        else m.insert(symbol, jsonNumber(interval->getForSymbol(symbol, metricUnits)));
     }
     return m;
-}
-
-static bool
-checkMetrics(const QStringList &symbols, QString &error)
-{
-    for (const QString &s : symbols) {
-        if (!RideMetricFactory::instance().haveMetric(s)) {
-            error = QString("unknown metric '%1', see 'metric list'").arg(s);
-            return false;
-        }
-    }
-    return true;
 }
 
 static CommandResult
@@ -132,16 +141,18 @@ listIntervals(CommandEnvironment &env, const CommandRequest &request)
     if (!item) return CommandResult::failure(Status::NotFound, error);
 
     bool metricUnits = !request.args.value("imperial").toBool(false);
-    QStringList symbols = splitList(request.args.value("metric"));
-    if (!checkMetrics(symbols, error)) return CommandResult::failure(Status::Usage, error);
+    bool display = request.args.value("display").toBool(false);
+    QStringList symbols;
+    if (!resolveMetrics(splitList(request.args.value("metric")), symbols, error)) return CommandResult::failure(Status::Usage, error);
     if (symbols.isEmpty()) symbols = summaryMetrics(item);
 
     QList<RideFileInterval::IntervalType> types;
     for (const QString &t : splitList(request.args.value("type"))) {
-        bool found = false;
-        for (const auto &known : intervalTypes()) if (known.first == t.toLower()) { types << known.second; found = true; }
-        if (!found) return CommandResult::failure(Status::Usage,
+        RideFileInterval::IntervalType type;
+        if (!intervalTypeFromName(t, type))
+            return CommandResult::failure(Status::Usage,
                         QString("unknown interval type '%1', choose from: %2").arg(t).arg(intervalTypeNames().join(", ")));
+        types << type;
     }
 
     QJsonArray list;
@@ -150,7 +161,7 @@ listIntervals(CommandEnvironment &env, const CommandRequest &request)
         number++;
         if (!types.isEmpty() && !types.contains(interval->type)) continue;
         QJsonObject o = intervalJson(interval, number);
-        o.insert("metrics", intervalMetrics(interval, symbols, metricUnits));
+        o.insert("metrics", intervalMetrics(interval, symbols, metricUnits, display));
         list.append(o);
     }
     QJsonObject data;
@@ -167,8 +178,9 @@ showInterval(CommandEnvironment &env, const CommandRequest &request)
     if (!item) return CommandResult::failure(Status::NotFound, error);
 
     bool metricUnits = !request.args.value("imperial").toBool(false);
-    QStringList symbols = splitList(request.args.value("metric"));
-    if (!checkMetrics(symbols, error)) return CommandResult::failure(Status::Usage, error);
+    bool display = request.args.value("display").toBool(false);
+    QStringList symbols;
+    if (!resolveMetrics(splitList(request.args.value("metric")), symbols, error)) return CommandResult::failure(Status::Usage, error);
 
     // by number as interval list shows it, or by name
     QString id = request.args.value("interval").toString().trimmed();
@@ -195,7 +207,7 @@ showInterval(CommandEnvironment &env, const CommandRequest &request)
     IntervalItem *interval = intervals[matches.first() - 1];
     QJsonObject o = intervalJson(interval, matches.first());
     o.insert("activity", QFileInfo(item->fileName).completeBaseName());
-    o.insert("metrics", intervalMetrics(interval, symbols, metricUnits));
+    o.insert("metrics", intervalMetrics(interval, symbols, metricUnits, display));
     return CommandResult::success(o);
 }
 
@@ -205,14 +217,16 @@ registerIntervalCommands(CommandRegistry &registry)
     Command list;
     list.spec.name = "interval.list";
     list.spec.summary = "list an activity's intervals (laps, efforts, climbs ...) with metrics";
-    list.spec.description = "Metrics default to the ones the GUI's intervals sidebar shows.";
+    list.spec.description = "Metrics default to the ones the GUI's intervals sidebar shows. For the interval "
+                            "tables on the activity overview, as the GUI draws them, see 'activity overview'.";
     list.spec.scope = Scope::Athlete;
     list.spec.params << ParamSpec("activity", ParamType::String, "activity id, start time, date, 'first' or 'last'").req().pos();
     // checked by the handler, so a comma separated list works too
     list.spec.params << ParamSpec("type", ParamType::String,
-                                  QString("only these interval types: %1").arg(intervalTypeNames().join(", "))).many();
-    list.spec.params << ParamSpec("metric", ParamType::String, "metric symbols to include (comma separated or repeated)").many();
+                                  QString("only these interval types: %1 (or the sidebar's group titles)").arg(intervalTypeNames().join(", "))).many();
+    list.spec.params << ParamSpec("metric", ParamType::String, "metric symbols or formula names, e.g. Average_Power (comma separated or repeated)").many();
     list.spec.params << ParamSpec("imperial", ParamType::Bool, "metric values in imperial units");
+    list.spec.params << ParamSpec("display", ParamType::Bool, "metric values as the GUI shows them, e.g. 51:51 or 160");
     list.spec.httpMethod = "GET";
     list.spec.httpPath = "/athletes/{athlete}/activities/{activity}/intervals";
     list.handler = listIntervals;
@@ -224,8 +238,9 @@ registerIntervalCommands(CommandRegistry &registry)
     show.spec.scope = Scope::Athlete;
     show.spec.params << ParamSpec("activity", ParamType::String, "activity id, start time, date, 'first' or 'last'").req().pos();
     show.spec.params << ParamSpec("interval", ParamType::String, "interval number (see 'interval list') or name").req().pos();
-    show.spec.params << ParamSpec("metric", ParamType::String, "only these metric symbols (default: every one with a value)").many();
+    show.spec.params << ParamSpec("metric", ParamType::String, "only these metrics, by symbol or formula name (default: every one relevant for the activity)").many();
     show.spec.params << ParamSpec("imperial", ParamType::Bool, "metric values in imperial units");
+    show.spec.params << ParamSpec("display", ParamType::Bool, "metric values as the GUI shows them, e.g. 51:51 or 160");
     show.spec.httpMethod = "GET";
     show.spec.httpPath = "/athletes/{athlete}/activities/{activity}/intervals/{interval}";
     show.handler = showInterval;

@@ -48,13 +48,10 @@ listActivities(CommandEnvironment &env, const CommandRequest &request)
     Status status;
     if (!selection.resolve(*env.session, items, error, status)) return CommandResult::failure(status, error);
 
-    QStringList metrics = splitList(request.args.value("metric"));
+    QStringList metrics;
+    if (!resolveMetrics(splitList(request.args.value("metric")), metrics, error)) return CommandResult::failure(Status::Usage, error);
     QStringList fields = splitList(request.args.value("field"));
     bool metricUnits = !request.args.value("imperial").toBool(false);
-
-    for (const QString &m : metrics)
-        if (!RideMetricFactory::instance().haveMetric(m))
-            return CommandResult::failure(Status::Usage, QString("unknown metric '%1', see 'metric list'").arg(m));
 
     QJsonArray list;
     for (RideItem *item : items) {
@@ -80,14 +77,13 @@ showActivity(CommandEnvironment &env, const CommandRequest &request)
     QJsonObject o = activitySummary(item);
     addMetadata(o, item, QStringList());
 
-    // every metric that has a value
+    // every metric relevant for the activity, zeros too as the GUI shows them
     const RideMetricFactory &factory = RideMetricFactory::instance();
     QJsonObject metrics;
     for (int i = 0; i < factory.metricCount(); i++) {
-        QString symbol = factory.metricName(i);
-        double v = item->getForSymbol(symbol, metricUnits);
-        if (std::isnan(v) || std::isinf(v) || v == 0) continue;
-        metrics.insert(symbol, jsonNumber(v));
+        const RideMetric *m = factory.rideMetric(factory.metricName(i));
+        if (!m || !m->isRelevantForRide(item)) continue;
+        metrics.insert(m->symbol(), jsonNumber(item->getForSymbol(m->symbol(), metricUnits)));
     }
     o.insert("metrics", metrics);
 
@@ -108,6 +104,7 @@ showActivity(CommandEnvironment &env, const CommandRequest &request)
     // the default overview tiles use GOVSS for runs and SwimScore for swims
     QString pmcMetric = request.args.value("pmc-metric").toString();
     if (pmcMetric.isEmpty()) pmcMetric = item->isRun ? "govss" : item->isSwim ? "swimscore" : "coggan_tss";
+    if (!metricSymbol(pmcMetric).isEmpty()) pmcMetric = metricSymbol(pmcMetric);
     if (!RideMetricFactory::instance().haveMetric(pmcMetric))
         return CommandResult::failure(Status::Usage, QString("unknown metric '%1', see 'metric list'").arg(pmcMetric));
     PMCData *pmc = pmcFor(*env.session, pmcMetric, -1, -1);
@@ -123,16 +120,20 @@ showActivity(CommandEnvironment &env, const CommandRequest &request)
         o.insert("pmc", p);
     }
 
-    // in brief, 'interval list' and 'interval show' have their metrics
+    // in brief, 'interval list' and 'interval show' have their metrics and
+    // 'activity overview' the interval tables as the GUI shows them
     QJsonArray intervals;
     int number = 0;
     for (IntervalItem *i : item->intervals()) {
         QJsonObject io;
         io.insert("number", ++number);
         io.insert("name", i->name);
-        io.insert("type", RideFileInterval::typeDescription(i->type));
+        io.insert("type", intervalTypeKey(i->type));
+        io.insert("group", RideFileInterval::typeDescription(i->type));
         io.insert("start", i->start);
         io.insert("stop", i->stop);
+        io.insert("duration", jsonNumber(i->stop - i->start));
+        io.insert("distance", jsonNumber(i->getForSymbol("total_distance", metricUnits)));
         intervals.append(io);
     }
     o.insert("intervals", intervals);
@@ -351,7 +352,7 @@ registerActivityCommands(CommandRegistry &registry)
     list.spec.summary = "list activities, optionally with metrics and fields";
     list.spec.scope = Scope::Athlete;
     list.spec.params << ActivitySelection::params(true);
-    list.spec.params << ParamSpec("metric", ParamType::String, "metric symbols to include (comma separated or repeated)").many();
+    list.spec.params << ParamSpec("metric", ParamType::String, "metric symbols or formula names, e.g. Average_Power (comma separated or repeated)").many();
     list.spec.params << ParamSpec("field", ParamType::String, "metadata fields to include").many();
     list.spec.params << ParamSpec("imperial", ParamType::Bool, "metric values in imperial units");
     list.spec.httpMethod = "GET";

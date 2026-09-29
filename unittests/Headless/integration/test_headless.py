@@ -564,8 +564,9 @@ class TestActivitiesMetricsCharts(Headless):
         run = "2024_07_09_15_12_48"
         env = self.gcj("interval", "list", run)["data"]
         intervals = env["intervals"]
-        self.assertEqual(intervals[0]["type"], "ALL")
-        laps = [i for i in intervals if i["type"] == "USER"]
+        self.assertEqual(intervals[0]["type"], "all")
+        self.assertEqual(intervals[0]["group"], "ALL")
+        laps = [i for i in intervals if i["type"] == "user"]
         self.assertGreater(len(laps), 5)
         # the intervals sidebar's metrics by default, relevant ones only
         self.assertIn("pace", laps[0]["metrics"])
@@ -577,15 +578,60 @@ class TestActivitiesMetricsCharts(Headless):
         self.assertEqual(sorted(only[0]["metrics"]), ["1m_peak_hr", "average_power"])
         self.gcj("interval", "list", run, "--type", "bogus", expect=2)
         self.gcj("interval", "list", run, "--metric", "nonsense", expect=2)
+        # the sidebar's group titles and the formula names charts use work too
+        titled = self.gcj("interval", "list", run, "--type", "USER", "--metric", "Average_Power,W'_Work,Duration")["data"]["intervals"]
+        self.assertEqual(len(titled), len(laps))
+        self.assertEqual(sorted(titled[0]["metrics"]), ["average_power", "skiba_wprime_exp", "workout_time"])
+        shown = self.gcj("interval", "list", run, "--type", "user", "--metric", "workout_time,average_power", "--display")["data"]["intervals"]
+        self.assertRegex(shown[0]["metrics"]["workout_time"], r"^\d\d:\d\d$")
+        self.assertRegex(shown[0]["metrics"]["average_power"], r"^\d+$")
 
         # by number or by name, with every metric
         lap = self.gcj("interval", "show", run, str(laps[1]["number"]))["data"]
         self.assertEqual(lap["name"], laps[1]["name"])
         self.assertGreater(len(lap["metrics"]), 50)
+        self.assertIn(0, lap["metrics"].values())   # zeros are kept, as the GUI shows them
+        self.assertNotIn("pace_swim", lap["metrics"])
         self.assertEqual(lap["metrics"]["average_power"], only[1]["metrics"]["average_power"])
         self.assertEqual(self.gcj("interval", "show", run, laps[1]["name"].upper())["data"]["number"], laps[1]["number"])
         self.gcj("interval", "show", run, "999", expect=3)
         self.gcj("interval", "show", run, "no such lap", expect=3)
+
+    def test_overview_as_the_gui_shows_it(self):
+        # no saved layouts: the ones GoldenCheetah starts with
+        ride = self.gcj("activity", "overview", "2020_01_26_13_00_38")["data"]
+        self.assertEqual(ride["layout"], "General")
+        tiles = {(t["name"], t["kind"]): t for t in ride["tiles"]}
+        self.assertEqual(tiles[("Sport", "field")]["value"], "Bike")
+        # one interval: the GUI shows a list of name, value and units
+        self.assertEqual(tiles[("Intervals", "table")]["style"], "list")
+        tiles = {t["name"]: t for t in ride["tiles"] if t["kind"] == "table"}
+        totals = {r[0]: r for r in tiles["Totals"]["rows"]}
+        self.assertEqual(totals["Duration"][1], "29:58")
+        self.assertEqual(tiles["Power Zones"]["kind"], "table")
+
+        run = self.gcj("activity", "overview", "last")["data"]
+        self.assertEqual(run["layout"], "Run")
+        table = [t for t in run["tiles"] if t["name"] == "Intervals Data"][0]
+        self.assertEqual(table["style"], "grid")
+        names = [c["name"] for c in table["columns"]]
+        self.assertEqual(names[:2], ["Name", "Pace"])
+        self.assertEqual(table["columns"][1]["units"], "min/km")
+        intervals = self.gcj("interval", "list", "last")["data"]["intervals"]
+        self.assertEqual(len(table["rows"]), len(intervals))
+        self.assertRegex(table["rows"][0][names.index("Duration")], r"^\d+:\d\d")   # durations as times
+        pmc = [t for t in run["tiles"] if t["kind"] == "pmc"][0]
+        self.assertEqual(pmc["metric"], "govss")
+        self.assertIn("fitness", pmc)
+
+        only = self.gcj("activity", "overview", "last", "--tile", "intervals data")["data"]["tiles"]
+        self.assertEqual([t["name"] for t in only], ["Intervals Data"])
+        self.gcj("activity", "overview", "last", "--tile", "nothing", expect=3)
+        self.assertEqual(self.gcj("activity", "overview", "last", "--layout", "general")["data"]["layout"], "General")
+        self.gcj("activity", "overview", "last", "--layout", "nothing", expect=3)
+        text = self.gc("--athlete", self.athlete, "activity", "overview", "last", "--tile", "Intervals Data")
+        self.assertEqual(text.code, 0, text)
+        self.assertIn(b"min/km", text.out)
 
     def test_activity_zones_and_pmc(self):
         run = self.gcj("activity", "show", "2024_07_09_15_12_48")["data"]
@@ -602,6 +648,8 @@ class TestActivitiesMetricsCharts(Headless):
         self.assertEqual(run["pmc"]["metric"], "govss")
         self.assertGreater(run["pmc"]["stress"], 0)
         self.assertEqual(run["intervals"][0]["number"], 1)
+        self.assertIn("duration", run["intervals"][0])
+        self.assertIn(0, run["metrics"].values())
 
         ride = self.gcj("activity", "show", "2020_01_26_13_00_38", "--pmc-metric", "trimp_points")["data"]
         self.assertNotIn("pace", ride["zones"])
@@ -770,6 +818,8 @@ class TestRest(Headless):
         env = self.jcall("GET", a + "/activities/last/intervals/" + urllib.parse.quote(lap["name"]))
         self.assertEqual(env["data"]["metrics"]["average_power"], lap["metrics"]["average_power"])
         self.jcall("GET", a + "/activities/last/intervals/999", expect=404)
+        env = self.jcall("GET", a + "/activities/last/overview?tile=Intervals%20Data")
+        self.assertIn("table", [t["kind"] for t in env["data"]["tiles"]])
         env = self.jcall("GET", a + "/charts/pmc?envelope=1")
         self.assertGreater(env["data"]["payload_bytes"], 1000)
 

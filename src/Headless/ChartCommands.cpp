@@ -249,9 +249,9 @@ meanMaxChart(CommandEnvironment &env, const CommandRequest &request)
 static CommandResult
 pmcChart(CommandEnvironment &env, const CommandRequest &request)
 {
-    QString metric = request.args.value("metric").toString();
-    if (!RideMetricFactory::instance().haveMetric(metric))
-        return CommandResult::failure(Status::Usage, QString("unknown metric '%1'").arg(metric));
+    QString metric = metricSymbol(request.args.value("metric").toString());
+    if (metric.isEmpty())
+        return CommandResult::failure(Status::Usage, QString("unknown metric '%1'").arg(request.args.value("metric").toString()));
 
     PMCData *pmc = pmcFor(*env.session, metric, -1, -1);
     if (!pmc || !pmc->start().isValid()) return CommandResult::failure(Status::Failed, "no activities to compute the PMC from");
@@ -336,9 +336,9 @@ zonesChart(CommandEnvironment &env, const CommandRequest &request)
 static CommandResult
 trendChart(CommandEnvironment &env, const CommandRequest &request)
 {
-    QString metric = request.args.value("metric").toString();
+    QString metric = metricSymbol(request.args.value("metric").toString());
     const RideMetric *m = RideMetricFactory::instance().rideMetric(metric);
-    if (!m) return CommandResult::failure(Status::Usage, QString("unknown metric '%1'").arg(metric));
+    if (!m) return CommandResult::failure(Status::Usage, QString("unknown metric '%1'").arg(request.args.value("metric").toString()));
 
     QList<RideItem*> items;
     QString error;
@@ -465,7 +465,7 @@ registerChartCommands(CommandRegistry &registry)
     trend.spec.name = "chart.trend";
     trend.spec.summary = "draw a metric over time, by activity, week, month or year";
     trend.spec.scope = Scope::Athlete;
-    trend.spec.params << ParamSpec("metric", ParamType::String, "metric symbol").req().pos();
+    trend.spec.params << ParamSpec("metric", ParamType::String, "metric symbol or formula name").req().pos();
     trend.spec.params << ParamSpec("by", ParamType::String, "period").def("week").oneOf({ "activity", "day", "week", "month", "year" });
     trend.spec.params << ActivitySelection::params(false);
     trend.spec.params << imageParams();
