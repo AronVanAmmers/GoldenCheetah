@@ -434,6 +434,7 @@ class TestLivesWithOtherTools(Headless):
         with open(zones, "w") as f:
             f.write(text)
 
+    @unittest.skipIf(os.name == "nt", "fakes a lock held by a POSIX 'sleep'; the AthleteLock unit test covers Windows")
     def test_refuses_while_another_process_holds_the_athlete(self):
         holder = subprocess.Popen(["sleep", "60"])
         try:
@@ -776,7 +777,10 @@ class TestRest(Headless):
 
     @classmethod
     def tearDownClass(cls):
-        cls.server.send_signal(signal.SIGINT)
+        if os.name == "nt":
+            cls.server.terminate()      # no SIGINT for child processes on Windows
+        else:
+            cls.server.send_signal(signal.SIGINT)
         try:
             cls.server.wait(timeout=15)
         except subprocess.TimeoutExpired:

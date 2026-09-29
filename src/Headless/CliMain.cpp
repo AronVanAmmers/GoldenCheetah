@@ -41,6 +41,7 @@
 
 #ifdef Q_OS_WIN
 #include <io.h>
+#include <fcntl.h>
 #define isatty _isatty
 #define fileno _fileno
 #else
@@ -216,6 +217,10 @@ cliMain(int argc, char **argv)
     if (!result.payload.isEmpty()) {
         QString target = g.output.isEmpty() ? result.payloadName : g.output;
         if (target == "-") {
+#ifdef Q_OS_WIN
+            // images and exports are bytes, don't let the C runtime add \r
+            _setmode(_fileno(stdout), _O_BINARY);
+#endif
             writeOut(result.payload);
             return finish(int(result.status));
         }
@@ -225,7 +230,8 @@ cliMain(int argc, char **argv)
             return finish(int(Status::Failed));
         }
         out.close();
-        written = QFileInfo(target).absoluteFilePath();
+        // as the platform writes paths (C:\... on Windows)
+        written = QDir::toNativeSeparators(QFileInfo(target).absoluteFilePath());
         result.data.insert("output", written);
     }
 
