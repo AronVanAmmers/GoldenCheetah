@@ -92,3 +92,7 @@ unittests/Headless/cliParser/testCliParser
 unittests/Headless/commandRegistry/testCommandRegistry
 unittests/Headless/restRouter/testRestRouter
 unittests/Headless/resultFormat/testResultFormat
+
+# Python bytecode from the headless integration tests
+__pycache__/
+*.pyc

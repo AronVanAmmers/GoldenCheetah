@@ -42,14 +42,14 @@ With `--format csv` the result is CSV, for spreadsheets and data tools. Only dat
 
 - A result that is a list (activities, intervals, metrics, fields ...) is one table: a row per item, with nested values such as `metrics` as columns. Numbers are in full precision, or as the GUI shows them with `--display` where a command has it.
 - Other results (`activity show`, `zones show`, `version` ...) are `key,value` lines. Nested values have dotted paths, such as `metrics.average_power` or `zones.hr.zones[0].percent`.
-- `activity overview` with a single table tile (`--tile "Intervals Data"`) gives that table as the GUI shows it. The header has units in brackets, such as `Pace (min/km)`. With several tiles each value is a line: `tile,kind,row,column,units,value`.
+- `activity overview` with a single table tile (`--tile "Intervals Data"`) gives that table as the GUI shows it. The header has units in brackets, such as `Pace (min/km)`. An interval table is preceded by the interval count line. With several tiles each value is a line: `tile,kind,row,column,units,value`, and that count is one summary row.
 
 ```sh
 gc-cli -a Joe --format csv interval list last --metric Average_Power,Duration > laps.csv
 gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > intervals.csv
 ```
 
-Charts and exports are written to `--output FILE`, or to a file named after the activity or chart when that option is not given. `-o -` writes to stdout.
+`--output FILE` (`-o`) writes the result there: a chart, an exported activity, or the text, JSON, or CSV that would otherwise be printed. Charts and exports are still written to a file named after the activity or chart when `-o` is omitted. `-o -` writes to stdout. If the file cannot be written, the command exits with an error.
 
 | Exit | Meaning |
 |---|---|
@@ -121,6 +121,8 @@ For raw numbers:
 Wherever a command takes `--metric`, a metric can be given by its symbol (`average_power`, `skiba_wprime_exp`) or by the name used in formulas and in the GUI's table definitions (`Average_Power`, `W'_Work`). `metric list` shows both, and `--search` matches either. `--display` on `interval list` and `interval show` returns values as the GUI formats them rather than as numbers.
 
 Intervals are numbered in the order `interval list` shows them: usually the entire activity, the laps and marked intervals, then the efforts, climbs and segments GoldenCheetah found. Each has a `type`, which `--type` accepts: `user`, `all`, `device`, `peakpower`, `peakpace`, `effort`, `route` or `climb`. Each also has a `group`, the title the sidebar shows (`USER`, `EFFORTS`, `PEAK POWER` ...), and `--type` accepts those titles too.
+
+`interval list`, and an interval tile on `activity overview`, start with one line of counts for the whole activity, including zeros: recorded laps (from the device), user intervals, and discovered efforts (efforts, peaks, climbs and segments). The entire activity is not part of that count. `--type` filters the rows and leaves the counts unchanged. In CSV the line is the first row.
 
 ```sh
 gc-cli -a Joe interval list last --type user --metric Pace,Average_Power,Average_Heart_Rate,1m_peak_hr --display

@@ -340,7 +340,7 @@ CliParser::usage(const CommandRegistry &registry, const QString &program)
         << "  -a, --athlete NAME      athlete folder name inside --home\n"
         << "  --athlete-dir DIR       full path of an athlete folder (sets --home and --athlete)\n"
         << "  -f, --format FMT        output format: text (default), json or csv\n"
-        << "  -o, --output FILE       write binary output (charts, exports) here, '-' for stdout\n"
+        << "  -o, --output FILE       write output here (charts, exports, text, json or csv), '-' for stdout\n"
         << "  -q, --quiet             print errors only\n"
         << "  -v, --verbose           print GoldenCheetah diagnostics to stderr\n"
         << "  --lock-wait SECS        wait up to SECS for another process to release the athlete\n"
