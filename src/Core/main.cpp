@@ -222,10 +222,6 @@ main(int argc, char *argv[])
 {
     int ret=2; // return code from qapplication, default to error
 
-    // command line (headless) use: GoldenCheetah --cli <command> ...
-    // runs the command and exits without ever creating a window
-    if (Headless::isCliInvocation(argc, argv)) return Headless::cliMain(argc, argv);
-
 #ifdef Q_OS_WIN
     // On Windows without console, we try to attach to the parent's console
     // and redirect stderr and stdout on success, to have a more Unix-like
@@ -235,6 +231,11 @@ main(int argc, char *argv[])
         freopen("CONOUT$", "w", stdout);
     }
 #endif
+
+    // command line (headless) use: GoldenCheetah --cli <command> ...
+    // runs the command and exits without ever creating a window
+    // (after attaching to the console on Windows, so output is seen)
+    if (Headless::isCliInvocation(argc, argv)) return Headless::cliMain(argc, argv);
 
     //
     // PROCESS COMMAND LINE SWITCHES
