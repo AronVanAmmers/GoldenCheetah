@@ -157,10 +157,12 @@ listMetrics(CommandEnvironment &, const CommandRequest &request)
         const RideMetric *m = factory.rideMetric(factory.metricName(i));
         if (!m) continue;
         if (!search.isEmpty() && !m->symbol().contains(search, Qt::CaseInsensitive)
-            && !m->name().contains(search, Qt::CaseInsensitive)) continue;
+            && !m->name().contains(search, Qt::CaseInsensitive)
+            && !metricFormulaName(m->symbol()).contains(search, Qt::CaseInsensitive)) continue;
         QJsonObject o;
         o.insert("symbol", m->symbol());
         o.insert("name", m->name());
+        o.insert("formula", metricFormulaName(m->symbol()));
         o.insert("units", m->units(metricUnits));
         o.insert("description", m->description());
         list.append(o);
@@ -188,9 +190,9 @@ aggregateMetrics(CommandEnvironment &env, const CommandRequest &request)
 
     bool metricUnits = !request.args.value("imperial").toBool(false);
     QJsonObject values;
-    for (const QString &symbol : splitList(request.args.value("metric"))) {
-        if (!RideMetricFactory::instance().haveMetric(symbol))
-            return CommandResult::failure(Status::Usage, QString("unknown metric '%1', see 'metric list'").arg(symbol));
+    QStringList symbols;
+    if (!resolveMetrics(splitList(request.args.value("metric")), symbols, error)) return CommandResult::failure(Status::Usage, error);
+    for (const QString &symbol : symbols) {
         QString value = env.session->rideCache()->getAggregate(symbol, spec, metricUnits, true);
         bool ok = false;
         double d = value.toDouble(&ok);
@@ -205,9 +207,9 @@ aggregateMetrics(CommandEnvironment &env, const CommandRequest &request)
 static CommandResult
 pmcCommand(CommandEnvironment &env, const CommandRequest &request)
 {
-    QString metric = request.args.value("metric").toString();
-    if (!RideMetricFactory::instance().haveMetric(metric))
-        return CommandResult::failure(Status::Usage, QString("unknown metric '%1', see 'metric list'").arg(metric));
+    QString metric = metricSymbol(request.args.value("metric").toString());
+    if (metric.isEmpty())
+        return CommandResult::failure(Status::Usage, QString("unknown metric '%1', see 'metric list'").arg(request.args.value("metric").toString()));
 
     int sts = request.args.value("sts").toInt(-1);
     int lts = request.args.value("lts").toInt(-1);
@@ -340,7 +342,7 @@ registerMetricCommands(CommandRegistry &registry)
 {
     Command list;
     list.spec.name = "metric.list";
-    list.spec.summary = "list metric symbols, names and units";
+    list.spec.summary = "list metrics: symbols, names, formula names and units";
     list.spec.scope = Scope::Global;
     list.spec.params << ParamSpec("search", ParamType::String, "only metrics whose symbol or name contains this");
     list.spec.params << ParamSpec("imperial", ParamType::Bool, "show imperial units");
@@ -353,7 +355,7 @@ registerMetricCommands(CommandRegistry &registry)
     agg.spec.name = "metric.aggregate";
     agg.spec.summary = "total or average metrics over activities, as the trends charts";
     agg.spec.scope = Scope::Athlete;
-    agg.spec.params << ParamSpec("metric", ParamType::String, "metric symbols (comma separated or repeated)").req().many();
+    agg.spec.params << ParamSpec("metric", ParamType::String, "metric symbols or formula names, e.g. Average_Power (comma separated or repeated)").req().many();
     agg.spec.params << ActivitySelection::params(false);
     agg.spec.params << ParamSpec("imperial", ParamType::Bool, "imperial units");
     agg.spec.httpMethod = "GET";

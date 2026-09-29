@@ -41,6 +41,7 @@ commandRegistry()
         registerAthleteCommands(registry);
         registerActivityCommands(registry);
         registerIntervalCommands(registry);
+        registerOverviewCommands(registry);
         registerImportCommands(registry);
         registerFieldCommands(registry);
         registerProcessorCommands(registry);
