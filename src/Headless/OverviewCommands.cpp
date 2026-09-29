@@ -442,8 +442,15 @@ tileText(const QJsonObject &tile)
 // CSV: one table tile as that table, else a line per value
 //
 
+// a data table whose program lists intervals, as the default Intervals tiles do
+static bool
+intervalProgram(const QString &program)
+{
+    return program.contains(QLatin1String("intervalstrings(")) || program.contains(QLatin1String("intervals("));
+}
+
 static QString
-tilesCsv(const QJsonArray &tiles)
+tilesCsv(const QJsonArray &tiles, const QList<bool> &intervalTiles, const QString &censusLine)
 {
     auto line = [](const QStringList &f) { return ResultFormat::csvLine(f); };
 
@@ -454,7 +461,9 @@ tilesCsv(const QJsonArray &tiles)
             QString units = c["units"].toString();
             head << (units.isEmpty() || t["style"] == "list" ? c["name"].toString() : QString("%1 (%2)").arg(c["name"].toString()).arg(units));
         }
-        QString text = line(head);
+        QString text;
+        if (!intervalTiles.isEmpty() && intervalTiles[0]) text += line({ censusLine });
+        text += line(head);
         for (const QJsonValue &r : t["rows"].toArray()) {
             QStringList fields;
             for (const QJsonValue &v : r.toArray()) fields << v.toString();
@@ -464,6 +473,7 @@ tilesCsv(const QJsonArray &tiles)
     }
 
     QString text = line({ "tile", "kind", "row", "column", "units", "value" });
+    if (intervalTiles.contains(true)) text += line({ "", "summary", "", "", "", censusLine });
     for (const QJsonValue &v : tiles) {
         QJsonObject t = v.toObject();
         QString name = t["name"].toString(), kind = t["kind"].toString();
@@ -530,6 +540,8 @@ overviewCommand(CommandEnvironment &env, const CommandRequest &request)
     // formulas use the GUI's units setting, so the tiles do too
     bool metricUnits = GlobalContext::context()->useMetricUnits;
     QStringList tileNames = splitList(request.args.value("tile"));
+    IntervalCensus census = intervalCensus(item);
+    QString censusLine = intervalCensusLine(census);
 
     // some formula functions look at the activity the GUI has selected
     Context *context = env.session->context();
@@ -537,7 +549,9 @@ overviewCommand(CommandEnvironment &env, const CommandRequest &request)
     context->ride = item;
 
     QJsonArray tiles;
+    QList<bool> intervalTiles;
     QString text;
+    bool showedCensus = false;
     for (const OverviewChart &chart : layout.charts) {
         // columns left to right, top to bottom within a column
         QList<QJsonObject> configs;
@@ -555,7 +569,15 @@ overviewCommand(CommandEnvironment &env, const CommandRequest &request)
             QJsonObject tile = evaluateTile(*env.session, item, config, metricUnits);
             tile.insert("chart", chart.title);
             tile.insert("column", config["column"].toInt());
+            int tileType = config["type"].toInt();
+            bool isIntervals = tileType == INTERVAL
+                || (tileType == DATATABLE && intervalProgram(config["program"].toString()));
             tiles.append(tile);
+            intervalTiles << isIntervals;
+            if (isIntervals && !showedCensus) {
+                text += censusLine + "\n";
+                showedCensus = true;
+            }
             text += tileText(tile) + "\n";
         }
     }
@@ -568,9 +590,12 @@ overviewCommand(CommandEnvironment &env, const CommandRequest &request)
     QJsonObject data;
     data.insert("activity", QFileInfo(item->fileName).completeBaseName());
     data.insert("layout", layout.name);
+    data.insert("recorded_laps", census.recordedLaps);
+    data.insert("user_intervals", census.userIntervals);
+    data.insert("discovered_efforts", census.discoveredEfforts);
     data.insert("tiles", tiles);
     CommandResult result = CommandResult::success(data);
-    result.csv = tilesCsv(tiles);
+    result.csv = tilesCsv(tiles, intervalTiles, censusLine);
     result.text = QString("%1, %2 layout\n\n").arg(activityStart(item).replace("T", " ")).arg(layout.name) + text;
     return result;
 }

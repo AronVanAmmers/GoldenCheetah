@@ -138,6 +138,7 @@ class TestBasics(Headless):
         self.assertEqual(r.code, 0)
         self.assertIn(b"Usage: GoldenCheetah --cli", r.out)
         self.assertIn(b"processor run", r.out)
+        self.assertIn(b"text, json or csv", r.out)
 
         r = self.gc("help", "processor", "run")
         self.assertEqual(r.code, 0)
@@ -538,6 +539,22 @@ class TestActivitiesMetricsCharts(Headless):
         self.assertTrue(r.out.startswith(b"Minutes"))
         self.gcj("activity", "export", "last", "--as", "doc", expect=2)
 
+        # a table is not a chart: -o writes the csv, and a bad path is an error
+        table = os.path.join(self.tmp, "intervals.csv")
+        r = self.gc("--athlete", self.athlete, "--format", "csv", "-o", table, "interval", "list", "last")
+        self.assertEqual(r.code, 0, r)
+        self.assertEqual(r.out, b"")
+        self.assertIn(b"wrote", r.err)
+        saved = open(table, "rb").read()
+        self.assertTrue(saved.startswith(b'"recorded laps:'), saved[:80])
+        self.assertIn(b"number,name,type", saved)
+        missing = os.path.join(self.tmp, "no-such-dir", "intervals.csv")
+        r = self.gc("--athlete", self.athlete, "--format", "csv", "-o", missing, "interval", "list", "last")
+        self.assertNotEqual(r.code, 0)
+        self.assertEqual(r.out, b"")
+        self.assertIn(b"can't write", r.err)
+        self.assertFalse(os.path.exists(missing))
+
     def test_metrics(self):
         agg = self.gcj("metric", "aggregate", "--metric", "workout_time,total_distance")["data"]
         self.assertEqual(agg["activities"], 3)
@@ -571,6 +588,20 @@ class TestActivitiesMetricsCharts(Headless):
         self.assertEqual(intervals[0]["group"], "ALL")
         laps = [i for i in intervals if i["type"] == "user"]
         self.assertGreater(len(laps), 5)
+        # counts cover empty groups too, and stay put when --type filters the rows
+        discovered = {"effort", "peakpower", "peakpace", "climb", "route"}
+        self.assertEqual(env["recorded_laps"], sum(i["type"] == "device" for i in intervals))
+        self.assertEqual(env["user_intervals"], len(laps))
+        self.assertEqual(env["discovered_efforts"], sum(i["type"] in discovered for i in intervals))
+        filtered = self.gcj("interval", "list", run, "--type", "user")["data"]
+        self.assertEqual(filtered["recorded_laps"], env["recorded_laps"])
+        self.assertEqual(filtered["discovered_efforts"], env["discovered_efforts"])
+        self.assertEqual(len(filtered["intervals"]), env["user_intervals"])
+        bike = self.gcj("interval", "list", "2020_01_26_13_00_38")["data"]
+        self.assertEqual([bike["recorded_laps"], bike["user_intervals"], bike["discovered_efforts"]], [0, 0, 0])
+        text = self.gc("--athlete", self.athlete, "interval", "list", "2020_01_26_13_00_38")
+        self.assertEqual(text.code, 0, text)
+        self.assertTrue(text.out.startswith(b"recorded laps: 0, user intervals: 0, discovered efforts: 0\n"), text)
         # the intervals sidebar's metrics by default, relevant ones only
         self.assertIn("pace", laps[0]["metrics"])
         self.assertNotIn("pace_swim", laps[0]["metrics"])
@@ -609,13 +640,14 @@ class TestActivitiesMetricsCharts(Headless):
         run = "2024_07_09_15_12_48"
         # a list is a table, with its nested metrics as columns
         rows = self.csv_rows("interval", "list", run, "--metric", "average_power,Duration")
-        head, body = rows[0], rows[1:]
+        self.assertIn("recorded laps:", rows[0][0])
+        head, body = rows[1], rows[2:]
         self.assertEqual(head[:4], ["number", "name", "type", "start"])
         intervals = self.gcj("interval", "list", run, "--metric", "average_power")["data"]["intervals"]
         self.assertEqual(len(body), len(intervals))
         self.assertEqual(float(body[1][head.index("average_power")]), intervals[1]["metrics"]["average_power"])
         shown = self.csv_rows("interval", "list", run, "--metric", "workout_time", "--display")
-        self.assertRegex(shown[1][shown[0].index("workout_time")], r"^\d+:\d\d")
+        self.assertRegex(shown[2][shown[1].index("workout_time")], r"^\d+:\d\d")
 
         # fields are quoted where they need it
         self.gcj("activity", "set", run, "--set", 'Notes=easy, then "fast"')
@@ -634,10 +666,12 @@ class TestActivitiesMetricsCharts(Headless):
 
         # an overview table as the GUI shows it, several tiles one value a line
         rows = self.csv_rows("activity", "overview", run, "--tile", "Intervals Data")
-        self.assertEqual(rows[0][:2], ["Name", "Pace (min/km)"])
-        self.assertEqual(len(rows) - 1, len(intervals))
+        self.assertIn("recorded laps:", rows[0][0])
+        self.assertEqual(rows[1][:2], ["Name", "Pace (min/km)"])
+        self.assertEqual(len(rows) - 2, len(intervals))
         rows = self.csv_rows("activity", "overview", run)
         self.assertEqual(rows[0], ["tile", "kind", "row", "column", "units", "value"])
+        self.assertTrue(any(r[1] == "summary" and "recorded laps:" in r[5] for r in rows))
         self.assertIn(("Sport", "field", "", "value", "", "Run"), [tuple(r) for r in rows])
 
         # errors go to stderr only
@@ -650,6 +684,7 @@ class TestActivitiesMetricsCharts(Headless):
         # no saved layouts: the ones GoldenCheetah starts with
         ride = self.gcj("activity", "overview", "2020_01_26_13_00_38")["data"]
         self.assertEqual(ride["layout"], "General")
+        self.assertEqual([ride["recorded_laps"], ride["user_intervals"], ride["discovered_efforts"]], [0, 0, 0])
         tiles = {(t["name"], t["kind"]): t for t in ride["tiles"]}
         self.assertEqual(tiles[("Sport", "field")]["value"], "Bike")
         # one interval: the GUI shows a list of name, value and units
@@ -681,6 +716,10 @@ class TestActivitiesMetricsCharts(Headless):
         text = self.gc("--athlete", self.athlete, "activity", "overview", "last", "--tile", "Intervals Data")
         self.assertEqual(text.code, 0, text)
         self.assertIn(b"min/km", text.out)
+        self.assertIn(b"recorded laps:", text.out)
+        bike = self.gc("--athlete", self.athlete, "activity", "overview", "2020_01_26_13_00_38", "--tile", "Intervals")
+        self.assertEqual(bike.code, 0, bike)
+        self.assertIn(b"recorded laps: 0, user intervals: 0, discovered efforts: 0\n", bike.out)
 
     def test_activity_zones_and_pmc(self):
         run = self.gcj("activity", "show", "2024_07_09_15_12_48")["data"]
@@ -873,7 +912,9 @@ class TestRest(Headless):
         status, ctype, data = self.call("GET", a + "/activities/last/intervals?type=user&format=csv")
         self.assertEqual(status, 200)
         self.assertIn("text/csv", ctype)
-        self.assertTrue(data.startswith(b"number,name,type"))
+        lines = data.splitlines()
+        self.assertTrue(lines[0].startswith(b'"recorded laps:'), lines[0])
+        self.assertTrue(lines[1].startswith(b"number,name,type"))
         self.jcall("GET", a + "/activities/last/intervals?format=xml", expect=400)
         self.jcall("GET", a + "/activities/nothing/intervals?format=csv", expect=404)   # errors stay JSON
         env = self.jcall("GET", a + "/activities/last/overview?tile=Intervals%20Data")

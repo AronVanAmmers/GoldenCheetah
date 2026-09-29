@@ -212,7 +212,8 @@ cliMain(int argc, char **argv)
 
     CommandResult result = CommandRunner::run(commandRegistry(), request, runOptions);
 
-    // binary output: a chart or an exported activity
+    // binary output: a chart or an exported activity. -o names the file;
+    // without it, the command's suggested name is used
     QString written;
     if (!result.payload.isEmpty()) {
         QString target = g.output.isEmpty() ? result.payloadName : g.output;
@@ -235,14 +236,41 @@ cliMain(int argc, char **argv)
         result.data.insert("output", written);
     }
 
+    // text, json and csv go to -o when there is no binary payload. A failed
+    // command keeps its own error and does not create the file. "-" is stdout.
+    const bool fileText = result.payload.isEmpty() && !g.output.isEmpty() && g.output != "-"
+                          && (result.ok() || result.status == Status::Partial);
+    // false: the body was not saved. The error is already on stderr.
+    auto saveText = [&](const QByteArray &body, bool wroteOnStderr) -> bool {
+        if (!fileText) {
+            writeOut(body);
+            return true;
+        }
+        QFile out(g.output);
+        if (!out.open(QFile::WriteOnly) || out.write(body) != body.size()) {
+            writeErr(QString("error: can't write %1\n").arg(g.output));
+            return false;
+        }
+        out.close();
+        if (!g.quiet) {
+            QString msg = QString("wrote %1 (%2 bytes)\n")
+                .arg(QDir::toNativeSeparators(QFileInfo(g.output).absoluteFilePath()))
+                .arg(body.size());
+            if (wroteOnStderr) writeErr(msg);
+            else writeOut(msg.toLocal8Bit());
+        }
+        return true;
+    };
+
     if (json) {
-        writeOut(QJsonDocument(ResultFormat::envelope(request.command, result)).toJson(QJsonDocument::Indented));
+        QByteArray body = QJsonDocument(ResultFormat::envelope(request.command, result)).toJson(QJsonDocument::Indented);
+        if (!saveText(body, true)) return finish(int(Status::Failed));
     } else if (csv) {
         // only data on stdout, so it can go straight into a file or a pipe
         if (!result.ok() && result.status != Status::Partial) {
             writeErr(QString("error: %1\n").arg(result.error));
         } else {
-            writeOut(ResultFormat::csv(result).toUtf8());
+            if (!saveText(ResultFormat::csv(result).toUtf8(), true)) return finish(int(Status::Failed));
             if (result.status == Status::Partial) writeErr(QString("warning: %1\n").arg(result.error));
         }
         for (const QString &w : result.warnings) writeErr(QString("warning: %1\n").arg(w));
@@ -251,10 +279,14 @@ cliMain(int argc, char **argv)
             // a per item report says what went wrong where
             if (!g.quiet && !result.text.isEmpty()) writeOut(result.text.toLocal8Bit());
             writeErr(QString("error: %1\n").arg(result.error));
-        } else if (!g.quiet) {
-            if (!written.isEmpty()) writeOut(QString("wrote %1 (%2 bytes)\n").arg(written).arg(result.payload.size()).toLocal8Bit());
-            else writeOut(ResultFormat::text(result).toLocal8Bit());
+        } else if (!written.isEmpty()) {
+            if (!g.quiet) writeOut(QString("wrote %1 (%2 bytes)\n").arg(written).arg(result.payload.size()).toLocal8Bit());
             if (result.status == Status::Partial) writeErr(QString("warning: %1\n").arg(result.error));
+        } else if (!g.quiet || fileText) {
+            if (!saveText(ResultFormat::text(result).toLocal8Bit(), false)) return finish(int(Status::Failed));
+            if (result.status == Status::Partial) writeErr(QString("warning: %1\n").arg(result.error));
+        } else if (result.status == Status::Partial) {
+            writeErr(QString("warning: %1\n").arg(result.error));
         }
         for (const QString &w : result.warnings) writeErr(QString("warning: %1\n").arg(w));
     }

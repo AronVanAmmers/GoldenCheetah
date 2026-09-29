@@ -83,6 +83,19 @@ QString metricFormulaName(const QString &symbol);
 // an interval type as interval list --type takes it (user, effort ...)
 QString intervalTypeKey(int type);
 
+// how many intervals of each kind an activity has, including zeros.
+// recorded laps are from the device, user intervals were marked in
+// GoldenCheetah, discovered efforts are the ones it found (efforts,
+// peaks, climbs, segments). The entire activity is none of these.
+struct IntervalCensus {
+    int recordedLaps = 0;
+    int userIntervals = 0;
+    int discoveredEfforts = 0;
+};
+
+IntervalCensus intervalCensus(RideItem *item);
+QString intervalCensusLine(const IntervalCensus &census);
+
 // symbols for names, false and error for the first unknown one
 bool resolveMetrics(const QStringList &names, QStringList &symbols, QString &error);
 

@@ -29,7 +29,7 @@ struct GlobalOptions {
     QString athlete;        // --athlete NAME      athlete folder in home
     QString athleteDir;     // --athlete-dir DIR   full path, sets home and athlete
     QString format = "text";// --format text|json|csv
-    QString output;         // --output FILE       where binary output goes
+    QString output;         // --output FILE       where output goes (charts, exports, text)
     bool quiet = false;     // --quiet             only errors
     bool verbose = false;   // --verbose           GoldenCheetah diagnostics to stderr
     bool noPython = false;  // --no-python

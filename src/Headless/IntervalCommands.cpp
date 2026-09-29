@@ -24,6 +24,7 @@
 
 #include "HeadlessCommands.h"
 #include "ActivitySelection.h"
+#include "ResultFormat.h"
 
 #include "Settings.h"
 #include "RideItem.h"
@@ -54,6 +55,33 @@ intervalTypeKey(int type)
 {
     for (const auto &t : intervalTypes()) if (t.second == type) return t.first;
     return QString();
+}
+
+IntervalCensus
+intervalCensus(RideItem *item)
+{
+    IntervalCensus census;
+    if (!item) return census;
+    for (IntervalItem *interval : item->intervals()) {
+        switch (interval->type) {
+        case RideFileInterval::DEVICE: census.recordedLaps++; break;
+        case RideFileInterval::USER: census.userIntervals++; break;
+        case RideFileInterval::EFFORT:
+        case RideFileInterval::PEAKPOWER:
+        case RideFileInterval::PEAKPACE:
+        case RideFileInterval::CLIMB:
+        case RideFileInterval::ROUTE: census.discoveredEfforts++; break;
+        default: break; // the entire activity
+        }
+    }
+    return census;
+}
+
+QString
+intervalCensusLine(const IntervalCensus &census)
+{
+    return QString("recorded laps: %1, user intervals: %2, discovered efforts: %3")
+        .arg(census.recordedLaps).arg(census.userIntervals).arg(census.discoveredEfforts);
 }
 
 // a type by its key or by the group title the GUI shows (EFFORTS, PEAK POWER)
@@ -164,10 +192,25 @@ listIntervals(CommandEnvironment &env, const CommandRequest &request)
         o.insert("metrics", intervalMetrics(interval, symbols, metricUnits, display));
         list.append(o);
     }
+    IntervalCensus census = intervalCensus(item);
     QJsonObject data;
     data.insert("activity", QFileInfo(item->fileName).completeBaseName());
+    data.insert("recorded_laps", census.recordedLaps);
+    data.insert("user_intervals", census.userIntervals);
+    data.insert("discovered_efforts", census.discoveredEfforts);
     data.insert("intervals", list);
-    return CommandResult::success(data);
+
+    // the counts are for the whole activity, so they stay when --type
+    // filters the table. Text and CSV lead with that one line.
+    QJsonObject table = data;
+    table.remove("recorded_laps");
+    table.remove("user_intervals");
+    table.remove("discovered_efforts");
+    CommandResult result = CommandResult::success(data);
+    QString line = intervalCensusLine(census);
+    result.text = line + "\n" + ResultFormat::render(table);
+    result.csv = ResultFormat::csvLine({ line }) + ResultFormat::csv(table);
+    return result;
 }
 
 static CommandResult
@@ -218,7 +261,9 @@ registerIntervalCommands(CommandRegistry &registry)
     list.spec.name = "interval.list";
     list.spec.summary = "list an activity's intervals (laps, efforts, climbs ...) with metrics";
     list.spec.description = "Metrics default to the ones the GUI's intervals sidebar shows. For the interval "
-                            "tables on the activity overview, as the GUI draws them, see 'activity overview'.";
+                            "tables on the activity overview, as the GUI draws them, see 'activity overview'. "
+                            "The result counts recorded laps, user intervals and discovered efforts, including "
+                            "zeros. Those counts are for the whole activity, even when --type filters the rows.";
     list.spec.scope = Scope::Athlete;
     list.spec.params << ParamSpec("activity", ParamType::String, "activity id, start time, date, 'first' or 'last'").req().pos();
     // checked by the handler, so a comma separated list works too
