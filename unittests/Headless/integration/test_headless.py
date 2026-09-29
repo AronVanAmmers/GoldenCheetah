@@ -11,6 +11,8 @@
 # macOS), override with GC_BINARY. Only the standard library is needed.
 #
 
+import csv
+import io
 import json
 import os
 import shutil
@@ -597,6 +599,52 @@ class TestActivitiesMetricsCharts(Headless):
         self.gcj("interval", "show", run, "999", expect=3)
         self.gcj("interval", "show", run, "no such lap", expect=3)
 
+    def csv_rows(self, *args, expect=0):
+        r = self.gc("--athlete", self.athlete, "--format", "csv", *args)
+        self.assertEqual(r.code, expect, r)
+        return list(csv.reader(io.StringIO(r.out.decode())))
+
+    def test_csv(self):
+        run = "2024_07_09_15_12_48"
+        # a list is a table, with its nested metrics as columns
+        rows = self.csv_rows("interval", "list", run, "--metric", "average_power,Duration")
+        head, body = rows[0], rows[1:]
+        self.assertEqual(head[:4], ["number", "name", "type", "start"])
+        intervals = self.gcj("interval", "list", run, "--metric", "average_power")["data"]["intervals"]
+        self.assertEqual(len(body), len(intervals))
+        self.assertEqual(float(body[1][head.index("average_power")]), intervals[1]["metrics"]["average_power"])
+        shown = self.csv_rows("interval", "list", run, "--metric", "workout_time", "--display")
+        self.assertRegex(shown[1][shown[0].index("workout_time")], r"^\d+:\d\d")
+
+        # fields are quoted where they need it
+        self.gcj("activity", "set", run, "--set", 'Notes=easy, then "fast"')
+        rows = self.csv_rows("activity", "list", run, "--field", "Notes")
+        self.assertEqual(rows[1][rows[0].index("Notes")], 'easy, then "fast"')
+
+        # anything else is complete as key,value lines
+        rows = self.csv_rows("activity", "show", run)
+        self.assertEqual(rows[0], ["key", "value"])
+        self.assertTrue(all(len(r) == 2 for r in rows))
+        values = dict(rows[1:])
+        self.assertEqual(values["sport"], "Run")
+        self.assertIn("metrics.average_power", values)
+        self.assertIn("zones.hr.zones[0].name", values)
+        self.assertEqual(values["intervals[0].name"], "Entire Activity")
+
+        # an overview table as the GUI shows it, several tiles one value a line
+        rows = self.csv_rows("activity", "overview", run, "--tile", "Intervals Data")
+        self.assertEqual(rows[0][:2], ["Name", "Pace (min/km)"])
+        self.assertEqual(len(rows) - 1, len(intervals))
+        rows = self.csv_rows("activity", "overview", run)
+        self.assertEqual(rows[0], ["tile", "kind", "row", "column", "units", "value"])
+        self.assertIn(("Sport", "field", "", "value", "", "Run"), [tuple(r) for r in rows])
+
+        # errors go to stderr only
+        r = self.gc("--athlete", self.athlete, "--format", "csv", "activity", "show", "1999-01-01")
+        self.assertEqual(r.code, 3)
+        self.assertEqual(r.out, b"")
+        self.assertIn(b"error:", r.err)
+
     def test_overview_as_the_gui_shows_it(self):
         # no saved layouts: the ones GoldenCheetah starts with
         ride = self.gcj("activity", "overview", "2020_01_26_13_00_38")["data"]
@@ -818,6 +866,12 @@ class TestRest(Headless):
         env = self.jcall("GET", a + "/activities/last/intervals/" + urllib.parse.quote(lap["name"]))
         self.assertEqual(env["data"]["metrics"]["average_power"], lap["metrics"]["average_power"])
         self.jcall("GET", a + "/activities/last/intervals/999", expect=404)
+        status, ctype, data = self.call("GET", a + "/activities/last/intervals?type=user&format=csv")
+        self.assertEqual(status, 200)
+        self.assertIn("text/csv", ctype)
+        self.assertTrue(data.startswith(b"number,name,type"))
+        self.jcall("GET", a + "/activities/last/intervals?format=xml", expect=400)
+        self.jcall("GET", a + "/activities/nothing/intervals?format=csv", expect=404)   # errors stay JSON
         env = self.jcall("GET", a + "/activities/last/overview?tile=Intervals%20Data")
         self.assertIn("table", [t["kind"] for t in env["data"]["tiles"]])
         env = self.jcall("GET", a + "/charts/pmc?envelope=1")

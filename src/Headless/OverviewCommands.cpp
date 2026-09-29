@@ -26,6 +26,7 @@
 #include "ActivitySelection.h"
 #include "MetricData.h"
 #include "ZoneData.h"
+#include "ResultFormat.h"
 
 #include "Context.h"
 #include "Athlete.h"
@@ -437,6 +438,70 @@ tileText(const QJsonObject &tile)
     return text + columnsText(lines);
 }
 
+//
+// CSV: one table tile as that table, else a line per value
+//
+
+static QString
+tilesCsv(const QJsonArray &tiles)
+{
+    auto line = [](const QStringList &f) { return ResultFormat::csvLine(f); };
+
+    if (tiles.count() == 1 && tiles[0]["kind"] == "table" && !tiles[0].toObject().contains("error")) {
+        QJsonObject t = tiles[0].toObject();
+        QStringList head;
+        for (const QJsonValue &c : t["columns"].toArray()) {
+            QString units = c["units"].toString();
+            head << (units.isEmpty() || t["style"] == "list" ? c["name"].toString() : QString("%1 (%2)").arg(c["name"].toString()).arg(units));
+        }
+        QString text = line(head);
+        for (const QJsonValue &r : t["rows"].toArray()) {
+            QStringList fields;
+            for (const QJsonValue &v : r.toArray()) fields << v.toString();
+            text += line(fields);
+        }
+        return text;
+    }
+
+    QString text = line({ "tile", "kind", "row", "column", "units", "value" });
+    for (const QJsonValue &v : tiles) {
+        QJsonObject t = v.toObject();
+        QString name = t["name"].toString(), kind = t["kind"].toString();
+        auto add = [&](const QString &row, const QString &column, const QString &units, const QString &value) {
+            text += line({ name, kind, row, column, units, value });
+        };
+        if (t.contains("error")) { add("", "error", "", t["error"].toString()); continue; }
+
+        if (kind == "table") {
+            QJsonArray columns = t["columns"].toArray();
+            QJsonArray rows = t["rows"].toArray();
+            for (int r = 0; r < rows.count(); r++) {
+                QJsonArray row = rows[r].toArray();
+                if (t["style"] == "list") add(row[0].toString(), "value", row[2].toString(), row[1].toString());
+                else for (int c = 0; c < row.count() && c < columns.count(); c++)
+                    add(QString::number(r + 1), columns[c].toObject()["name"].toString(), columns[c].toObject()["units"].toString(), row[c].toString());
+            }
+        } else if (kind == "zones") {
+            for (const QJsonValue &z : t["rows"].toArray()) {
+                add(z["name"].toString(), "time", "", z["time"].toString());
+                add(z["name"].toString(), "percent", "%", ResultFormat::csvValue(z["percent"]));
+            }
+        } else if (kind == "intervals") {
+            QJsonArray axes = t["axes"].toArray();
+            for (const QJsonValue &r : t["rows"].toArray())
+                for (int a = 0; a < 3 && a < axes.count(); a++)
+                    add(r["name"].toString(), axes[a].toObject()["name"].toString(), axes[a].toObject()["units"].toString(), r[QString("xyz").mid(a, 1)].toString());
+        } else if (kind == "pmc") {
+            for (const char *k : { "form", "fitness", "fatigue", "risk" }) add("", k, "", ResultFormat::csvValue(t[k]));
+        } else if (t.contains("value")) {
+            add("", "value", t["units"].toString(), t["value"].toString());
+        } else {
+            add("", "note", "", t["note"].toString());
+        }
+    }
+    return text;
+}
+
 static CommandResult
 overviewCommand(CommandEnvironment &env, const CommandRequest &request)
 {
@@ -505,6 +570,7 @@ overviewCommand(CommandEnvironment &env, const CommandRequest &request)
     data.insert("layout", layout.name);
     data.insert("tiles", tiles);
     CommandResult result = CommandResult::success(data);
+    result.csv = tilesCsv(tiles);
     result.text = QString("%1, %2 layout\n\n").arg(activityStart(item).replace("T", " ")).arg(layout.name) + text;
     return result;
 }

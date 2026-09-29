@@ -123,7 +123,7 @@ cliMain(int argc, char **argv)
 
     CliParse parsed = CliParser::parse(args, registry);
     const GlobalOptions &g = parsed.global;
-    bool json = g.format == "json";
+    bool json = g.format == "json", csv = g.format == "csv";
 
     if (!parsed.error.isEmpty()) {
         writeErr(QString("error: %1\n").arg(parsed.error));
@@ -205,7 +205,7 @@ cliMain(int argc, char **argv)
 
     CommandRunner::Options runOptions;
     runOptions.session = sessionOptions;
-    if (!g.quiet && !json && isatty(fileno(stderr))) {
+    if (!g.quiet && !json && !csv && isatty(fileno(stderr))) {
         runOptions.progress = [](const QString &message) { writeErr(message + "\n"); };
     }
 
@@ -231,6 +231,15 @@ cliMain(int argc, char **argv)
 
     if (json) {
         writeOut(QJsonDocument(ResultFormat::envelope(request.command, result)).toJson(QJsonDocument::Indented));
+    } else if (csv) {
+        // only data on stdout, so it can go straight into a file or a pipe
+        if (!result.ok() && result.status != Status::Partial) {
+            writeErr(QString("error: %1\n").arg(result.error));
+        } else {
+            writeOut(ResultFormat::csv(result).toUtf8());
+            if (result.status == Status::Partial) writeErr(QString("warning: %1\n").arg(result.error));
+        }
+        for (const QString &w : result.warnings) writeErr(QString("warning: %1\n").arg(w));
     } else {
         if (!result.ok() && result.status != Status::Partial) {
             // a per item report says what went wrong where

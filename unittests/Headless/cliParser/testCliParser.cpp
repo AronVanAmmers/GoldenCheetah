@@ -32,7 +32,8 @@ private slots:
     }
 
     void badGlobalValues() {
-        QVERIFY(parse({ "--format", "xml", "cp" }).error.contains("text' or 'json"));
+        QVERIFY(parse({ "--format", "xml", "cp" }).error.contains("'text', 'json' or 'csv'"));
+        QCOMPARE(parse({ "-f", "CSV", "cp" }).global.format, QString("csv"));
         QVERIFY(parse({ "--lock-wait", "soon", "cp" }).error.contains("seconds"));
         QVERIFY(parse({ "cp", "--home" }).error.contains("needs a value"));
     }

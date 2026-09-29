@@ -44,6 +44,19 @@ class ResultFormat
 
         // a scalar as text
         static QString scalar(const QJsonValue &v);
+
+        // CSV: the handler's own when it has one, else a result that is one
+        // list (besides plain values) is that list as a table, nested values
+        // as columns as in the text table, and anything else is key,value
+        // lines with dotted paths
+        static QString csv(const CommandResult &result);
+        static QString csv(const QJsonObject &data);
+
+        // one CSV line, fields quoted where needed (RFC 4180)
+        static QString csvLine(const QStringList &fields);
+
+        // a value in full precision for CSV
+        static QString csvValue(const QJsonValue &v);
 };
 
 } // namespace Headless
