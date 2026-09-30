@@ -35,6 +35,7 @@
 
 #include "JsonRideFile.h" // for DATETIME_FORMAT
 #include "RideFileCommand.h"
+#include "GcNotify.h"
 
 #ifdef SLOW_REFRESH
 #include "unistd.h"
@@ -425,8 +426,7 @@ RideCache::removeRide(const QString& filenameToDelete) {
     QFile::remove(context->athlete->home->fileBackup().canonicalPath() + "/" + strNewName);
 
     if (!file.rename(context->athlete->home->fileBackup().canonicalPath() + "/" + strNewName)) {
-        if (GlobalContext::isHeadless()) qWarning() << "can't move" << filenameToDelete << "to the backup folder";
-        else QMessageBox::critical(NULL, "Rename Error", tr("Can't rename %1 to %2 in %3")
+        GcNotify::critical(NULL, "Rename Error", tr("Can't rename %1 to %2 in %3")
             .arg(filenameToDelete).arg(strNewName).arg(context->athlete->home->fileBackup().canonicalPath()));
     }
 
@@ -529,8 +529,7 @@ RideCache::removeRides
         QString strNewName = filenameToDelete + ".bak";
         QFile::remove(context->athlete->home->fileBackup().canonicalPath() + "/" + strNewName);
         if (! file.rename(context->athlete->home->fileBackup().canonicalPath() + "/" + strNewName)) {
-            if (GlobalContext::isHeadless()) qWarning() << "can't move" << filenameToDelete << "to the backup folder";
-            else QMessageBox::critical(NULL, "Rename Error", tr("Can't rename %1 to %2 in %3")
+            GcNotify::critical(NULL, "Rename Error", tr("Can't rename %1 to %2 in %3")
                                                           .arg(filenameToDelete)
                                                           .arg(strNewName)
                                                           .arg(context->athlete->home->fileBackup().canonicalPath()));
@@ -587,11 +586,8 @@ RideCache::writeAsCSV(QString filename)
     // open file.. truncate if exists already
     QFile file(filename);
     if (!file.open(QFile::WriteOnly)) {
-        QMessageBox msgBox;
-        msgBox.setIcon(QMessageBox::Critical);
-        msgBox.setText(tr("Problem Saving Ride Cache"));
-        msgBox.setInformativeText(tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
-        msgBox.exec();
+        GcNotify::message(QMessageBox::Critical, tr("Problem Saving Ride Cache"),
+                          tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
         return;
     };
     file.resize(0);

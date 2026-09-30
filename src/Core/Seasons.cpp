@@ -17,6 +17,7 @@
  */
 
 #include "Seasons.h"
+#include "GcNotify.h"
 #include "Utils.h"
 #include <QFile>
 #include <QDate>
@@ -226,11 +227,8 @@ SeasonParser::serialize(QString filename, QList<Season> Seasons)
     // open file - truncate contents
     QFile file(filename);
     if (!file.open(QFile::WriteOnly)) {
-        QMessageBox msgBox;
-        msgBox.setIcon(QMessageBox::Critical);
-        msgBox.setText(QObject::tr("Problem Saving Seasons"));
-        msgBox.setInformativeText(QObject::tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
-        msgBox.exec();
+        GcNotify::message(QMessageBox::Critical, QObject::tr("Problem Saving Seasons"),
+                          QObject::tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
         return false;
     };
     file.resize(0);

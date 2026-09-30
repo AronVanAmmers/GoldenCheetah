@@ -26,6 +26,7 @@
 #include "PaceZones.h"
 #include "WPrime.h" // for wbal zones
 #include "LTMSettings.h" // getAllBestsFor needs this
+#include "GcNotify.h"
 
 #include <cmath> // for pow()
 #include <QDebug>
@@ -893,14 +894,7 @@ RideFileCache::refreshCache()
         // popup the first time...
         writeerror = true;
         QString errMessage = QString("Cannot create cache file %1.").arg(cacheFileName);
-        if (GlobalContext::isHeadless()) {
-            qWarning() << errMessage;
-        } else {
-            QMessageBox err;
-            err.setText(errMessage);
-            err.setIcon(QMessageBox::Warning);
-            err.exec();
-        }
+        GcNotify::message(QMessageBox::Warning, errMessage);
         return;
 
     } else {
