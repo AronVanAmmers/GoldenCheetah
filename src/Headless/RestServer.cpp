@@ -39,14 +39,21 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QUrl>
+#include <atomic>
 #include <memory>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 
 namespace Headless {
 
 static volatile std::sig_atomic_t stopRequested = 0;
-static void onSignal(int) { stopRequested = 1; }
+static void onSignal(int)
+{
+    // a second ctrl-c when the first one didn't get us out
+    if (stopRequested) std::_Exit(130);
+    stopRequested = 1;
+}
 
 // runs commands on the thread that owns it (the main thread)
 class RestDispatcher : public QObject
@@ -55,12 +62,30 @@ class RestDispatcher : public QObject
         explicit RestDispatcher(const RestServer::Options &options) : options(options) {}
 
         CommandResult execute(const CommandRequest &request) {
+            busy = true;
             CommandRunner::Options run;
             run.session = options.session;
-            return CommandRunner::run(commandRegistry(), request, run);
+            CommandResult result = CommandRunner::run(commandRegistry(), request, run);
+            busy = false;
+            return result;
+        }
+
+        // after the event loop has stopped: calls still queued are dropped,
+        // which wakes the connection threads waiting on them, until no
+        // connection thread is inside a command any more
+        void drain() {
+            stopping = true;
+            while (!serial.tryLock(20)) QCoreApplication::removePostedEvents(this, QEvent::MetaCall);
+            serial.unlock();
         }
 
         RestServer::Options options;
+
+        // one command at a time: athlete sessions run nested event loops on
+        // the main thread and must never interleave
+        QMutex serial;
+        std::atomic<bool> stopping { false };
+        bool busy = false;      // main thread only
 };
 
 class RestHandler : public HttpRequestHandler
@@ -81,10 +106,6 @@ class RestHandler : public HttpRequestHandler
         RestDispatcher *dispatcher;
         RestServer::Options options;
         RestRouter router;
-
-        // one command at a time: athlete sessions run nested event loops on
-        // the main thread and must never interleave
-        QMutex serial;
 };
 
 static QByteArray
@@ -101,6 +122,7 @@ reason(int status)
     case 409: return "Conflict";
     case 413: return "Payload Too Large";
     case 422: return "Unprocessable Entity";
+    case 503: return "Service Unavailable";
     default: return "Internal Server Error";
     }
 }
@@ -311,10 +333,19 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
     cmd.home = options.home;
     cmd.athlete = match.athlete;
 
+    // a call dropped at shutdown returns without having run
     CommandResult result;
-    {
-        QMutexLocker locker(&serial);
-        QMetaObject::invokeMethod(dispatcher, [&]() { result = dispatcher->execute(cmd); }, Qt::BlockingQueuedConnection);
+    bool ran = false;
+    if (!dispatcher->stopping) {
+        QMutexLocker locker(&dispatcher->serial);
+        if (!dispatcher->stopping)
+            ran = QMetaObject::invokeMethod(dispatcher, [&]() { result = dispatcher->execute(cmd); ran = true; },
+                                            Qt::BlockingQueuedConnection) && ran;
+    }
+    if (!ran) {
+        sendError(response, 503, "the server is shutting down");
+        log(method, path, 503, timer.elapsed());
+        return;
     }
 
     // report uploads by the name the client sent, not our temporary path
@@ -360,7 +391,7 @@ RestServer::run(const Options &options)
 
     // the listener reads its configuration from QSettings
     QTemporaryDir config;
-    QSettings *settings = new QSettings(config.filePath("httpserver.ini"), QSettings::IniFormat);
+    std::unique_ptr<QSettings> settings(new QSettings(config.filePath("httpserver.ini"), QSettings::IniFormat));
     settings->setValue("host", options.host);
     settings->setValue("port", options.port);
     settings->setValue("minThreads", 1);
@@ -372,8 +403,8 @@ RestServer::run(const Options &options)
     settings->sync();
 
     RestDispatcher dispatcher(options);
-    RestHandler *handler = new RestHandler(&dispatcher, options);
-    HttpListener *listener = new HttpListener(settings, handler, QCoreApplication::instance());
+    std::unique_ptr<RestHandler> handler(new RestHandler(&dispatcher, options));
+    std::unique_ptr<HttpListener> listener(new HttpListener(settings.get(), handler.get()));
 
     if (!listener->isListening()) {
         fprintf(stderr, "error: can't listen on %s:%d\n", options.host.toLocal8Bit().constData(), options.port);
@@ -391,15 +422,23 @@ RestServer::run(const Options &options)
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);
     QTimer poll;
-    QObject::connect(&poll, &QTimer::timeout, &poll, []() { if (stopRequested) QCoreApplication::quit(); });
+    // not while a command runs: it may be turning a nested event loop
+    QObject::connect(&poll, &QTimer::timeout, &poll, [&dispatcher]() {
+        if (!stopRequested) return;
+        dispatcher.stopping = true;
+        if (!dispatcher.busy) QCoreApplication::quit();
+    });
     poll.start(200);
 
     int ret = QCoreApplication::exec();
 
+    // connection threads waiting for the main thread must be let go before
+    // the listener's destructor waits for them
+    dispatcher.drain();
     listener->close();
-    delete listener;
-    delete handler;
-    delete settings;
+    listener.reset();
+    handler.reset();
+    settings.reset();
     if (!options.quiet) fprintf(stderr, "GoldenCheetah API stopped\n");
     return ret == 0 ? int(Status::Ok) : int(Status::Failed);
 }

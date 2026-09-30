@@ -21,6 +21,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -983,6 +984,67 @@ class TestRest(Headless):
         self.jcall("GET", "/athletes/%s" % self.athlete)
         self.assertClosed()
 
+
+
+@unittest.skipIf(os.name == "nt", "no SIGINT for child processes on Windows")
+class TestRestShutdown(Headless):
+    """ctrl-c while requests wait their turn stops the server, and no client is told a dropped call succeeded"""
+
+    def test_interrupt_with_requests_queued(self):
+        if not self.gcj("version")["data"]["python"]:
+            self.skipTest("embedded Python not available")
+        # a slow request: a processor that takes its time
+        r = self.gc("--athlete", self.athlete, "import", RIDE_POWER)
+        self.assertEqual(r.code, 0, r)
+        r = self.gc("processor", "install", "slow", "--source", "import time\ntime.sleep(4)\n")
+        self.assertEqual(r.code, 0, r)
+        port = free_port()
+        with open(os.path.join(self.tmp, "shutdown.log"), "wb") as log:
+            server = subprocess.Popen([BINARY, "--cli", "--home", self.home, "serve", "--port", str(port)],
+                                      env=self.env, stdout=subprocess.DEVNULL, stderr=log)
+            try:
+                deadline = time.time() + 30
+                while time.time() < deadline and server.poll() is None:
+                    try:
+                        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                            break
+                    except OSError:
+                        time.sleep(0.2)
+                answers = []
+
+                def call(method, path, body=None):
+                    req = urllib.request.Request("http://127.0.0.1:%d/v1%s" % (port, path), method=method,
+                                                 data=json.dumps(body).encode() if body is not None else None,
+                                                 headers={"Content-Type": "application/json"} if body is not None else {})
+                    try:
+                        with urllib.request.urlopen(req, timeout=60) as resp:
+                            answers.append((resp.status, resp.read()))
+                    except urllib.error.HTTPError as e:
+                        answers.append((e.code, e.read()))
+                    except (OSError, ConnectionError) as e:
+                        answers.append((None, str(e).encode()))
+
+                a = "/athletes/" + self.athlete
+                threads = [threading.Thread(target=call, args=("POST", a + "/processors/slow/runs", {"all": True}))]
+                threads[0].start()
+                time.sleep(0.5)
+                for _ in range(3):
+                    threads.append(threading.Thread(target=call, args=("GET", a + "/activities")))
+                    threads[-1].start()
+                time.sleep(0.5)
+                server.send_signal(signal.SIGINT)
+                server.wait(timeout=15)
+                for t in threads:
+                    t.join(timeout=30)
+            finally:
+                if server.poll() is None:
+                    server.kill()
+        self.assertEqual(len(answers), 4)
+        for status, body in answers:
+            self.assertIn(status, (200, 503, None), body)
+            if status == 200:
+                self.assertTrue(json.loads(body)["ok"], body)
+        self.assertClosed()
 
 ONES = "{\n    value { 1; }\n}\n"
 TWOS = "{\n    value { 2; }\n}\n"
