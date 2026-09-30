@@ -388,6 +388,28 @@ chartsPath(const Athlete *athlete)
     return LTMSettings::chartsFile(athlete->home->config());
 }
 
+// a curve's data filter is kept the way the GUI's filter box stores it:
+// "filter:EXPR" for a formula, "search:TEXT" for a free text search, and
+// "search:" (or nothing) for no filter. Only a formula can be set here.
+static QString
+storedFilter(const QString &expression)
+{
+    return expression.trimmed().isEmpty() ? QString("search:") : "filter:" + expression;
+}
+
+static QString
+filterExpression(const QString &stored)
+{
+    return stored.startsWith("filter:") ? stored.mid(7) : QString();
+}
+
+static QString
+filterSearch(const QString &stored)
+{
+    if (stored.startsWith("filter:")) return QString();
+    return stored.startsWith("search:") ? stored.mid(7) : stored;
+}
+
 static QJsonObject
 curveJson(const MetricDetail &m, int index)
 {
@@ -416,7 +438,10 @@ curveJson(const MetricDetail &m, int index)
     o.insert("marker", markerName(m.symbolStyle));
     o.insert("color", colorText(m.penColor));
     o.insert("fill", m.fillCurve);
-    o.insert("filter", m.datafilter);
+    QString expression = filterExpression(m.datafilter);
+    o.insert("filter", expression.isEmpty() ? QJsonValue() : QJsonValue(expression));
+    QString search = filterSearch(m.datafilter);
+    if (!search.isEmpty()) o.insert("search", search);
     return o;
 }
 
@@ -641,8 +666,9 @@ readDrawing(Context *context, const QJsonObject &args, Drawing &drawing, QString
     }
     if (args.contains("filter")) {
         drawing.filter = true;
-        drawing.datafilter = args.value("filter").toString();
-        if (!checkFilter(context, drawing.datafilter, error)) return false;
+        QString expression = args.value("filter").toString();
+        if (!checkFilter(context, expression, error)) return false;
+        drawing.datafilter = storedFilter(expression);
     }
     return true;
 }
@@ -1207,7 +1233,7 @@ drawingParams(CommandSpec &spec)
     spec.params << ParamSpec("symbol", ParamType::String, "marker drawn on the curve").oneOf(markerNames);
     spec.params << ParamSpec("color", ParamType::String, "pen color as RRGGBB");
     spec.params << ParamSpec("fill", ParamType::Bool, "fill under the curve");
-    spec.params << ParamSpec("filter", ParamType::String, "curve data filter, such as isRun");
+    spec.params << ParamSpec("filter", ParamType::String, "curve data filter, such as isRun; \"\" for none");
 }
 
 // every command that writes the file

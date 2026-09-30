@@ -11,10 +11,13 @@
 # macOS), override with GC_BINARY. Only the standard library is needed.
 #
 
+import base64
 import csv
+import html
 import io
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -1290,6 +1293,36 @@ class TestChartLibrary(Headless):
     def charts_file(self):
         return os.path.join(self.folder, "config", "charts.xml")
 
+    def stored_chart(self, name):
+        """one chart as charts.xml stores it: a base64 QDataStream, strings in UTF-16"""
+        with open(self.charts_file(), encoding="utf-8") as f:
+            xml = f.read()
+        for chart, blob in re.findall(r'<chart name="(.*?)">"(.*?)"</chart>', xml):
+            if html.unescape(chart) == name:
+                return base64.b64decode(blob)
+        self.fail("no chart %s in charts.xml" % name)
+
+    def test_library_filters_are_stored_as_the_gui_stores_them(self):
+        path = self.charts_file()
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        charts = self.gcj("chart", "library", "list")["data"]["charts"]
+        chart = next(c for c in charts if c["metrics"] and c["metrics"][0]["type"] == "metric")
+        first = chart["metrics"][0]
+        self.assertIsNone(first["filter"])
+
+        edited = self.gcj("chart", "library", "curve", "edit", chart["name"], "1", "--color", "445566")["data"]["metrics"][0]
+        self.assertEqual(edited["color"], "445566")
+        self.assertEqual({k: v for k, v in edited.items() if k != "color"}, {k: v for k, v in first.items() if k != "color"})
+        self.assertIn("search:".encode("utf-16-be"), self.stored_chart(chart["name"]))
+
+        edited = self.gcj("chart", "library", "curve", "edit", chart["name"], "1", "--filter", "isRun")["data"]["metrics"][0]
+        self.assertEqual(edited["filter"], "isRun")
+        self.assertIn("filter:isRun".encode("utf-16-be"), self.stored_chart(chart["name"]))
+        edited = self.gcj("chart", "library", "curve", "edit", chart["name"], "1", "--filter", "")["data"]["metrics"][0]
+        self.assertIsNone(edited["filter"])
+        self.assertNotIn("filter:isRun".encode("utf-16-be"), self.stored_chart(chart["name"]))
+        self.assertIn("search:".encode("utf-16-be"), self.stored_chart(chart["name"]))
+
     def test_library_file_is_only_written_by_a_change(self):
         path = self.charts_file()
         self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
@@ -1355,7 +1388,7 @@ class TestChartLibrary(Headless):
         self.assertEqual(env["data"]["metrics"], [{
             "index": 1,
             "type": "metric", "symbol": "p_v", "formula": "P_v", "name": "P v", "detail": "p_v",
-            "style": "line", "marker": "circle", "color": "0078d4", "fill": False, "filter": "",
+            "style": "line", "marker": "circle", "color": "0078d4", "fill": False, "filter": None,
         }])
         self.assertTrue(os.path.exists(path))
         shown = self.gcj("chart", "library", "show", "P v")["data"]
@@ -1429,6 +1462,7 @@ class TestChartLibrary(Headless):
         self.assertEqual(shown[1]["style"], "line")
         self.assertEqual(shown[1]["marker"], "none")
         self.assertEqual(shown[2]["filter"], "isRun")
+        self.assertIn("filter:isRun".encode("utf-16-be"), self.stored_chart("Peak power"))
         self.assertEqual(shown[2]["fill"], True)
         self.assertEqual(shown[2]["color"], "112233")
         self.assertEqual(shown[2]["style"], "line")
