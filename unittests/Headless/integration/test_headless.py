@@ -534,6 +534,16 @@ class TestActivitiesMetricsCharts(Headless):
         self.gcj("activity", "set", "last", "--set", "Undefined Thing=1", expect=2)
         self.gcj("activity", "set", "--set", "Notes=x", expect=2)  # needs a selection
 
+    def test_set_all_saves_every_activity(self):
+        env = self.gcj("activity", "set", "--all", "--set", "Notes=everyone")
+        self.assertEqual(env["data"]["updated"], 3)
+        listed = self.gcj("activity", "list", "--field", "Notes")["data"]["activities"]
+        self.assertEqual([a["metadata"]["Notes"] for a in listed], ["everyone"] * 3)
+        for a in listed:
+            self.assertEqual(self.gcj("activity", "show", a["id"])["data"]["metadata"]["Notes"], "everyone")
+        env = self.gcj("activity", "set", "--all", "--set", "Notes=everyone")
+        self.assertEqual(env["data"]["updated"], 0)
+
     def test_export(self):
         out = os.path.join(self.tmp, "export.tcx")
         env = self.gcj("--output", out, "activity", "export", "last", "--as", "tcx")

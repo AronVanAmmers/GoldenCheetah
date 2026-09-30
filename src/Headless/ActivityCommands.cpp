@@ -241,6 +241,9 @@ setFields(CommandEnvironment &env, const CommandRequest &request)
     int updated = 0, failed = 0;
     QJsonArray report;
     for (RideItem *item : items) {
+        // an activity opened here is closed again once it is saved, so
+        // --all doesn't hold every activity's samples in memory at once
+        bool wasOpen = item->isOpen();
         RideFile *ride = item->ride();
         QJsonObject r;
         r.insert("activity", QFileInfo(item->fileName).completeBaseName());
@@ -271,10 +274,12 @@ setFields(CommandEnvironment &env, const CommandRequest &request)
             } else {
                 r.insert("status", "failed");
                 r.insert("message", saveError);
+                item->setDirty(false);  // the change is thrown away
                 failed++;
             }
         }
         report.append(r);
+        if (!wasOpen) item->close();
     }
 
     if (updated) env.session->refresh();
