@@ -1191,6 +1191,18 @@ class TestReadOnlyFolders(Headless):
         with open(os.path.join(config, "power.zones"), "rb") as f:
             self.assertEqual(f.read(), zones)
 
+    def test_read_only_charts(self):
+        charts = os.path.join(self.folder, "config", "charts.xml")
+        self.addCleanup(lambda: os.path.exists(charts) and os.remove(charts))
+        r = self.gc("--athlete", self.athlete, "chart", "library", "add", "--name", "Speed", "--metric", "average_speed")
+        self.assertEqual(r.code, 0, r)
+        self.read_only(charts)
+        started = time.time()
+        r = self.gc("--athlete", self.athlete, "activity", "list", timeout=60)
+        self.assertEqual(r.code, 0, r)
+        self.assertLess(time.time() - started, 30)
+        self.assertFails("chart", "library", "add", "--name", "Cadence", "--metric", "average_cad", mentions="charts.xml")
+
     def test_settings_shared_by_all_athletes(self):
         # the files the athletes folder holds, and the folder itself
         shared = [os.path.join(self.home, f) for f in os.listdir(self.home) if os.path.isfile(os.path.join(self.home, f))]
@@ -1292,6 +1304,30 @@ class TestChartLibrary(Headless):
         self.assertEqual(os.stat(path).st_mtime, t)
         with open(path, "rb") as f:
             self.assertEqual(f.read(), saved)
+
+    def test_library_keeps_the_curves_of_a_removed_metric(self):
+        path = self.charts_file()
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        self.gcj("metric", "user", "add", "--symbol", "keep_me", "--name", "Keep me", "--program", ONES)
+        self.addCleanup(lambda: self.gc("--athlete", self.athlete, "metric", "user", "remove", "keep_me"))
+        self.gcj("chart", "library", "add", "--name", "Kept", "--metric", "keep_me", "--metric", "average_power")
+        with open(path, "rb") as f:
+            saved = f.read()
+
+        self.gcj("metric", "user", "remove", "keep_me")
+        self.gcj("activity", "list")
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), saved)
+
+        r = self.gc("--athlete", self.athlete, "chart", "library", "add", "--name", "Other", "--metric", "average_speed")
+        self.assertEqual(r.code, 5, r)
+        self.assertIn(b"'Kept' (keep_me)", r.err)
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), saved)
+
+        self.gcj("chart", "library", "add", "--name", "Other", "--metric", "average_speed", "--drop-unknown")
+        shown = self.gcj("chart", "library", "show", "Kept")["data"]["metrics"]
+        self.assertEqual([m["symbol"] for m in shown], ["average_power"])
 
     def test_library_round_trip_is_checked(self):
         path = self.charts_file()

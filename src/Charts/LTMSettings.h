@@ -255,6 +255,10 @@ class LTMSettings {
 
         LTMTool *ltmTool;
         QString field1, field2;
+
+        // metric curves left out when the chart was read, because their
+        // metric is not defined (a user metric that was removed). Not saved.
+        QStringList unknownMetrics;
 };
 Q_DECLARE_METATYPE(LTMSettings);
 

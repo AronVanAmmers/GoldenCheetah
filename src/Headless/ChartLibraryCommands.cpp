@@ -20,8 +20,9 @@
 // Trends sidebar charts, the ones stored in the athlete's config/charts.xml.
 // Each chart is an LTMSettings blob written by LTMChartParser. A curve is a
 // metric, a best (a duration of one series) or an estimate from a CP model.
-// Drawing flags belong to that one curve. The file is only written after the
-// chart list has been read back and still contains every curve.
+// Drawing flags belong to that one curve. Reading the file leaves out metric
+// curves whose metric is not defined any more, so writing it would lose
+// them: that is refused unless --drop-unknown says to.
 //
 
 #include "HeadlessCommands.h"
@@ -892,8 +893,19 @@ roundTrip(const QList<LTMSettings> &charts, QString &error)
 }
 
 static CommandResult
-writeCharts(Athlete *athlete, const QList<LTMSettings> &charts)
+writeCharts(Athlete *athlete, QList<LTMSettings> charts, const QJsonObject &args)
 {
+    QStringList lost;
+    for (LTMSettings &chart : charts) {
+        if (chart.unknownMetrics.isEmpty()) continue;
+        lost << QString("'%1' (%2)").arg(chart.name, chart.unknownMetrics.join(", "));
+        chart.unknownMetrics.clear();
+    }
+    if (!lost.isEmpty() && !args.value("drop-unknown").toBool())
+        return CommandResult::failure(Status::Failed,
+                    QString("saving the charts would drop curves whose metric is not defined: %1. "
+                            "Define the metrics again, or pass --drop-unknown").arg(lost.join("; ")));
+
     QString error;
     if (!roundTrip(charts, error)) return CommandResult::failure(Status::Usage, error);
     if (!athlete->saveCharts(charts, &error)) return CommandResult::failure(Status::Failed, error);
@@ -984,7 +996,7 @@ addChart(CommandEnvironment &env, const CommandRequest &request)
     chart.metrics = curves;
     charts.append(chart);
 
-    CommandResult written = writeCharts(athlete, charts);
+    CommandResult written = writeCharts(athlete, charts, request.args);
     if (!written.ok()) return written;
 
     QJsonObject data = chartJson(chart);
@@ -1036,7 +1048,7 @@ editChart(CommandEnvironment &env, const CommandRequest &request)
         chart.metrics = curves;
     }
 
-    CommandResult written = writeCharts(athlete, charts);
+    CommandResult written = writeCharts(athlete, charts, request.args);
     if (!written.ok()) return written;
 
     QJsonObject data = chartJson(charts.at(index));
@@ -1058,7 +1070,7 @@ removeChart(CommandEnvironment &env, const CommandRequest &request)
 
     QList<LTMSettings> charts = athlete->presets;
     charts.removeAt(index);
-    CommandResult written = writeCharts(athlete, charts);
+    CommandResult written = writeCharts(athlete, charts, request.args);
     if (!written.ok()) return written;
 
     QJsonObject data;
@@ -1099,7 +1111,7 @@ addCurve(CommandEnvironment &env, const CommandRequest &request)
         return CommandResult::failure(Status::Usage, error);
     chart.metrics.append(detail);
 
-    CommandResult written = writeCharts(athlete, charts);
+    CommandResult written = writeCharts(athlete, charts, request.args);
     if (!written.ok()) return written;
 
     QJsonObject data = chartJson(charts.at(chartIndex));
@@ -1143,7 +1155,7 @@ editCurve(CommandEnvironment &env, const CommandRequest &request)
         return CommandResult::failure(Status::Usage, "give a drawing or a curve to put in its place");
     }
 
-    CommandResult written = writeCharts(athlete, charts);
+    CommandResult written = writeCharts(athlete, charts, request.args);
     if (!written.ok()) return written;
 
     QJsonObject data = chartJson(charts.at(chartIndex));
@@ -1168,7 +1180,7 @@ removeCurve(CommandEnvironment &env, const CommandRequest &request)
     if (index < 0) return CommandResult::failure(Status::Usage, error);
     chart.metrics.removeAt(index);
 
-    CommandResult written = writeCharts(athlete, charts);
+    CommandResult written = writeCharts(athlete, charts, request.args);
     if (!written.ok()) return written;
 
     QJsonObject data = chartJson(charts.at(chartIndex));
@@ -1196,6 +1208,14 @@ drawingParams(CommandSpec &spec)
     spec.params << ParamSpec("color", ParamType::String, "pen color as RRGGBB");
     spec.params << ParamSpec("fill", ParamType::Bool, "fill under the curve");
     spec.params << ParamSpec("filter", ParamType::String, "curve data filter, such as isRun");
+}
+
+// every command that writes the file
+static void
+writeParams(CommandSpec &spec)
+{
+    spec.params << ParamSpec("drop-unknown", ParamType::Bool,
+                             "save even though curves whose metric is not defined are lost");
 }
 
 static void
@@ -1268,6 +1288,7 @@ registerChartLibraryCommands(CommandRegistry &registry)
     add.spec.params << byParam(true);
     add.spec.httpMethod = "POST";
     add.spec.httpPath = "/athletes/{athlete}/charts";
+    writeParams(add.spec);
     add.handler = addChart;
     registry.add(add);
 
@@ -1287,6 +1308,7 @@ registerChartLibraryCommands(CommandRegistry &registry)
     edit.spec.params << byParam(false);
     edit.spec.httpMethod = "PUT";
     edit.spec.httpPath = "/athletes/{athlete}/charts/{chart}";
+    writeParams(edit.spec);
     edit.handler = editChart;
     registry.add(edit);
 
@@ -1298,6 +1320,7 @@ registerChartLibraryCommands(CommandRegistry &registry)
     remove.spec.params << ParamSpec("name", ParamType::String, "chart name").req().pos();
     remove.spec.httpMethod = "DELETE";
     remove.spec.httpPath = "/athletes/{athlete}/charts/{name}";
+    writeParams(remove.spec);
     remove.handler = removeChart;
     registry.add(remove);
 
@@ -1314,6 +1337,7 @@ registerChartLibraryCommands(CommandRegistry &registry)
     typedCurveParams(curveAdd.spec, false);
     curveAdd.spec.httpMethod = "POST";
     curveAdd.spec.httpPath = "/athletes/{athlete}/charts/{chart}/curves";
+    writeParams(curveAdd.spec);
     curveAdd.handler = addCurve;
     registry.add(curveAdd);
 
@@ -1331,6 +1355,7 @@ registerChartLibraryCommands(CommandRegistry &registry)
     typedCurveParams(curveEdit.spec, false);
     curveEdit.spec.httpMethod = "PUT";
     curveEdit.spec.httpPath = "/athletes/{athlete}/charts/{chart}/curves/{index}";
+    writeParams(curveEdit.spec);
     curveEdit.handler = editCurve;
     registry.add(curveEdit);
 
@@ -1343,6 +1368,7 @@ registerChartLibraryCommands(CommandRegistry &registry)
     curveRemove.spec.params << ParamSpec("index", ParamType::Int, "curve number, starting at 1").req().pos();
     curveRemove.spec.httpMethod = "DELETE";
     curveRemove.spec.httpPath = "/athletes/{athlete}/charts/{chart}/curves/{index}";
+    writeParams(curveRemove.spec);
     curveRemove.handler = removeCurve;
     registry.add(curveRemove);
 }
