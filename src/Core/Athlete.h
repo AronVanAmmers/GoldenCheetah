@@ -125,6 +125,7 @@ class Athlete : public QObject
 
         // preset charts
         QList<LTMSettings> presets;
+        bool presetsDirty = false; // set when the sidebar charts change, so close can save them
         void loadCharts(); // load charts.xml
         void translateDefaultCharts(QList<LTMSettings>&charts);
 
@@ -153,6 +154,7 @@ class Athlete : public QObject
         void checkCPX(RideItem*ride);
         void configChanged(qint32);
         void loadComplete();
+        void presetsEdited();
 
 };
 

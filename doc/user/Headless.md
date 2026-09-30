@@ -75,7 +75,7 @@ gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > inte
 | Processors | `processor list`, `processor show`, `processor install NAME --file script.py`, `processor configure`, `processor remove`, `processor run NAME ...` |
 | Metrics | `metric list`, `metric user list|show|add|edit|remove`, `metric favourite list|add|remove|set`, `metric aggregate`, `pmc`, `meanmax`, `cp`, `cp estimates` |
 | Zones and measures | `zones show`, `zones set` (`--type power\|hr\|pace`), `measures list`, `measures add` |
-| Charts | `chart activity`, `chart meanmax`, `chart pmc`, `chart zones [--type power\|hr\|pace\|fatigue]`, `chart trend` (`--as png\|svg\|pdf`, `--width`, `--height`, `--dark`) |
+| Charts | `chart activity`, `chart meanmax`, `chart pmc`, `chart zones [--type power\|hr\|pace\|fatigue]`, `chart trend` (`--as png\|svg\|pdf`, `--width`, `--height`, `--dark`), `chart library list\|show\|add\|edit\|remove` |
 | Server | `serve` (see [REST API](#rest-api)) |
 
 ### Choosing activities
@@ -159,6 +159,21 @@ gc-cli -a Joe zones set --type hr --sport Bike --from 2026-01-01 --resthr 40
 gc-cli -a Joe zones set --type pace --sport Run --from 2026-01-01 --cv 12.5
 ```
 
+### Trends charts
+
+`chart library` reads and writes the charts in the Trends sidebar, the athlete's `config/charts.xml`. `chart library list` shows the same charts the sidebar shows. Until a chart is added, edited or removed, that file is not created and the list is the built-in set.
+
+`chart library add` appends a chart. Each `--metric` is a metric from `metric list` (a symbol such as `p_v`, or a formula name such as `Average_Power`) and is stored as a normal metric curve. `--by` is `day`, `week`, `month`, `year`, `tod` or `all`, and defaults to `week`. The chart is written with the same file format the GUI uses, and it is read back before the file is touched. An unknown metric, an empty or duplicate name, or a chart that does not read back is refused and the file is left unchanged.
+
+```sh
+gc-cli -a Joe chart library add --name "P v" --metric p_v
+gc-cli -a Joe chart library show "P v"
+gc-cli -a Joe chart library edit "P v" --name "Power and speed" --metric average_power --metric average_speed --by week
+gc-cli -a Joe chart library remove "Power and speed"
+```
+
+Clicking the chart in the Trends sidebar applies its curves and keeps the view's current grouping and date range. The saved grouping is what `chart library show` reports, and what Chart Setup applies.
+
 Intervals are numbered in the order `interval list` shows them: usually the entire activity, the laps and marked intervals, then the efforts, climbs and segments GoldenCheetah found. Each has a `type`, which `--type` accepts: `user`, `all`, `device`, `peakpower`, `peakpace`, `effort`, `route` or `climb`. Each also has a `group`, the title the sidebar shows (`USER`, `EFFORTS`, `PEAK POWER` ...), and `--type` accepts those titles too.
 
 `interval list`, and an interval tile on `activity overview`, start the text report with one line of counts for the whole activity, including zeros: recorded laps (from the device), user intervals, and discovered efforts (efforts, peaks, climbs and segments). The entire activity is not part of that count. `--type` filters the rows and leaves the counts unchanged. JSON has the same counts as `recorded_laps`, `user_intervals` and `discovered_efforts`. CSV does not include that line; it starts with the table header.
@@ -226,6 +241,8 @@ This serves every command as JSON under `http://127.0.0.1:12022/v1` until interr
 | `POST /v1/fields` `{"name": ["EP CdA"], "type": "double"}` | `field add` |
 | `PUT /v1/processors/estimate-power` `{"file": "/path/script.py"}` | `processor install` |
 | `POST /v1/athletes/Joe/processors/estimate-power/runs` `{"filter": "isRun = 0"}` | `processor run` |
+| `GET /v1/athletes/Joe/charts` | `chart library list` |
+| `POST /v1/athletes/Joe/charts` `{"name": "P v", "metric": ["p_v"]}` | `chart library add` |
 | `GET /v1/athletes/Joe/activities/last/chart?width=800` | `chart activity`, returns `image/png` |
 | `POST /v1/commands/<command>` `{"athlete": "Joe", "args": {...}}` | any command |
 

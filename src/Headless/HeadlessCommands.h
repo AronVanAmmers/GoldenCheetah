@@ -36,6 +36,7 @@ void registerProcessorCommands(CommandRegistry &registry);
 void registerMetricCommands(CommandRegistry &registry);
 void registerUserMetricCommands(CommandRegistry &registry);
 void registerChartCommands(CommandRegistry &registry);
+void registerChartLibraryCommands(CommandRegistry &registry);
 
 // the full command table used by the command line and REST server
 const CommandRegistry &commandRegistry();

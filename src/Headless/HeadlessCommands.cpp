@@ -48,6 +48,7 @@ commandRegistry()
         registerMetricCommands(registry);
         registerUserMetricCommands(registry);
         registerChartCommands(registry);
+        registerChartLibraryCommands(registry);
     }
     return registry;
 }

@@ -18,6 +18,8 @@
 
 #include "Athlete.h"
 
+#include <QFile>
+
 #include "MainWindow.h"
 #include "Context.h"
 #include "Seasons.h"
@@ -226,6 +228,7 @@ Athlete::loadComplete()
 
     // trap signals
     connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
+    connect(context, SIGNAL(presetsChanged()), this, SLOT(presetsEdited()));
     connect(context,SIGNAL(rideAdded(RideItem*)),this,SLOT(checkCPX(RideItem*)));
     connect(context,SIGNAL(rideDeleted(RideItem*)),this,SLOT(checkCPX(RideItem*)));
 
@@ -253,6 +256,12 @@ Athlete::close()
 
 }
 void
+Athlete::presetsEdited()
+{
+    presetsDirty = true;
+}
+
+void
 Athlete::loadCharts()
 {
     presets.clear();
@@ -267,12 +276,14 @@ Athlete::~Athlete()
     bool loaded = rideCache != nullptr;
     delete rideCache;
 
-    // save those preset charts, unless they were never loaded because the
-    // constructor stopped early (failed upgrade): that would wipe them
+    // save preset charts once this athlete has its own charts.xml, or the
+    // charts were edited. A fresh athlete keeps using the built-in charts
+    // until then, so opening it does not create the file. Skip the write
+    // when the constructor stopped early (failed upgrade): that would wipe them.
     LTMSettings reader;
-    if (loaded) reader.writeChartXML(home->config(), presets); // don't write it until we fix the code
-                                               // all the changes to LTM settings and chart config
-                                               // have not been reflected in the charts.xml file
+    QString chartsFile = home->config().canonicalPath() + "/charts.xml";
+    if (loaded && (presetsDirty || QFile::exists(chartsFile)))
+        reader.writeChartXML(home->config(), presets);
 
     delete routes;
     delete seasons;
