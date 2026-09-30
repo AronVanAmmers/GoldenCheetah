@@ -73,6 +73,19 @@ void FixPySettings::deleteScript(QString name)
     }
 }
 
+QString FixPySettings::uniquePath(const QString &wanted, const FixPyScript *exclude) const
+{
+    QString base = wanted.endsWith(".py") ? wanted.chopped(3) : wanted;
+    QDir dir(gcroot + "/" + PYFIXES_DIR_NAME);
+    for (int n = 0; ; n++) {
+        QString path = n ? QString("%1_%2.py").arg(base).arg(n) : base + ".py";
+        bool taken = dir.exists(path);
+        foreach (const FixPyScript *script, scripts)
+            if (script != exclude && script->path == path) taken = true;
+        if (!taken) return path;
+    }
+}
+
 void FixPySettings::save()
 {
     QSettings iniSettings(gcroot + "/" + PYFIXES_DIR_NAME + "/" + PYFIXES_SETTINGS_FILE_NAME, QSettings::IniFormat);

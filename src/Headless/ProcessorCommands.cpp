@@ -205,13 +205,7 @@ installProcessor(CommandEnvironment &env, const CommandRequest &request)
     } else {
         script = fixPySettings->createScript(name);
         script->source = source;
-        script->path = QString(name).replace(" ", "_").toLower() + ".py";
-
-        // unique file name, as the GUI editor does
-        int n = 0;
-        QString base = script->path.chopped(3);
-        for (FixPyScript *s : fixPySettings->getScripts())
-            if (s != script && s->path == script->path) script->path = QString("%1_%2.py").arg(base).arg(++n);
+        script->path = fixPySettings->uniquePath(QString(name).replace(" ", "_").toLower() + ".py", script);
         script->changed = true;
         status = "installed";
     }
