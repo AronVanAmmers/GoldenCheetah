@@ -1845,7 +1845,8 @@ RideCache::saveSilent(RideItem *rideItem, QString *error)
     // update the change history
     QString history = rideItem->ride()->getTag("Change History", "");
     QString log = history;
-    log +=  tr("Changes on ");
+    // translated in MainWindow's context, where this code used to live
+    log +=  QCoreApplication::translate("MainWindow", "Changes on ");
     log +=  QDateTime::currentDateTime().toString() + ":";
     log += '\n' + rideItem->ride()->command->changeLog();
     rideItem->ride()->setTag("Change History", log);
