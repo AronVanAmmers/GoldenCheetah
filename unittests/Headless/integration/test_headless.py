@@ -400,6 +400,26 @@ class TestEstimatePowerWorkflow(Headless):
         self.assertEqual(len(env["data"]["activities"]), 2)
 
 
+
+class TestProcessorFiles(Headless):
+
+    def test_script_files_are_never_shared(self):
+        if not self.gcj("version")["data"]["python"]:
+            self.skipTest("embedded Python not available")
+        # "a 1" is stored as a_1.py, then "a" as a.py, and "A" also wants a.py:
+        # one pass over [a_1.py, a.py] gave it a_1.py, over the first script
+        sources = {"a 1": "print('a 1')\n", "a": "print('a')\n", "A": "print('A')\n"}
+        for name, source in sources.items():
+            self.gcj("processor", "install", name, "--source", source)
+        files = set()
+        for name, source in sources.items():
+            shown = self.gcj("processor", "show", name)["data"]
+            self.assertEqual(shown["source"], source)
+            with open(shown["file"]) as f:
+                self.assertEqual(f.read(), source)
+            files.add(shown["file"])
+        self.assertEqual(len(files), 3)
+
 class TestLivesWithOtherTools(Headless):
     """fill-wind and fill-cp edit the folder while GoldenCheetah isn't running"""
 

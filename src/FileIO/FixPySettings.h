@@ -20,6 +20,10 @@ public:
     FixPyScript *createScript(QString name);
     void deleteScript(QString name);
 
+    // a file name in the scripts folder for wanted (name.py): as given, or
+    // with _1, _2 ... added until no other script and no file has it
+    QString uniquePath(const QString &wanted, const FixPyScript *exclude = nullptr) const;
+
     void save();
 
 private:
