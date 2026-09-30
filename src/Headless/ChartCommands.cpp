@@ -253,7 +253,7 @@ pmcChart(CommandEnvironment &env, const CommandRequest &request)
     const RideMetric *m = RideMetricFactory::instance().rideMetric(metric);
     if (!m) return CommandResult::failure(Status::Usage, QString("unknown metric '%1'").arg(request.args.value("metric").toString()));
 
-    PMCData *pmc = pmcFor(*env.session, metric, -1, -1);
+    PMCData *pmc = pmcFor(*env.session, metric);
     if (!pmc || !pmc->start().isValid()) return CommandResult::failure(Status::Failed, "no activities to compute the PMC from");
 
     QDate to = request.args.contains("to") ? QDate::fromString(request.args.value("to").toString(), Qt::ISODate) : QDate::currentDate();
