@@ -96,6 +96,22 @@ mergeBody(QJsonObject &args, const QByteArray &body, QString &error)
     return true;
 }
 
+// a file named in a request is read where the server runs: the server's
+// files are not the client's to read, and "-" would wait on its stdin
+static bool
+commandLineOnly(const CommandSpec &spec, const QJsonObject &args, RestRouter::Match &m)
+{
+    for (const QString &key : args.keys()) {
+        const ParamSpec *p = spec.param(key);
+        if (!p || !p->commandLine) continue;
+        m.httpStatus = 400;
+        m.error = QString("'%1' reads a file where the server runs, it is only for the command line; "
+                          "send the content in the request instead").arg(key);
+        return true;
+    }
+    return false;
+}
+
 RestRouter::Match
 RestRouter::match(const QString &method, const QString &fullPath,
                   const QMultiMap<QString, QString> &query, const QByteArray &jsonBody) const
@@ -142,6 +158,7 @@ RestRouter::match(const QString &method, const QString &fullPath,
         args.remove("athlete");
         QJsonObject bodyArgs = body.value("args").toObject();
         for (const QString &k : bodyArgs.keys()) args.insert(k, bodyArgs.value(k));
+        if (commandLineOnly(c->spec, args, m)) return m;
         m.args = args;
         return m;
     }
@@ -175,6 +192,7 @@ RestRouter::match(const QString &method, const QString &fullPath,
             m.athlete = args.value("athlete").toString();
             args.remove("athlete");
         }
+        if (commandLineOnly(r.command->spec, args, m)) return m;
         m.command = r.command->spec.name;
         m.args = args;
         return m;
@@ -240,7 +258,7 @@ RestRouter::openApi(const QString &serverUrl) const
         QJsonObject bodyProps;
         QJsonArray bodyRequired;
         for (const ParamSpec &ps : spec.params) {
-            if (inPath.contains(ps.name)) continue;
+            if (inPath.contains(ps.name) || ps.commandLine) continue;
             if (body) {
                 QJsonObject s = schemaFor(ps);
                 s.insert("description", ps.description);

@@ -90,6 +90,26 @@ private slots:
         QVERIFY(!m.args.contains("athlete"));
     }
 
+    void commandLineOnlyParametersAreRefused() {
+        RestRouter::Match m = go("POST", "/v1/metrics/user", {}, "{\"file\": \"/etc/passwd\"}");
+        QCOMPARE(m.httpStatus, 400);
+        QVERIFY(m.error.contains("'file'"));
+        QMultiMap<QString,QString> q;
+        q.insert("file", "-");
+        QCOMPARE(go("POST", "/v1/metrics/user", q).httpStatus, 400);
+        QCOMPARE(go("POST", "/v1/commands/metric.user.add", {}, "{\"args\": {\"file\": \"/x\"}}").httpStatus, 400);
+        QCOMPARE(go("POST", "/v1/metrics/user", {}, "{\"program\": \"{ value { 1; } }\"}").httpStatus, 200);
+
+        RestRouter router(r);
+        QJsonObject post = router.openApi("http://localhost:1/v1").value("paths").toObject()
+                               .value("/v1/metrics/user").toObject().value("post").toObject();
+        QJsonObject props = post.value("requestBody").toObject().value("content").toObject()
+                                .value("application/json").toObject().value("schema").toObject()
+                                .value("properties").toObject();
+        QVERIFY(props.contains("program"));
+        QVERIFY(!props.contains("file"));
+    }
+
     void openApiDescribesEveryRoute() {
         RestRouter router(r);
         QJsonObject doc = router.openApi("http://localhost:1/v1");

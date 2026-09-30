@@ -85,6 +85,17 @@ inline CommandRegistry testRegistry()
     est.handler = noop;
     r.add(est);
 
+    Command metric;
+    metric.spec.name = "metric.user.add";
+    metric.spec.summary = "add a user metric";
+    metric.spec.scope = Scope::Global;
+    metric.spec.params << ParamSpec("program", ParamType::String, "formula");
+    metric.spec.params << ParamSpec("file", ParamType::Path, "formula file").cliOnly();
+    metric.spec.httpMethod = "POST";
+    metric.spec.httpPath = "/metrics/user";
+    metric.handler = noop;
+    r.add(metric);
+
     Command fields;
     fields.spec.name = "field.list";
     fields.spec.summary = "fields";

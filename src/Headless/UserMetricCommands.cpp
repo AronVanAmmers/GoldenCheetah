@@ -25,6 +25,7 @@
 //
 
 #include "HeadlessCommands.h"
+#include "ProgramArgs.h"
 #include "ActivitySelection.h"
 
 #include "Context.h"
@@ -140,50 +141,6 @@ checkName(const QString &name)
     return CommandResult::success();
 }
 
-// the editor's parse and validateFilter pass; a missing value block
-// would otherwise compute nothing and report no error
-static CommandResult
-checkProgram(Context *context, const QString &program)
-{
-    if (program.trimmed().isEmpty()) return CommandResult::failure(Status::Usage, "program is empty");
-
-    DataFilter checker(nullptr, context);
-    QStringList errors = checker.check(program);
-    if (!errors.isEmpty() || !checker.root()) {
-        if (errors.isEmpty()) errors << QString("malformed expression.");
-        return CommandResult::failure(Status::Usage, errors.join("\n"));
-    }
-    if (!checker.rt.functions.contains("value"))
-        return CommandResult::failure(Status::Usage, "program needs a value block");
-    return CommandResult::success();
-}
-
-static CommandResult
-readProgram(const CommandRequest &request, QString &program)
-{
-    bool hasProgram = request.args.contains("program");
-    bool hasFile = request.args.contains("file");
-    if (hasProgram && hasFile)
-        return CommandResult::failure(Status::Usage, "give the program with --program or --file, not both");
-    if (!hasProgram && !hasFile) return CommandResult::success();
-
-    if (hasFile) {
-        QString path = request.args.value("file").toString();
-        if (path == "-") {
-            QTextStream in(stdin);
-            program = in.readAll();
-        } else {
-            QFile in(path);
-            if (!in.open(QIODevice::ReadOnly | QIODevice::Text))
-                return CommandResult::failure(Status::NotFound, QString("can't read %1").arg(path));
-            program = QTextStream(&in).readAll();
-        }
-    } else {
-        program = request.args.value("program").toString();
-    }
-    return CommandResult::success();
-}
-
 static void
 stamp(UserMetricSettings &m)
 {
@@ -257,11 +214,9 @@ addUserMetric(CommandEnvironment &env, const CommandRequest &request)
     CommandResult name = checkName(m.name);
     if (!name.ok()) return name;
 
-    CommandResult program = readProgram(request, m.program);
+    CommandResult program = readProgramArg(request, true, m.program);
     if (!program.ok()) return program;
-    if (!request.args.contains("program") && !request.args.contains("file"))
-        return CommandResult::failure(Status::Usage, "give the program with --program or --file");
-    CommandResult compiled = checkProgram(env.session->context(), m.program);
+    CommandResult compiled = checkProgram(env.session->context(), m.program, true);
     if (!compiled.ok()) return compiled;
 
     QList<UserMetricSettings> metrics = loadUserMetrics();
@@ -304,10 +259,10 @@ editUserMetric(CommandEnvironment &env, const CommandRequest &request)
     if (!name.ok()) return name;
 
     QString program;
-    CommandResult read = readProgram(request, program);
+    CommandResult read = readProgramArg(request, false, program);
     if (!read.ok()) return read;
     if (request.args.contains("program") || request.args.contains("file")) {
-        CommandResult compiled = checkProgram(env.session->context(), program);
+        CommandResult compiled = checkProgram(env.session->context(), program, true);
         if (!compiled.ok()) return compiled;
         m.program = program;
     }
@@ -577,7 +532,7 @@ programParam()
 static ParamSpec
 fileParam()
 {
-    return ParamSpec("file", ParamType::Path, "file containing the formula, or - for stdin");
+    return programFileParam("file containing the formula, or - for stdin");
 }
 
 void
