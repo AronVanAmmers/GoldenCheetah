@@ -18,8 +18,6 @@
 
 #include "Athlete.h"
 
-#include <QFile>
-
 #include "MainWindow.h"
 #include "Context.h"
 #include "Seasons.h"
@@ -248,6 +246,16 @@ Athlete::presetsEdited()
     presetsDirty = true;
 }
 
+bool
+Athlete::saveCharts(const QList<LTMSettings> &charts, QString *error)
+{
+    LTMSettings writer;
+    if (!writer.writeChartXML(home->config(), charts, error)) return false;
+    presets = charts;
+    presetsDirty = false;
+    return true;
+}
+
 void
 Athlete::loadCharts()
 {
@@ -260,17 +268,12 @@ Athlete::loadCharts()
 Athlete::~Athlete()
 {
     // close the ride cache down first
-    bool loaded = rideCache != nullptr;
     delete rideCache;
 
-    // save preset charts once this athlete has its own charts.xml, or the
-    // charts were edited. A fresh athlete keeps using the built-in charts
-    // until then, so opening it does not create the file. Skip the write
-    // when the constructor stopped early (failed upgrade): that would wipe them.
-    LTMSettings reader;
-    QString chartsFile = home->config().canonicalPath() + "/charts.xml";
-    if (loaded && (presetsDirty || QFile::exists(chartsFile)))
-        reader.writeChartXML(home->config(), presets);
+    // save preset charts when they were edited, the file is left alone
+    // otherwise. A fresh athlete keeps using the built-in charts until
+    // then, and a failed upgrade (charts never loaded) can't wipe them.
+    if (presetsDirty) saveCharts(presets);
 
     delete routes;
     delete seasons;

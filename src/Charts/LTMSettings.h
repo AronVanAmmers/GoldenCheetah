@@ -230,8 +230,11 @@ class LTMSettings {
             ltmTool = NULL;
         }
 
-        void writeChartXML(QDir, QList<LTMSettings>);
+        bool writeChartXML(QDir, QList<LTMSettings>, QString *error = nullptr); // false: not saved
         void readChartXML(QDir, bool, QList<LTMSettings>&charts);
+
+        // the athlete's charts.xml, in its config folder
+        static QString chartsFile(const QDir &config) { return config.absoluteFilePath("charts.xml"); }
         void translateMetrics(bool useMetricUnits);
 
         QString name;
