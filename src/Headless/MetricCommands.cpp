@@ -342,8 +342,8 @@ registerMetricCommands(CommandRegistry &registry)
 {
     Command list;
     list.spec.name = "metric.list";
-    list.spec.summary = "list metrics: symbols, names, formula names and units";
-    list.spec.scope = Scope::Global;
+    list.spec.summary = "list metrics, including this athlete's user metrics";
+    list.spec.scope = Scope::Athlete;
     list.spec.params << ParamSpec("search", ParamType::String, "only metrics whose symbol or name contains this");
     list.spec.params << ParamSpec("imperial", ParamType::Bool, "show imperial units");
     list.spec.httpMethod = "GET";

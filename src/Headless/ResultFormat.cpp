@@ -88,24 +88,33 @@ flatten(const QJsonObject &row)
     return out;
 }
 
+// identity columns, then the requested order, then whatever remains
+static QStringList
+tableColumns(const QList<QJsonObject> &flat, const QStringList &then)
+{
+    QStringList columns;
+    for (const QString &p : preferred)
+        for (const QJsonObject &o : flat) if (o.contains(p) && !columns.contains(p)) { columns << p; break; }
+    for (const QString &c : then)
+        for (const QJsonObject &o : flat) if (o.contains(c) && !columns.contains(c)) { columns << c; break; }
+    for (const QJsonObject &o : flat)
+        for (const QString &k : o.keys()) if (!columns.contains(k)) columns << k;
+    return columns;
+}
+
 QString
-ResultFormat::table(const QJsonArray &rows)
+ResultFormat::table(const QJsonArray &rows, const QStringList &then)
 {
     if (rows.isEmpty()) return "(none)\n";
 
     // columns in order of first appearance, keeping a stable, useful order
     // for the common ones
-    QStringList columns;
     QList<QJsonObject> flat;
     for (const QJsonValue &r : rows) {
         QJsonObject o = r.isObject() ? flatten(r.toObject()) : QJsonObject{ { "value", r } };
         flat << o;
     }
-
-    for (const QString &p : preferred)
-        for (const QJsonObject &o : flat) if (o.contains(p) && !columns.contains(p)) { columns << p; break; }
-    for (const QJsonObject &o : flat)
-        for (const QString &k : o.keys()) if (!columns.contains(k)) columns << k;
+    QStringList columns = tableColumns(flat, then);
 
     // long free text makes tables unreadable, it belongs in show/json
     static const QStringList skip = { "description", "source", "output" };
@@ -173,7 +182,7 @@ renderInto(QTextStream &out, const QJsonObject &data, int indent)
 }
 
 QString
-ResultFormat::render(const QJsonObject &data)
+ResultFormat::render(const QJsonObject &data, const QStringList &then)
 {
     // a single list is shown as just the table
     QStringList keys = data.keys();
@@ -184,7 +193,7 @@ ResultFormat::render(const QJsonObject &data)
         if (v.isArray() && (v.toArray().isEmpty() || v.toArray().first().isObject())) { listKey = k; lists++; }
     }
     if (lists == 1) {
-        QString text = table(data.value(listKey).toArray());
+        QString text = table(data.value(listKey).toArray(), then);
         QJsonObject rest = data;
         rest.remove(listKey);
         QString extra;
@@ -274,7 +283,7 @@ csvPaths(QStringList &lines, const QString &path, const QJsonValue &v)
 }
 
 QString
-ResultFormat::csv(const QJsonObject &data)
+ResultFormat::csv(const QJsonObject &data, const QStringList &then)
 {
     // a list is the table when everything else is a plain value (a count,
     // the activity), so nothing is lost by leaving those out
@@ -290,12 +299,7 @@ ResultFormat::csv(const QJsonObject &data)
         QList<QJsonObject> flat;
         for (const QJsonValue &r : data.value(listKey).toArray()) flat << csvFlatten(r.toObject());
 
-        // the text table's column order
-            QStringList columns;
-        for (const QString &p : preferred)
-            for (const QJsonObject &o : flat) if (o.contains(p) && !columns.contains(p)) { columns << p; break; }
-        for (const QJsonObject &o : flat)
-            for (const QString &k : o.keys()) if (!columns.contains(k)) columns << k;
+        QStringList columns = tableColumns(flat, then);
 
         QString text = csvLine(columns);
         for (const QJsonObject &o : flat) {

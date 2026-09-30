@@ -37,10 +37,12 @@ class ResultFormat
         static QString text(const CommandResult &result);
 
         // generic rendering of a JSON object
-        static QString render(const QJsonObject &data);
+        // `then` names columns to place after the usual identity columns
+        // and before whatever remains, so a metric list keeps its order
+        static QString render(const QJsonObject &data, const QStringList &then = QStringList());
 
         // a list of flat objects as an aligned table
-        static QString table(const QJsonArray &rows);
+        static QString table(const QJsonArray &rows, const QStringList &then = QStringList());
 
         // a scalar as text
         static QString scalar(const QJsonValue &v);
@@ -50,7 +52,7 @@ class ResultFormat
         // as columns as in the text table, and anything else is key,value
         // lines with dotted paths
         static QString csv(const CommandResult &result);
-        static QString csv(const QJsonObject &data);
+        static QString csv(const QJsonObject &data, const QStringList &then = QStringList());
 
         // one CSV line, fields quoted where needed (RFC 4180)
         static QString csvLine(const QStringList &fields);

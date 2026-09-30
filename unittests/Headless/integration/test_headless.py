@@ -975,5 +975,105 @@ class TestRest(Headless):
         self.assertClosed()
 
 
+ONES = "{\n    value { 1; }\n}\n"
+TWOS = "{\n    value { 2; }\n}\n"
+
+
+class TestUserMetricsAndZones(Headless):
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        r = cls.gc_class("--athlete", cls.athlete, "import", RIDE_POWER)
+        assert r.code == 0, r
+
+    def metrics_file(self):
+        return os.path.join(self.home, "usermetrics.xml")
+
+    def test_user_metric_is_checked_then_computed(self):
+        path = self.metrics_file()
+        self.assertFalse(os.path.exists(path))
+
+        self.gcj("metric", "user", "add", "--symbol", "ones", "--name", "Ones",
+                 "--program", "{ value { NotARealSymbol; } }", expect=2)
+        self.gcj("metric", "user", "add", "--symbol", "ones", "--name", "Ones",
+                 "--program", "this is not a formula", expect=2)
+        self.gcj("metric", "user", "add", "--symbol", "ones", "--name", "Ones",
+                 "--program", "{ relevant { 1; } }", expect=2)
+        self.assertFalse(os.path.exists(path))
+
+        env = self.gcj("metric", "user", "add", "--symbol", "ones", "--name", "Ones",
+                       "--type", "average", "--units", "x", "--precision", "0", "--program", ONES)
+        self.assertEqual(env["data"]["status"], "added")
+        self.assertGreaterEqual(env["data"]["refreshed"], 1)
+        self.assertEqual(self.gcj("metric", "user", "show", "ones")["data"]["program"], ONES)
+        symbols = {m["symbol"] for m in self.gcj("metric", "list", "--search", "ones")["data"]["metrics"]}
+        self.assertIn("ones", symbols)
+        self.assertEqual(self.gcj("activity", "show", "last")["data"]["metrics"]["ones"], 1)
+
+        with open(path, "rb") as f:
+            before = f.read()
+        self.gcj("metric", "user", "edit", "ones", "--program", "{ value { 1 + ; } }", expect=2)
+        self.gcj("metric", "user", "edit", "ones", "--program", "{ relevant { 1; } }", expect=2)
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+        env = self.gcj("metric", "user", "edit", "ones", "--program", TWOS, "--precision", "1")
+        self.assertEqual(env["data"]["precision"], 1)
+        self.assertEqual(self.gcj("activity", "show", "last")["data"]["metrics"]["ones"], 2)
+
+        self.gcj("activity", "column", "add", "ones")
+        columns = self.gcj("activity", "column", "list")["data"]["columns"]
+        self.assertIn("Ones", columns)
+        self.assertIn("Date", columns)
+
+        self.gcj("metric", "user", "remove", "ones")
+        self.gcj("metric", "user", "show", "ones", expect=3)
+        self.assertNotIn("ones", self.gcj("activity", "show", "last")["data"]["metrics"])
+
+    def test_favourite_order_is_the_intervals_table_order(self):
+        self.gcj("metric", "favourite", "set", "workout_time", "average_hr")
+        listed = self.gcj("metric", "favourite", "list")["data"]["metrics"]
+        self.assertEqual(listed[:2], ["workout_time", "average_hr"])
+
+        r = self.gc("--athlete", self.athlete, "interval", "list", "last")
+        self.assertEqual(r.code, 0, r)
+        header = next(line for line in r.out.decode().splitlines() if "workout_time" in line and "average_hr" in line)
+        self.assertLess(header.index("workout_time"), header.index("average_hr"))
+
+        self.gcj("metric", "favourite", "add", "average_speed")
+        listed = self.gcj("metric", "favourite", "list")["data"]["metrics"]
+        self.assertEqual(listed.index("average_speed"), len(listed) - 1)
+        self.gcj("metric", "favourite", "add", "average_speed")
+        self.assertEqual(self.gcj("metric", "favourite", "list")["data"]["metrics"], listed)
+
+        self.gcj("metric", "favourite", "remove", "average_speed")
+        self.assertNotIn("average_speed", self.gcj("metric", "favourite", "list")["data"]["metrics"])
+        self.gcj("metric", "favourite", "add", "not_a_metric", expect=2)
+
+    def test_hr_range_keeps_other_anchors_and_pace_can_be_set(self):
+        original = self.gcj("zones", "show")["data"]["hr"]["ranges"][0]
+        env = self.gcj("zones", "set", "--type", "hr", "--from", "2026-01-01", "--resthr", "40")
+        self.assertEqual(env["data"]["status"], "added")
+        added = [r for r in env["data"]["hr"]["ranges"] if r["from"] == "2026-01-01"][0]
+        self.assertEqual(added["resthr"], 40)
+        self.assertEqual(added["lthr"], original["lthr"])
+        self.assertEqual(added["maxhr"], original["maxhr"])
+
+        env = self.gcj("zones", "set", "--type", "hr", "--from", original["from"], "--resthr", "42")
+        self.assertEqual(env["data"]["status"], "updated")
+        updated = [r for r in env["data"]["hr"]["ranges"] if r["from"] == original["from"]][0]
+        self.assertEqual(updated["resthr"], 42)
+        self.assertEqual(updated["lthr"], original["lthr"])
+
+        env = self.gcj("zones", "set", "--type", "pace", "--sport", "Run", "--from", "2026-02-01", "--cv", "13.5")
+        self.assertEqual(env["data"]["status"], "added")
+        self.assertEqual(env["data"]["cv"], 13.5)
+        shown = self.gcj("zones", "show", "--sport", "Run")["data"]["pace"]
+        match = [r for r in shown if r["sport"] == "Run" and r["from"] == "2026-02-01"]
+        self.assertEqual(match[0]["cv"], 13.5)
+        self.assertClosed()
+
+
 if __name__ == "__main__":
     unittest.main()

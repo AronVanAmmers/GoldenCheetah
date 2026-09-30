@@ -34,6 +34,7 @@ void registerImportCommands(CommandRegistry &registry);
 void registerFieldCommands(CommandRegistry &registry);
 void registerProcessorCommands(CommandRegistry &registry);
 void registerMetricCommands(CommandRegistry &registry);
+void registerUserMetricCommands(CommandRegistry &registry);
 void registerChartCommands(CommandRegistry &registry);
 
 // the full command table used by the command line and REST server

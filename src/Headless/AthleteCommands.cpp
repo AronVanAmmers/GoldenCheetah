@@ -35,6 +35,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <functional>
 
 namespace Headless {
 
@@ -318,6 +319,17 @@ zonesChanged(AthleteSession &s)
     s.waitForRefresh();
 }
 
+// the range covering this date, whose anchors a new range copies
+static int
+coveringRange(int count, const std::function<QDate(int)> &start, const std::function<int(QDate)> &which, const QDate &from)
+{
+    int found = which(from);
+    if (found >= 0) return found;
+    int best = -1;
+    for (int r = 0; r < count; r++) if (start(r) < from) best = r;
+    return best;
+}
+
 static CommandResult
 setZones(CommandEnvironment &env, const CommandRequest &request)
 {
@@ -336,16 +348,24 @@ setZones(CommandEnvironment &env, const CommandRequest &request)
     if (type == "power") {
         if (!athlete->zones_.contains(sport)) return CommandResult::failure(Status::NotFound, QString("no power zones for sport '%1'").arg(sport));
         Zones *zones = athlete->zones_.value(sport);
-        if (!has("cp")) return CommandResult::failure(Status::Usage, "power zones need --cp");
-
         int range = -1;
         for (int r = 0; r < zones->getRangeSize(); r++) if (zones->getStartDate(r) == from) range = r;
         bool added = range < 0;
         if (added) {
-            range = zones->addZoneRange(from, val("cp"), has("aet") ? val("aet") : 0, has("ftp") ? val("ftp") : val("cp"),
-                                        has("w") ? val("w") : 20000, has("pmax") ? val("pmax") : 1000);
+            int source = coveringRange(zones->getRangeSize(),
+                                        [&](int r) { return zones->getStartDate(r); },
+                                        [&](QDate d) { return zones->whichRange(d); }, from);
+            if (!has("cp") && source < 0) return CommandResult::failure(Status::Usage, "power zones need --cp");
+            int cp = has("cp") ? val("cp") : zones->getCP(source);
+            int aet = has("aet") ? val("aet") : (source >= 0 ? zones->getAeT(source) : 0);
+            int ftp = has("ftp") ? val("ftp") : (source >= 0 ? zones->getFTP(source) : cp);
+            int w = has("w") ? val("w") : (source >= 0 ? zones->getWprime(source) : 20000);
+            int pmax = has("pmax") ? val("pmax") : (source >= 0 ? zones->getPmax(source) : 1000);
+            range = zones->addZoneRange(from, cp, aet, ftp, w, pmax);
         } else {
-            zones->setCP(range, val("cp"));
+            if (!has("cp") && !has("ftp") && !has("aet") && !has("w") && !has("pmax"))
+                return CommandResult::failure(Status::Usage, "give a value to set: --cp, --ftp, --w, --pmax or --aet");
+            if (has("cp")) zones->setCP(range, val("cp"));
             if (has("ftp")) zones->setFTP(range, val("ftp"));
             if (has("aet")) zones->setAeT(range, val("aet"));
             if (has("w")) zones->setWprime(range, val("w"));
@@ -358,19 +378,26 @@ setZones(CommandEnvironment &env, const CommandRequest &request)
         data.insert("status", added ? "added" : "updated");
         data.insert("power", powerZonesJson(zones));
 
-    } else {
+    } else if (type == "hr") {
         if (!athlete->hrzones_.contains(sport)) return CommandResult::failure(Status::NotFound, QString("no heart rate zones for sport '%1'").arg(sport));
         HrZones *zones = athlete->hrzones_.value(sport);
-        if (!has("lthr")) return CommandResult::failure(Status::Usage, "heart rate zones need --lthr");
-
         int range = -1;
         for (int r = 0; r < zones->getRangeSize(); r++) if (zones->getStartDate(r) == from) range = r;
         bool added = range < 0;
         if (added) {
-            range = zones->addHrZoneRange(from, val("lthr"), has("aet") ? val("aet") : 0,
-                                          has("resthr") ? val("resthr") : 50, has("maxhr") ? val("maxhr") : 190);
+            int source = coveringRange(zones->getRangeSize(),
+                                        [&](int r) { return zones->getStartDate(r); },
+                                        [&](QDate d) { return zones->whichRange(d); }, from);
+            if (!has("lthr") && source < 0) return CommandResult::failure(Status::Usage, "heart rate zones need --lthr");
+            int lthr = has("lthr") ? val("lthr") : zones->getLT(source);
+            int aet = has("aet") ? val("aet") : (source >= 0 ? zones->getAeT(source) : 0);
+            int rest = has("resthr") ? val("resthr") : (source >= 0 ? zones->getRestHr(source) : 50);
+            int maxhr = has("maxhr") ? val("maxhr") : (source >= 0 ? zones->getMaxHr(source) : 190);
+            range = zones->addHrZoneRange(from, lthr, aet, rest, maxhr);
         } else {
-            zones->setLT(range, val("lthr"));
+            if (!has("lthr") && !has("aet") && !has("resthr") && !has("maxhr"))
+                return CommandResult::failure(Status::Usage, "give a value to set: --lthr, --aet, --resthr or --maxhr");
+            if (has("lthr")) zones->setLT(range, val("lthr"));
             if (has("aet")) zones->setAeT(range, val("aet"));
             if (has("resthr")) zones->setRestHr(range, val("resthr"));
             if (has("maxhr")) zones->setMaxHr(range, val("maxhr"));
@@ -381,6 +408,36 @@ setZones(CommandEnvironment &env, const CommandRequest &request)
         zones->read(file);
         data.insert("status", added ? "added" : "updated");
         data.insert("hr", hrZonesJson(zones));
+
+    } else {
+        bool swim = sport == "Swim";
+        if (sport != "Run" && !swim)
+            return CommandResult::failure(Status::Usage, "pace zones are for Run or Swim, set --sport");
+        PaceZones *zones = athlete->pacezones_[swim ? 1 : 0];
+        if (!zones) return CommandResult::failure(Status::NotFound, QString("no pace zones for %1").arg(sport));
+        int range = -1;
+        for (int r = 0; r < zones->getRangeSize(); r++) if (zones->getStartDate(r) == from) range = r;
+        bool added = range < 0;
+        if (added) {
+            int source = coveringRange(zones->getRangeSize(),
+                                        [&](int r) { return zones->getStartDate(r); },
+                                        [&](QDate d) { return zones->whichRange(d); }, from);
+            if (!has("cv") && source < 0) return CommandResult::failure(Status::Usage, "pace zones need --cv");
+            double cv = has("cv") ? request.args.value("cv").toDouble() : zones->getCV(source);
+            double aet = has("aet") ? val("aet") : (source >= 0 ? zones->getAeT(source) : 0);
+            range = zones->addZoneRange(from, cv, aet);
+        } else {
+            if (!has("cv") && !has("aet"))
+                return CommandResult::failure(Status::Usage, "give a value to set: --cv or --aet");
+            if (has("cv")) zones->setCV(range, request.args.value("cv").toDouble());
+            if (has("aet")) zones->setAeT(range, val("aet"));
+            zones->setZonesFromCV(range);
+        }
+        zones->write(athlete->home->config());
+        QFile file(athlete->home->config().canonicalPath() + "/" + zones->fileName());
+        zones->read(file);
+        data.insert("status", added ? "added" : "updated");
+        data.insert("cv", jsonNumber(zones->getCV(range)));
     }
 
     zonesChanged(s);
@@ -560,23 +617,27 @@ registerAthleteCommands(CommandRegistry &registry)
 
     Command setz;
     setz.spec.name = "zones.set";
-    setz.spec.summary = "add or change a power or heart rate zone range, as the GUI's zones pages";
+    setz.spec.summary = "add or change a power, heart rate or pace zone range, as the GUI's zones pages";
     setz.spec.description =
-        "Sets the values for the range starting on --from (added when there is none),\n"
-        "writes the zones file and recomputes the activities it affects.";
+        "Sets the values for the range starting on --from (added when there is none).\n"
+        "A new range copies anchors you leave out from the range that covered that\n"
+        "day, so a new resting heart rate does not reset LTHR or maximum heart rate.\n"
+        "Changing an existing range changes only the values you pass. The first range\n"
+        "for a sport still needs --cp, --lthr or --cv. Pace is in km/h, for Run or Swim.";
     setz.spec.scope = Scope::Athlete;
     setz.spec.modifies = true;
-    setz.spec.params << ParamSpec("type", ParamType::String, "which zones").def("power").oneOf({ "power", "hr" });
+    setz.spec.params << ParamSpec("type", ParamType::String, "which zones").def("power").oneOf({ "power", "hr", "pace" });
     setz.spec.params << ParamSpec("from", ParamType::Date, "first day the values apply").req();
     setz.spec.params << ParamSpec("sport", ParamType::String, "sport").def("Bike");
     setz.spec.params << ParamSpec("cp", ParamType::Int, "critical power (power)");
-    setz.spec.params << ParamSpec("ftp", ParamType::Int, "FTP (power, default: cp)");
+    setz.spec.params << ParamSpec("ftp", ParamType::Int, "FTP (power)");
     setz.spec.params << ParamSpec("w", ParamType::Int, "W' in joules (power)");
     setz.spec.params << ParamSpec("pmax", ParamType::Int, "maximal power (power)");
-    setz.spec.params << ParamSpec("aet", ParamType::Int, "aerobic threshold (power or hr)");
+    setz.spec.params << ParamSpec("aet", ParamType::Int, "aerobic threshold (power, hr or pace)");
     setz.spec.params << ParamSpec("lthr", ParamType::Int, "lactate threshold heart rate (hr)");
     setz.spec.params << ParamSpec("resthr", ParamType::Int, "resting heart rate (hr)");
     setz.spec.params << ParamSpec("maxhr", ParamType::Int, "maximum heart rate (hr)");
+    setz.spec.params << ParamSpec("cv", ParamType::Double, "critical velocity in km/h (pace)");
     setz.spec.httpMethod = "PUT";
     setz.spec.httpPath = "/athletes/{athlete}/zones";
     setz.handler = setZones;
