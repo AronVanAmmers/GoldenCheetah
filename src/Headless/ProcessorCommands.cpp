@@ -331,7 +331,6 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
 
     RideCache *cache = env.session->rideCache();
     QJsonArray report;
-    QList<RideItem *> discard;
     int processed = 0, skipped = 0, failed = 0, saved = 0;
     QString text;
 
@@ -342,6 +341,9 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
         r.insert("activity", QFileInfo(item->fileName).completeBaseName());
         r.insert("start", activityStart(item));
 
+        // an activity opened here is closed again once it is done, so
+        // --all doesn't hold every activity's samples in memory at once
+        bool wasOpen = item->isOpen();
         QString output;
         bool changed = false;
         QString why = runOn(dp, item, output, changed);
@@ -362,12 +364,15 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
             item->setDirty(true);
             QString saveError;
             if (dryRun) {
-                discard << item;
+                item->setDirty(false);  // thrown away below
+                item->close();
             } else if (cache->saveActivity(item, saveError)) {
                 saved++;
             } else {
                 r.insert("status", "failed");
                 r.insert("message", saveError);
+                item->setDirty(false);
+                item->close();
                 failed++;
             }
             if (!r.contains("status")) {
@@ -376,6 +381,7 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
             }
         }
         report.append(r);
+        if (!wasOpen) item->close();
 
         text += QString("%1  %2").arg(r.value("status").toString(), -9).arg(r.value("activity").toString());
         if (r.contains("message")) text += "  " + r.value("message").toString();
@@ -387,7 +393,6 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
 
     // the trends and CP estimates only use what is on disk
     if (saved) env.session->refresh();
-    for (RideItem *item : discard) { item->setDirty(false); item->close(); }
 
     QJsonObject data;
     data.insert("processor", dp->id());
