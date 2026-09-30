@@ -150,7 +150,8 @@ cliMain(int argc, char **argv)
     // where are the athletes?
     QString home = g.home, athlete = g.athlete;
     if (!g.athleteDir.isEmpty()) {
-        QFileInfo dir(g.athleteDir);
+        // (tab completion adds a trailing slash)
+        QFileInfo dir(QDir::cleanPath(g.athleteDir));
         home = dir.absolutePath();
         athlete = dir.fileName();
     }
