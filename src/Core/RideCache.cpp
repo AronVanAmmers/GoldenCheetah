@@ -719,7 +719,7 @@ void
 RideCache::refresh()
 {
     // already on it !
-    if (refreshThreads.count()) return;
+    if (isRunning()) return;
 
     // how many need refreshing ?
     int staleCount = 0;
@@ -751,6 +751,9 @@ RideCache::refresh()
         updates = 0;
         context->notifyRefreshStart();
 
+        // a thread removes itself from the list when it is done, which the
+        // first one may be before the last one is added
+        QMutexLocker locker(&updateMutex);
         while(n++ < threads) {
 
             // if goes past last make it the last

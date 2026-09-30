@@ -82,7 +82,7 @@ class RideCache : public QObject
                                       SportRestriction sport=AnySport);
 
         // is running ?
-        bool isRunning() { return refreshThreads.count() != 0; }
+        bool isRunning() { QMutexLocker locker(&updateMutex); return refreshThreads.count() != 0; }
 
         // how many activities the last refresh() found out of date
         int lastStaleCount() const { return lastStaleCount_; }
