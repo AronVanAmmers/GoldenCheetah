@@ -773,29 +773,22 @@ RideCache::refresh()
     }
 }
 
-QString
-RideCache::getAggregate(QString name, Specification spec, bool useMetricUnits, bool nofmt)
+// the value of a metric over some activities, as the Trends and API show
+// it: totals added, averages weighted by duration (the metric's count) and
+// skipping zero values unless the metric counts them, highs and lows kept
+double
+RideCache::aggregate(const RideMetric *metric, const QList<RideItem *> &items)
 {
-    // get the metric details, so we can convert etc
-    const RideMetric *metric = RideMetricFactory::instance().rideMetric(name);
-    if (!metric) {
-        qDebug()<<"unknown metric:"<<name;
-        return QString("%1 unknown").arg(name);
-    }
-
     // what we will return
     double rvalue = 0;
     double rcount = 0; // using double to avoid rounding issues with int when dividing
 
     // loop through and aggregate
-    foreach (RideItem *item, rides()) {
-
-        // skip filtered rides
-        if (!spec.pass(item)) continue;
+    foreach (RideItem *item, items) {
 
         // get this value
-        double value = item->getForSymbol(name);
-        double count = item->getCountForSymbol(name); // for averaging
+        double value = item->getForSymbol(metric->symbol());
+        double count = item->getCountForSymbol(metric->symbol()); // for averaging
 
         // check values are bounded, just in case
         if (std::isnan(value) || std::isinf(value)) value = 0;
@@ -849,6 +842,25 @@ RideCache::getAggregate(QString name, Specification spec, bool useMetricUnits, b
     if (metric->type() == RideMetric::Average) {
         if (rcount) rvalue = rvalue / rcount;
     }
+
+
+    return rvalue;
+}
+
+QString
+RideCache::getAggregate(QString name, Specification spec, bool useMetricUnits, bool nofmt)
+{
+    // get the metric details, so we can convert etc
+    const RideMetric *metric = RideMetricFactory::instance().rideMetric(name);
+    if (!metric) {
+        qDebug()<<"unknown metric:"<<name;
+        return QString("%1 unknown").arg(name);
+    }
+
+    // the activities the specification passes
+    QList<RideItem *> items;
+    foreach (RideItem *item, rides()) if (spec.pass(item)) items << item;
+    double rvalue = aggregate(metric, items);
 
     const_cast<RideMetric*>(metric)->setValue(rvalue);
     // Format appropriately

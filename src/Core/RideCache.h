@@ -65,6 +65,9 @@ class RideCache : public QObject
         // get an aggregate applying the passed spec
         QString getAggregate(QString name, Specification spec, bool useMetricUnits, bool nofmt=false);
 
+        // the aggregate's value over these activities, in metric units
+        static double aggregate(const RideMetric *metric, const QList<RideItem *> &items);
+
         // get top n bests
         QList<AthleteBest> getBests(QString symbol, int n, Specification specification, bool useMetricUnits=true);
 
