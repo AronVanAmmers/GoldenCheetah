@@ -69,12 +69,12 @@ gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > inte
 |---|---|
 | Athletes | `athlete list`, `athlete create`, `athlete show`, `athlete refresh [--rebuild]` |
 | Import | `import FILE-OR-FOLDER... [--recursive] [--dry-run]`, `formats` |
-| Activities | `activity list`, `activity show`, `activity overview [--tile NAME]`, `activity export --as tcx`, `activity set --set 'Field=value'`, `activity delete`, `activity eval --expression '...'` |
+| Activities | `activity list`, `activity show`, `activity overview [--tile NAME]`, `activity export --as tcx`, `activity set --set 'Field=value'`, `activity delete`, `activity eval --expression '...'`, `activity column list|add|remove` |
 | Intervals | `interval list ACTIVITY [--type user,effort] [--metric ...] [--display]`, `interval show ACTIVITY NUMBER-OR-NAME` |
 | Fields | `field list`, `field add NAME... --type double --tab TAB`, `field remove` |
 | Processors | `processor list`, `processor show`, `processor install NAME --file script.py`, `processor configure`, `processor remove`, `processor run NAME ...` |
-| Metrics | `metric list`, `metric aggregate`, `pmc`, `meanmax`, `cp`, `cp estimates` |
-| Zones and measures | `zones show`, `zones set`, `measures list`, `measures add` |
+| Metrics | `metric list`, `metric user list|show|add|edit|remove`, `metric favourite list|add|remove|set`, `metric aggregate`, `pmc`, `meanmax`, `cp`, `cp estimates` |
+| Zones and measures | `zones show`, `zones set` (`--type power\|hr\|pace`), `measures list`, `measures add` |
 | Charts | `chart activity`, `chart meanmax`, `chart pmc`, `chart zones [--type power\|hr\|pace\|fatigue]`, `chart trend` (`--as png\|svg\|pdf`, `--width`, `--height`, `--dark`) |
 | Server | `serve` (see [REST API](#rest-api)) |
 
@@ -118,7 +118,37 @@ For raw numbers:
 | Route and data series | `activity export --as gpx`, `--as csv` or `--as json` |
 | Zone and PMC charts | `chart zones`, `chart pmc`, `chart activity` |
 
-Wherever a command takes `--metric`, a metric can be given by its symbol (`average_power`, `skiba_wprime_exp`) or by the name used in formulas and in the GUI's table definitions (`Average_Power`, `W'_Work`). `metric list` shows both, and `--search` matches either. `--display` on `interval list` and `interval show` returns values as the GUI formats them rather than as numbers.
+Wherever a command takes `--metric`, a metric can be given by its symbol (`average_power`, `skiba_wprime_exp`) or by the name used in formulas and in the GUI's table definitions (`Average_Power`, `W'_Work`). `metric list` shows both, including this athlete's user metrics, and `--search` matches either. `--display` on `interval list` and `interval show` returns values as the GUI formats them rather than as numbers.
+
+### User metrics, favourites and zones
+
+A user metric is a formula GoldenCheetah evaluates for the whole activity and again for every interval. `metric user add` writes it to the shared `usermetrics.xml` in the athletes folder, the same file as Preferences → Metrics → Custom, and rebuilds the metric cache. The formula is checked first. A program that does not parse, or has no `value` block, is refused and the file is left unchanged.
+
+```sh
+gc-cli -a Joe metric user add --symbol hrr_v --name "HRR/v" --type average \
+    --units bpm/kph --imperial-units bpm/mph --conversion 1.609 --precision 2 \
+    --file hrr_v.formula
+gc-cli -a Joe metric user edit hrr_v --precision 1
+gc-cli -a Joe metric user show hrr_v
+```
+
+`--program` takes the formula text. `--file -` reads it from stdin. Type `average` with `count { Duration; }` makes a weekly trend a time-weighted mean.
+
+Favourites are what the intervals table and the ride summary show, in that order. There is no separate intervals-table order. `metric favourite set` replaces the list; the order of the arguments is the top-to-bottom order, the same list Preferences saves after the up and down buttons. `metric favourite add` appends, so new rows go at the bottom. `interval list` prints its metric columns in that order.
+
+```sh
+gc-cli -a Joe metric favourite add hrr_v
+gc-cli -a Joe metric favourite set workout_time average_hr hrr_v average_speed
+```
+
+`activity column add` adds a metric to the activity list. Existing columns stay where they are.
+
+Heart rate, power and pace zones are date ranges. `zones show` prints them. `zones set` adds a range starting on `--from`, or changes the range that already starts that day. A new range copies anchors you leave out from the range that covered that day, so changing resting heart rate does not reset LTHR or maximum heart rate. The first range for a sport still needs `--cp`, `--lthr` or `--cv`. Pace is critical velocity in km/h, for Run or Swim.
+
+```sh
+gc-cli -a Joe zones set --type hr --sport Bike --from 2026-01-01 --resthr 40
+gc-cli -a Joe zones set --type pace --sport Run --from 2026-01-01 --cv 12.5
+```
 
 Intervals are numbered in the order `interval list` shows them: usually the entire activity, the laps and marked intervals, then the efforts, climbs and segments GoldenCheetah found. Each has a `type`, which `--type` accepts: `user`, `all`, `device`, `peakpower`, `peakpace`, `effort`, `route` or `climb`. Each also has a `group`, the title the sidebar shows (`USER`, `EFFORTS`, `PEAK POWER` ...), and `--type` accepts those titles too.
 

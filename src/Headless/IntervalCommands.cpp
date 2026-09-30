@@ -208,8 +208,9 @@ listIntervals(CommandEnvironment &env, const CommandRequest &request)
     table.remove("discovered_efforts");
     CommandResult result = CommandResult::success(data);
     QString line = intervalCensusLine(census);
-    result.text = line + "\n" + ResultFormat::render(table);
-    result.csv = ResultFormat::csvLine({ line }) + ResultFormat::csv(table);
+    // metric columns follow the favourites, or --metric, rather than sorted keys
+    result.text = line + "\n" + ResultFormat::render(table, symbols);
+    result.csv = ResultFormat::csvLine({ line }) + ResultFormat::csv(table, symbols);
     return result;
 }
 

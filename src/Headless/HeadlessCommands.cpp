@@ -46,6 +46,7 @@ commandRegistry()
         registerFieldCommands(registry);
         registerProcessorCommands(registry);
         registerMetricCommands(registry);
+        registerUserMetricCommands(registry);
         registerChartCommands(registry);
     }
     return registry;
