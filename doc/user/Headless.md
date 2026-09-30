@@ -75,7 +75,7 @@ gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > inte
 | Processors | `processor list`, `processor show`, `processor install NAME --file script.py`, `processor configure`, `processor remove`, `processor run NAME ...` |
 | Metrics | `metric list`, `metric user list|show|add|edit|remove`, `metric favourite list|add|remove|set`, `metric aggregate`, `pmc`, `meanmax`, `cp`, `cp estimates` |
 | Zones and measures | `zones show`, `zones set` (`--type power\|hr\|pace`), `measures list`, `measures add` |
-| Charts | `chart activity`, `chart meanmax`, `chart pmc`, `chart zones [--type power\|hr\|pace\|fatigue]`, `chart trend` (`--as png\|svg\|pdf`, `--width`, `--height`, `--dark`), `chart library list\|show\|add\|edit\|remove` |
+| Charts | `chart activity`, `chart meanmax`, `chart pmc`, `chart zones [--type power\|hr\|pace\|fatigue]`, `chart trend` (`--as png\|svg\|pdf`, `--width`, `--height`, `--dark`), `chart library list\|show\|add\|edit\|remove`, `chart library curve add\|edit\|remove` |
 | Server | `serve` (see [REST API](#rest-api)) |
 
 ### Choosing activities
@@ -163,11 +163,19 @@ gc-cli -a Joe zones set --type pace --sport Run --from 2026-01-01 --cv 12.5
 
 `chart library` reads and writes the charts in the Trends sidebar, the athlete's `config/charts.xml`. `chart library list` shows the same charts the sidebar shows. Until a chart is added, edited or removed, that file is not created and the list is the built-in set.
 
-`chart library add` appends a chart. Each `--metric` is a metric from `metric list` (a symbol such as `p_v`, or a formula name such as `Average_Power`) and is stored as a normal metric curve. `--by` is `day`, `week`, `month`, `year`, `tod` or `all`, and defaults to `week`. The chart is written with the same file format the GUI uses, and it is read back before the file is touched. An unknown metric, an empty or duplicate name, or a chart that does not read back is refused and the file is left unchanged.
+`chart library add` appends a chart. A curve is one of three kinds. `--metric` is a metric from `metric list` (a symbol such as `p_v`, or a formula name such as `Average_Power`). `--best` is a peak over a duration: `--best 45 --unit min --series power` is the 45-minute peak power on CP Analysis. `--estimate` is a value from a critical-power model, `--model cp2`, `cp3` or `ext`, such as `--estimate cp`. A model that does not offer that value is refused. PMC, Banister, performance, formula and measure curves are refused.
+
+With no drawing flags, a metric is stored as GoldenCheetah stores a normal metric curve: a line and a circle for an average, a square for a peak, bars for a total. `--style` is `bar`, `line`, `sticks` or `dots`. `--symbol` is `none`, `circle`, `square`, `diamond`, `triangle`, `cross`, `hexagon` or `star`. `--color` is `RRGGBB`. `--fill` fills under the curve. `--filter` is that curve's own data filter, the same language as the activity filter, so `isRun` limits one series and leaves the chart's filter empty. Those flags apply to the one curve on the command. Several `--metric` flags and one `--style` is refused; add each curve with `chart library curve add`. `--by` is `day`, `week`, `month`, `year`, `tod` or `all`, and defaults to `week`.
+
+`chart library show` prints each curve as the Curves table does: its number, its type, what it plots, then the style and the symbol. `chart library edit --metric` (or `--best` or `--estimate`) replaces the whole curve list. `chart library curve edit` changes one curve and leaves the others, including bests and estimates already in the file. The chart is written with the same file format the GUI uses, and it is read back before the file is touched. An unknown metric, an empty or duplicate name, a filter that does not parse, or a chart that does not read back is refused and the file is left unchanged.
 
 ```sh
 gc-cli -a Joe chart library add --name "P v" --metric p_v
-gc-cli -a Joe chart library show "P v"
+gc-cli -a Joe chart library add --name "Estimated VO2max" --by day --metric vo2max --style dots --symbol none
+gc-cli -a Joe chart library add --name "CP Analysis" --by day --best 45 --unit min --series power --style dots --symbol circle
+gc-cli -a Joe chart library curve add "CP Analysis" --estimate cp --model cp2
+gc-cli -a Joe chart library show "CP Analysis"
+gc-cli -a Joe chart library curve edit "CP Analysis" 1 --style line
 gc-cli -a Joe chart library edit "P v" --name "Power and speed" --metric average_power --metric average_speed --by week
 gc-cli -a Joe chart library remove "Power and speed"
 ```
@@ -243,6 +251,7 @@ This serves every command as JSON under `http://127.0.0.1:12022/v1` until interr
 | `POST /v1/athletes/Joe/processors/estimate-power/runs` `{"filter": "isRun = 0"}` | `processor run` |
 | `GET /v1/athletes/Joe/charts` | `chart library list` |
 | `POST /v1/athletes/Joe/charts` `{"name": "P v", "metric": ["p_v"]}` | `chart library add` |
+| `POST /v1/athletes/Joe/charts/CP%20Analysis/curves` `{"best": 45, "unit": "min", "series": "power", "style": "dots", "symbol": "circle"}` | `chart library curve add` |
 | `GET /v1/athletes/Joe/activities/last/chart?width=800` | `chart activity`, returns `image/png` |
 | `POST /v1/commands/<command>` `{"athlete": "Joe", "args": {...}}` | any command |
 
