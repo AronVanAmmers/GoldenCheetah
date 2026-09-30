@@ -592,6 +592,41 @@ class TestActivityFields(Headless):
         self.assertEqual(run["metadata"]["Workout Code"], "Z2")
         self.assertEqual(run["metadata"]["Objective"], "Endurance")
 
+
+class TestTrends(Headless):
+    """chart trend's periods have the values Trends and metric aggregate give"""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        r = cls.gc_class("--athlete", cls.athlete, "import", RIDE_POWER, RIDE_GPS)
+        assert r.code == 0, r
+        # the GPS ride has no power: move it into the power ride's month
+        r = cls.gc_class("--athlete", cls.athlete, "activity", "set", "2012_01_11_11_51_01",
+                         "--set", "Start Date=2020-01-20")
+        assert r.code == 0, r
+
+    def trend(self, metric):
+        out = os.path.join(self.tmp, "trend.png")
+        env = self.gcj("-o", out, "chart", "trend", metric, "--by", "month", "--from", "2020-01-01", "--to", "2020-01-31")
+        self.assertEqual(env["data"]["activities"], 2)
+        self.assertEqual(len(env["data"]["buckets"]), 1)
+        return env["data"]["buckets"][0]["value"]
+
+    def aggregate(self, metric):
+        env = self.gcj("metric", "aggregate", "--metric", metric, "--from", "2020-01-01", "--to", "2020-01-31")
+        self.assertEqual(env["data"]["activities"], 2)
+        return list(env["data"]["values"].values())[0]
+
+    def test_month_matches_the_aggregate(self):
+        power = self.trend("Average_Power")
+        self.assertEqual(round(power), self.aggregate("Average_Power"))
+        # the ride without power doesn't pull the average down
+        ride = self.gcj("activity", "show", "2020_01_26_13_00_38")["data"]["metrics"]["average_power"]
+        self.assertAlmostEqual(power, ride, places=3)
+        self.assertAlmostEqual(self.trend("workout_time"), self.aggregate("workout_time"), places=0)
+        self.assertAlmostEqual(self.trend("max_power"), self.aggregate("max_power"), places=0)
+
 class TestActivitiesMetricsCharts(Headless):
 
     @classmethod

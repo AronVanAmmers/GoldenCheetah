@@ -347,38 +347,38 @@ trendChart(CommandEnvironment &env, const CommandRequest &request)
     if (items.isEmpty()) return CommandResult::failure(Status::Failed, "no activities chosen");
 
     QString by = request.args.value("by").toString();
-    bool average = m->type() == RideMetric::Average || m->type() == RideMetric::Peak || m->type() == RideMetric::Low;
 
     // bucket by period start, by activity every activity is its own bucket
-    QMap<QDateTime, QPair<double,int>> buckets;
+    QMap<QDateTime, QList<RideItem *>> buckets;
     for (RideItem *item : items) {
         QDate d = item->dateTime.date();
         QDateTime key = by == "activity" ? item->dateTime : QDateTime(d, QTime(0, 0));
         if (by == "week") key = QDateTime(d.addDays(1 - d.dayOfWeek()), QTime(0, 0));
         else if (by == "month") key = QDateTime(QDate(d.year(), d.month(), 1), QTime(0, 0));
         else if (by == "year") key = QDateTime(QDate(d.year(), 1, 1), QTime(0, 0));
-        double v = item->getForSymbol(metric);
-        if (!std::isfinite(v)) continue;
-        auto &b = buckets[key];
-        if (m->type() == RideMetric::Peak) b.first = std::max(b.first, v);
-        else b.first += v;
-        b.second++;
+        buckets[key] << item;
     }
 
+    // each period's value as Trends and 'metric aggregate' compute it
     ChartSeries bars;
     bars.name = m->name();
     bars.style = by == "activity" ? ChartSeries::Dots : ChartSeries::Bars;
     bars.color = GColor(CPOWER);
     QStringList labels;
+    QJsonArray values;
     int i = 0;
     for (auto it = buckets.constBegin(); it != buckets.constEnd(); ++it, ++i) {
-        double v = it.value().first;
-        if (average && m->type() != RideMetric::Peak && it.value().second) v /= it.value().second;
+        double v = RideCache::aggregate(m, it.value());
         bars.x << i;
         bars.y << v;
         QDate day = it.key().date();
         QString label = by == "month" ? day.toString("MMM yy") : by == "year" ? day.toString("yyyy") : day.toString("d MMM yy");
         labels << label;
+        QJsonObject bucket;
+        bucket.insert("start", by == "activity" ? it.key().toString(Qt::ISODate) : day.toString(Qt::ISODate));
+        bucket.insert("value", jsonNumber(v));
+        bucket.insert("activities", it.value().count());
+        values.append(bucket);
     }
 
     // thin the labels out so they don't overlap
@@ -401,6 +401,7 @@ trendChart(CommandEnvironment &env, const CommandRequest &request)
     data.insert("metric", metric);
     data.insert("periods", bars.x.count());
     data.insert("activities", items.count());
+    data.insert("buckets", values);
     return renderResult(spec, request, "trend-" + metric, data);
 }
 
