@@ -81,17 +81,31 @@ addQuery(QJsonObject &args, const QString &key, const QString &value)
     args.insert(key, list);
 }
 
+// an empty body is an empty object
 static bool
-mergeBody(QJsonObject &args, const QByteArray &body, QString &error)
+parseBody(const QByteArray &body, QJsonObject &object, QString &error)
 {
+    object = QJsonObject();
     if (body.trimmed().isEmpty()) return true;
     QJsonParseError pe;
     QJsonDocument doc = QJsonDocument::fromJson(body, &pe);
-    if (pe.error != QJsonParseError::NoError || !doc.isObject()) {
+    if (pe.error != QJsonParseError::NoError) {
+        error = QString("request body is not valid JSON: %1 at offset %2").arg(pe.errorString()).arg(pe.offset);
+        return false;
+    }
+    if (!doc.isObject()) {
         error = "request body must be a JSON object";
         return false;
     }
-    QJsonObject o = doc.object();
+    object = doc.object();
+    return true;
+}
+
+static bool
+mergeBody(QJsonObject &args, const QByteArray &body, QString &error)
+{
+    QJsonObject o;
+    if (!parseBody(body, o, error)) return false;
     for (const QString &k : o.keys()) args.insert(k, o.value(k));
     return true;
 }
@@ -143,15 +157,25 @@ RestRouter::match(const QString &method, const QString &fullPath,
             m.error = QString("unknown command '%1'").arg(segments.at(1));
             return m;
         }
+        // {"athlete": ..., "args": {...}} and nothing else: a misspelt key
+        // must not be dropped without a word
         QJsonObject body;
-        if (!jsonBody.trimmed().isEmpty()) {
-            QJsonDocument doc = QJsonDocument::fromJson(jsonBody);
-            if (!doc.isObject()) {
-                m.httpStatus = 400;
-                m.error = "request body must be a JSON object";
-                return m;
-            }
-            body = doc.object();
+        QString error;
+        if (!parseBody(jsonBody, body, error)) {
+            m.httpStatus = 400;
+            m.error = error;
+            return m;
+        }
+        for (const QString &k : body.keys()) {
+            if (k == "athlete" || k == "args") continue;
+            m.httpStatus = 400;
+            m.error = QString("unknown key '%1' in the request body, it takes \"athlete\" and \"args\"").arg(k);
+            return m;
+        }
+        if (body.contains("args") && !body.value("args").isObject()) {
+            m.httpStatus = 400;
+            m.error = "\"args\" must be a JSON object of the command's parameters";
+            return m;
         }
         m.command = c->spec.name;
         m.athlete = body.value("athlete").toString(args.value("athlete").toString());
