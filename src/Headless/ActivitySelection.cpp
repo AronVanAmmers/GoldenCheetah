@@ -208,24 +208,44 @@ metricFormulaName(const QString &symbol)
     return m ? m->internalName().replace(" ", "_") : QString();
 }
 
+// symbols, formula names (as DataFilter looks them up) and display names,
+// built again when the metrics change (user metrics added, renamed, removed)
+static QHash<QString, QString> metricLookup;
+static int lookupCount = -1;
+static quint16 lookupSchema = 0;
+
+void
+invalidateMetricLookup()
+{
+    metricLookup.clear();
+    lookupCount = -1;
+}
+
 QString
 metricSymbol(const QString &name)
 {
-    // symbols, formula names (as DataFilter looks them up) and display names
-    static QHash<QString, QString> lookup;
     const RideMetricFactory &factory = RideMetricFactory::instance();
-    if (lookup.isEmpty()) {
-        for (int i = 0; i < factory.metricCount(); i++) {
-            QString symbol = factory.metricName(i);
-            const RideMetric *m = factory.rideMetric(symbol);
-            if (!m) continue;
-            lookup.insert(m->name().replace(" ", "_").toLower(), symbol);
-            lookup.insert(metricFormulaName(symbol).toLower(), symbol);
+    if (lookupCount != factory.metricCount() || lookupSchema != UserMetricSchemaVersion) {
+        metricLookup.clear();
+        lookupCount = factory.metricCount();
+        lookupSchema = UserMetricSchemaVersion;
+
+        // a compatibility_ metric only stands in for a user metric that went
+        // away: when a name is taken by both, the real one wins
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < factory.metricCount(); i++) {
+                QString symbol = factory.metricName(i);
+                if (symbol.startsWith("compatibility_") != (pass == 0)) continue;
+                const RideMetric *m = factory.rideMetric(symbol);
+                if (!m) continue;
+                metricLookup.insert(m->name().replace(" ", "_").toLower(), symbol);
+                metricLookup.insert(metricFormulaName(symbol).toLower(), symbol);
+            }
         }
-        for (int i = 0; i < factory.metricCount(); i++) lookup.insert(factory.metricName(i).toLower(), factory.metricName(i));
+        for (int i = 0; i < factory.metricCount(); i++) metricLookup.insert(factory.metricName(i).toLower(), factory.metricName(i));
     }
     if (factory.haveMetric(name)) return name;
-    return lookup.value(QString(name).trimmed().replace(" ", "_").toLower());
+    return metricLookup.value(QString(name).trimmed().replace(" ", "_").toLower());
 }
 
 bool
