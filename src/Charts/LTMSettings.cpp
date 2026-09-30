@@ -394,6 +394,8 @@ while(counter-- && !in.atEnd()) {
             // get a metric pointer (if it exists)
             m.metric = factory.rideMetric(m.symbol);
             settings.metrics.append(m);
+        } else if (m.type == METRIC_DB && m.symbol != "" && factory.rideMetric(m.symbol)==NULL) {
+            settings.unknownMetrics << m.symbol;
         }
     }
     if (version >= 4) in >> settings.showData;
