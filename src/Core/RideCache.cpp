@@ -147,6 +147,7 @@ RideCache::RideCache(Context *context) : context(context)
     RideCacheLoader *rideCacheLoader = new RideCacheLoader(this);
     connect(rideCacheLoader, SIGNAL(finished()), this, SLOT(postLoad()));
     connect(rideCacheLoader, SIGNAL(finished()), this, SIGNAL(loadComplete()));
+    connect(rideCacheLoader, SIGNAL(finished()), rideCacheLoader, SLOT(deleteLater()));
     rideCacheLoader->start();
 
     saveThread_ = new QThread(this);

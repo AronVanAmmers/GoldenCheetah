@@ -24,6 +24,10 @@
 #include "RideCache.h"
 #include "RideItem.h"
 #include "Estimator.h"
+#include "PMCData.h"
+#include "Banister.h"
+#include "CalendarSync.h"
+#include "CloudService.h"
 #include "Settings.h"
 #include "HeadlessApp.h"
 
@@ -119,9 +123,32 @@ AthleteSession::~AthleteSession()
             athlete_->close();
         }
 
+        // Athlete and RideCache leave these to the process exit: in the GUI
+        // views may still point at the activities when the athlete closes.
+        // A session has no views, and in the REST server every request
+        // opens the athlete again, so free them.
+        QVector<RideItem *> items = athlete_->rideCache ? athlete_->rideCache->rides() : QVector<RideItem *>();
+        AthleteDirectoryStructure *home = athlete_->home;
+        qDeleteAll(athlete_->pmcData);
+        athlete_->pmcData.clear();
+        qDeleteAll(athlete_->banisterData);
+        athlete_->banisterData.clear();
+        delete athlete_->calendarSync;
+        athlete_->calendarSync = nullptr;
+        delete athlete_->cloudAutoDownload;     // never started when headless
+        athlete_->cloudAutoDownload = nullptr;
+
         // the ride cache is written to disk in the destructor
         delete athlete_;
         athlete_ = nullptr;
+
+        // an activity tells the athlete's ride cache it is going, there is none
+        // now. An activity doesn't delete its intervals (the cache loader hands
+        // them over from a temporary item), these are the ones it owns
+        context_->athlete = nullptr;
+        for (RideItem *item : items) qDeleteAll(item->intervals());
+        qDeleteAll(items);
+        delete home;
     }
     delete context_;
     context_ = nullptr;
