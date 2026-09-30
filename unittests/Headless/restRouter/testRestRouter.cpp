@@ -81,6 +81,18 @@ private slots:
         QCOMPARE(go("POST", "/v1/commands/nope").httpStatus, 404);
     }
 
+    void genericCommandRouteRefusesTypos() {
+        RestRouter::Match m = go("POST", "/v1/commands/activity.list", {}, "{\"athlete\":\"Joe\",\"arg\":{\"limit\":3}}");
+        QCOMPARE(m.httpStatus, 400);
+        QVERIFY(m.error.contains("'arg'"));
+        QCOMPARE(go("POST", "/v1/commands/activity.list", {}, "{\"args\":[3]}").httpStatus, 400);
+        QCOMPARE(go("POST", "/v1/commands/activity.list", {}, "{\"args\":\"limit=3\"}").httpStatus, 400);
+        m = go("POST", "/v1/commands/activity.list", {}, "{\"args\": {");
+        QCOMPARE(m.httpStatus, 400);
+        QVERIFY(m.error.contains("not valid JSON"));
+        QCOMPARE(go("POST", "/v1/commands/activity.list", {}, "").httpStatus, 200);
+    }
+
     void globalRouteWithAthleteQuery() {
         QMultiMap<QString,QString> q;
         q.insert("athlete", "Joe");
