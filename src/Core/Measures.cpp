@@ -17,6 +17,7 @@
  */
 
 #include "Measures.h"
+#include "GcNotify.h"
 #include "Units.h"
 #include "MainWindow.h" // for gcroot
 
@@ -203,11 +204,8 @@ MeasuresGroup::unserialize(QFile &file, QList<Measure> &data)
 
     // open file - truncate contents
     if (!file.open(QFile::ReadOnly)) {
-        QMessageBox msgBox;
-        msgBox.setIcon(QMessageBox::Critical);
-        msgBox.setText(QObject::tr("Problem Reading Measures"));
-        msgBox.setInformativeText(QObject::tr("File: %1 cannot be opened for 'Reading'. Please check file properties.").arg(file.fileName()));
-        msgBox.exec();
+        GcNotify::message(QMessageBox::Critical, QObject::tr("Problem Reading Measures"),
+                          QObject::tr("File: %1 cannot be opened for 'Reading'. Please check file properties.").arg(file.fileName()));
         return false;
     };
     QByteArray jsonFileContent = file.readAll();
@@ -217,11 +215,8 @@ MeasuresGroup::unserialize(QFile &file, QList<Measure> &data)
     QJsonDocument document = QJsonDocument::fromJson(jsonFileContent, &parseError);
 
     if (parseError.error != QJsonParseError::NoError || document.isEmpty() || document.isNull()) {
-        QMessageBox msgBox;
-        msgBox.setIcon(QMessageBox::Critical);
-        msgBox.setText(QObject::tr("Problem Parsing Measures"));
-        msgBox.setInformativeText(QObject::tr("File: %1 is not a proper JSON file. Parsing error: %2").arg(file.fileName()).arg(parseError.errorString()));
-        msgBox.exec();
+        GcNotify::message(QMessageBox::Critical, QObject::tr("Problem Parsing Measures"),
+                          QObject::tr("File: %1 is not a proper JSON file. Parsing error: %2").arg(file.fileName()).arg(parseError.errorString()));
         return false;
     }
 

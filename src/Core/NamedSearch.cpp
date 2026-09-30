@@ -17,6 +17,7 @@
  */
 
 #include "NamedSearch.h"
+#include "GcNotify.h"
 #include "SearchBox.h"
 #include "Context.h"
 #include "Athlete.h"
@@ -269,11 +270,8 @@ NamedSearchParser::serialize(QString filename, QList<NamedSearch>NamedSearches)
     // open file - truncate contents
     QFile file(filename);
     if (!file.open(QFile::WriteOnly)) {
-        QMessageBox msgBox;
-        msgBox.setIcon(QMessageBox::Critical);
-        msgBox.setText(QObject::tr("Problem Saving Named Search Configuration"));
-        msgBox.setInformativeText(QObject::tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
-        msgBox.exec();
+        GcNotify::message(QMessageBox::Critical, QObject::tr("Problem Saving Named Search Configuration"),
+                          QObject::tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
         return false;
     };
     file.resize(0);

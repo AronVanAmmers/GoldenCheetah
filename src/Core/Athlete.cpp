@@ -55,20 +55,7 @@
 #include "GcUpgrade.h" // upgrade wizard
 #include "GcCrashDialog.h" // recovering from a crash?
 #include "AthleteLock.h"
-
-// report a problem reading configuration: a dialog in the GUI, a warning
-// when headless (a modal dialog would block a command line run forever)
-static void
-reportConfigProblem(Context *context, bool critical, const QString &title, const QString &text)
-{
-    if (context->isHeadless()) {
-        qWarning().noquote() << title << ":" << text;
-    } else if (critical) {
-        QMessageBox::critical(context->mainWindow, title, text);
-    } else {
-        QMessageBox::warning(context->mainWindow, title, text);
-    }
-}
+#include "GcNotify.h"
 
 Athlete::Athlete(Context *context, const QDir &homeDir)
 {
@@ -132,9 +119,9 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
         QFile zonesFile(home->config().canonicalPath() + "/" + zones_[i]->fileName());
         if (zonesFile.exists()) {
             if (!zones_[i]->read(zonesFile)) {
-                reportConfigProblem(context, true, tr("Zones File %1 Error").arg(zones_[i]->fileName()), zones_[i]->errorString());
+                GcNotify::critical(context->mainWindow, tr("Zones File %1 Error").arg(zones_[i]->fileName()), zones_[i]->errorString());
             } else if (! zones_[i]->warningString().isEmpty()) {
-                reportConfigProblem(context, false, tr("Reading Zones File %1").arg(zones_[i]->fileName()), zones_[i]->warningString());
+                GcNotify::warning(context->mainWindow, tr("Reading Zones File %1").arg(zones_[i]->fileName()), zones_[i]->warningString());
             }
         }
         if (i != "Bike" && zones_[i]->getRangeSize() == 0) { // No Power zones
@@ -152,9 +139,9 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
         QFile hrzonesFile(home->config().canonicalPath() + "/" + hrzones_[i]->fileName());
         if (hrzonesFile.exists()) {
             if (!hrzones_[i]->read(hrzonesFile)) {
-                reportConfigProblem(context, true, tr("HR Zones File %1 Error").arg(hrzones_[i]->fileName()), hrzones_[i]->errorString());
+                GcNotify::critical(context->mainWindow, tr("HR Zones File %1 Error").arg(hrzones_[i]->fileName()), hrzones_[i]->errorString());
             } else if (! hrzones_[i]->warningString().isEmpty()) {
-                reportConfigProblem(context, false, tr("Reading HR Zones File %1").arg(hrzones_[i]->fileName()), hrzones_[i]->warningString());
+                GcNotify::warning(context->mainWindow, tr("Reading HR Zones File %1").arg(hrzones_[i]->fileName()), hrzones_[i]->warningString());
             }
         }
         if (i != "Bike" && hrzones_[i]->getRangeSize() == 0) { // No HR zones
@@ -171,7 +158,7 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
         QFile pacezonesFile(home->config().canonicalPath() + "/" + pacezones_[i]->fileName());
         if (pacezonesFile.exists()) {
             if (!pacezones_[i]->read(pacezonesFile)) {
-                reportConfigProblem(context, true, tr("Pace Zones File %1 Error").arg(pacezones_[i]->fileName()), pacezones_[i]->errorString());
+                GcNotify::critical(context->mainWindow, tr("Pace Zones File %1 Error").arg(pacezones_[i]->fileName()), pacezones_[i]->errorString());
             }
         }
     }

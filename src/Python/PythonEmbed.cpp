@@ -23,6 +23,7 @@
 #include "Utils.h"
 #include "Settings.h"
 #include "Context.h"
+#include "GcNotify.h"
 #include <stdexcept>
 
 #include <QtGlobal>
@@ -337,15 +338,10 @@ PythonEmbed::PythonEmbed(const bool verbose, const bool interactive) : verbose(v
     // Notify user of the problem (they can disable Python in preferences if they don't want to see this)
     // Note: We don't permanently disable Python here - the user might fix the issue (install Python,
     // fix PYTHONHOME, etc.) and we should try again on next startup.
-    if (GlobalContext::isHeadless()) {
-        loaded=false;
-        return;
-    }
-    QMessageBox msg(QMessageBox::Warning, QObject::tr("Python not available"),
-                    QObject::tr("GoldenCheetah was built with Python 3.%1 but could not initialize Python.\n\n"
-                                "Please ensure Python 3.%1 is installed and in your PATH.\n"
-                                "You can disable Python in Options > General if you don't need it.").arg(PYTHON3_VERSION));
-    msg.exec();
+    GcNotify::warning(nullptr, QObject::tr("Python not available"),
+                      QObject::tr("GoldenCheetah was built with Python 3.%1 but could not initialize Python.\n\n"
+                                  "Please ensure Python 3.%1 is installed and in your PATH.\n"
+                                  "You can disable Python in Options > General if you don't need it.").arg(PYTHON3_VERSION));
     loaded=false;
     return;
 }

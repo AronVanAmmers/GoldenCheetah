@@ -31,8 +31,11 @@
 #endif
 
 #include <QApplication>
+#include <QDialog>
 #include <QDir>
 #include <QFileInfo>
+#include <QMessageBox>
+#include <QProgressDialog>
 #include <QStandardPaths>
 #include <QProcessEnvironment>
 #include <cstdio>
@@ -68,6 +71,32 @@ messageHandler(QtMsgType type, const QMessageLogContext &, const QString &msg)
     fflush(stderr);
 }
 
+// a modal dialog shown anyway, by code that doesn't know it has no user,
+// would wait forever: say what it was and dismiss it
+class DialogGuard : public QObject
+{
+    public:
+        explicit DialogGuard(QObject *parent) : QObject(parent) {}
+
+    protected:
+        bool eventFilter(QObject *watched, QEvent *event) override {
+            if (event->type() != QEvent::Show) return false;
+            QDialog *dialog = qobject_cast<QDialog *>(watched);
+            // progress dialogs don't wait for an answer, rejecting one cancels the work
+            if (!dialog || !dialog->isModal() || qobject_cast<QProgressDialog *>(dialog)) return false;
+
+            QString text;
+            if (QMessageBox *box = qobject_cast<QMessageBox *>(dialog)) {
+                text = box->text();
+                if (!box->informativeText().isEmpty()) text += " " + box->informativeText();
+            }
+            qWarning().noquote() << "dismissed a dialog nobody can answer:"
+                                 << dialog->windowTitle() + (text.isEmpty() ? QString() : ": " + text);
+            QMetaObject::invokeMethod(dialog, "reject", Qt::QueuedConnection);
+            return false;
+        }
+};
+
 void
 HeadlessApp::createApplication(int &argc, char **argv)
 {
@@ -99,6 +128,7 @@ HeadlessApp::createApplication(int &argc, char **argv)
     // widgets are still needed: metadata and charts are QWidgets
     application = new QApplication(argc, argv);
     application->setApplicationName("GoldenCheetah");
+    application->installEventFilter(new DialogGuard(application));
 }
 
 QString
@@ -183,9 +213,6 @@ HeadlessApp::initialise(const QString &home, const Options &options, QString &er
         }
         return true;
     }
-
-    // nobody is there to answer a dialog
-    GlobalContext::setHeadless(true);
 
     // maths routines must not abort the process
     gsl_set_error_handler_off();

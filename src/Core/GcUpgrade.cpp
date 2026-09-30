@@ -834,7 +834,7 @@ GcUpgrade::upgradeLate(Context *context)
 
         // show upgrade log
         upgradeLog->enableButtons();
-        if (! GlobalContext::isHeadless()) upgradeLog->exec();
+        if (! context->isHeadless()) upgradeLog->exec();
 
         // user can only select "Accept" to end with the upgrade step
         return 0;
