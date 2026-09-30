@@ -69,7 +69,7 @@ gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > inte
 |---|---|
 | Athletes | `athlete list`, `athlete create`, `athlete show`, `athlete refresh [--rebuild]` |
 | Import | `import FILE-OR-FOLDER... [--recursive] [--dry-run]`, `formats` |
-| Activities | `activity list`, `activity show`, `activity overview [--tile NAME]`, `activity export --as tcx`, `activity set --set 'Field=value'`, `activity delete`, `activity eval --expression '...'`, `activity column list|add|remove` |
+| Activities | `activity list`, `activity show`, `activity overview [--tile NAME]`, `layout list`, `layout tile list|show|set`, `activity export --as tcx`, `activity set --set 'Field=value'`, `activity delete`, `activity eval --expression '...'`, `activity column list|add|remove` |
 | Intervals | `interval list ACTIVITY [--type user,effort] [--metric ...] [--display]`, `interval show ACTIVITY NUMBER-OR-NAME` |
 | Fields | `field list`, `field add NAME... --type double --tab TAB`, `field remove` |
 | Processors | `processor list`, `processor show`, `processor install NAME --file script.py`, `processor configure`, `processor remove`, `processor run NAME ...` |
@@ -134,11 +134,20 @@ gc-cli -a Joe metric user show hrr_v
 
 `--program` takes the formula text. `--file -` reads it from stdin. Type `average` with `count { Duration; }` makes a weekly trend a time-weighted mean.
 
-Favourites are what the intervals table and the ride summary show, in that order. There is no separate intervals-table order. `metric favourite set` replaces the list; the order of the arguments is the top-to-bottom order, the same list Preferences saves after the up and down buttons. `metric favourite add` appends, so new rows go at the bottom. `interval list` prints its metric columns in that order.
+Favourites are what the ride summary and `interval list` show, in that order. `metric favourite set` replaces the list; the order of the arguments is the top-to-bottom order, the same list Preferences saves after the up and down buttons. `metric favourite add` appends, so new rows go at the bottom.
 
 ```sh
 gc-cli -a Joe metric favourite add hrr_v
 gc-cli -a Joe metric favourite set workout_time average_hr hrr_v average_speed
+```
+
+The intervals table on the activity overview is a different list. It is the program of a table tile, saved in the athlete's `config/analysis-perspectives.xml`. The Run layout (`isRun`) and the Swim layout (`isSwim`) each have one, named Intervals Data. `layout list` shows the layouts, `layout tile show` prints the program, and `layout tile set` replaces it. A program that does not parse is refused and the file is left unchanged.
+
+A column in that program is a formula name, the name `metric list` prints as `formula`: the metric name with spaces turned into underscores (`Average_Heart_Rate`). `metricname` and `intervalstrings` only accept that kind of symbol. A name such as `HRR/v` is refused, because `/` is division. Name the metric `HRR_v` and use that.
+
+```sh
+gc-cli -a Joe layout tile show "Intervals Data" --layout Run
+gc-cli -a Joe layout tile set "Intervals Data" --layout Run --file intervals.formula
 ```
 
 `activity column add` adds a metric to the activity list. Existing columns stay where they are.
@@ -209,6 +218,8 @@ This serves every command as JSON under `http://127.0.0.1:12022/v1` until interr
 | `GET /v1/athletes/Joe/activities?filter=isRun%3D0&metric=coggan_tss` | `activity list` |
 | `GET /v1/athletes/Joe/activities/last` | `activity show last` |
 | `GET /v1/athletes/Joe/activities/last/overview?tile=Intervals%20Data` | `activity overview last --tile "Intervals Data"` |
+| `GET /v1/athletes/Joe/layouts/Run/tiles/Intervals%20Data` | `layout tile show "Intervals Data" --layout Run` |
+| `PUT /v1/athletes/Joe/layouts/Run/tiles/Intervals%20Data` `{"program": "..."}` | `layout tile set "Intervals Data" --layout Run --program "..."` |
 | `GET /v1/athletes/Joe/activities/last/intervals?type=user` | `interval list last --type user` |
 | `GET /v1/athletes/Joe/activities/last/intervals/Lap%203` | `interval show last "Lap 3"` |
 | `POST /v1/athletes/Joe/imports` (multipart, or the raw file with `?filename=`) | `import` |

@@ -44,8 +44,10 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QTextStream>
 #include <QXmlStreamReader>
+#include <QXmlStreamWriter>
 #include <cmath>
 
 namespace Headless {
@@ -628,6 +630,421 @@ overviewCommand(CommandEnvironment &env, const CommandRequest &request)
     return result;
 }
 
+//
+// Layout tiles
+//
+// The intervals table on the activity overview is not the favourites list.
+// It is the program on a table tile (Intervals Data on the Run and Swim
+// layouts), stored in config/analysis-perspectives.xml. These commands
+// show that program and replace it, the same edit as Tile Settings.
+//
+
+static QString
+tileKind(int type)
+{
+    switch (type) {
+    case RPE: return "rpe";
+    case METRIC: return "metric";
+    case META: return "field";
+    case ZONE: return "zones";
+    case INTERVAL: return "intervals";
+    case PMC: return "pmc";
+    case ROUTE: return "route";
+    case KPI: return "kpi";
+    case DATATABLE: return "table";
+    default: return "chart";
+    }
+}
+
+static QString
+perspectivesPath(Athlete *athlete)
+{
+    return athlete->home->config().absoluteFilePath("analysis-perspectives.xml");
+}
+
+struct TileHit {
+    int chart;          // which overview chart in the layout
+    int index;          // which tile in that chart's CHARTS array
+    QJsonObject config;
+};
+
+static QList<TileHit>
+findTiles(const OverviewLayout &layout, const QString &name)
+{
+    QList<TileHit> hits;
+    for (int c = 0; c < layout.charts.count(); c++) {
+        const QJsonArray &tiles = layout.charts.at(c).tiles;
+        for (int i = 0; i < tiles.count(); i++) {
+            QJsonObject tile = tiles.at(i).toObject();
+            if (tile["name"].toString().trimmed().compare(name, Qt::CaseInsensitive) == 0)
+                hits << TileHit{ c, i, tile };
+        }
+    }
+    return hits;
+}
+
+static QStringList
+tileNames(const OverviewLayout &layout)
+{
+    QStringList names;
+    for (const OverviewChart &chart : layout.charts) {
+        for (const QJsonValue &v : chart.tiles) {
+            QString name = v.toObject()["name"].toString().trimmed();
+            if (!name.isEmpty() && !names.contains(name)) names << name;
+        }
+    }
+    return names;
+}
+
+static CommandResult
+resolveLayout(const QList<OverviewLayout> &layouts, const QString &wanted, int &index)
+{
+    QStringList names;
+    for (const OverviewLayout &l : layouts) names << l.name;
+    if (wanted.isEmpty()) {
+        if (layouts.count() != 1)
+            return CommandResult::failure(Status::Usage,
+                QString("more than one layout, choose one with --layout (%1)").arg(names.join(", ")));
+        index = 0;
+        return CommandResult::success();
+    }
+    index = -1;
+    for (int i = 0; i < layouts.count(); i++)
+        if (layouts.at(i).name.compare(wanted, Qt::CaseInsensitive) == 0) index = i;
+    if (index < 0)
+        return CommandResult::failure(Status::NotFound,
+            QString("no layout '%1', the layouts are: %2").arg(wanted).arg(names.join(", ")));
+    return CommandResult::success();
+}
+
+// the editor's parse, without requiring a value block: a tile program
+// uses names, units and values
+static CommandResult
+checkTileProgram(Context *context, const QString &program)
+{
+    if (program.trimmed().isEmpty()) return CommandResult::failure(Status::Usage, "program is empty");
+    DataFilter checker(nullptr, context);
+    QStringList errors = checker.check(program);
+    if (!errors.isEmpty() || !checker.root()) {
+        if (errors.isEmpty()) errors << QString("malformed expression.");
+        return CommandResult::failure(Status::Usage, errors.join("\n"));
+    }
+    return CommandResult::success();
+}
+
+static CommandResult
+readTileProgram(const CommandRequest &request, QString &program)
+{
+    bool hasProgram = request.args.contains("program");
+    bool hasFile = request.args.contains("file");
+    if (hasProgram && hasFile)
+        return CommandResult::failure(Status::Usage, "give the program with --program or --file, not both");
+    if (!hasProgram && !hasFile)
+        return CommandResult::failure(Status::Usage, "give the program with --program or --file");
+
+    if (hasFile) {
+        QString path = request.args.value("file").toString();
+        if (path == "-") {
+            QTextStream in(stdin);
+            program = in.readAll();
+        } else {
+            QFile in(path);
+            if (!in.open(QIODevice::ReadOnly | QIODevice::Text))
+                return CommandResult::failure(Status::NotFound, QString("can't read %1").arg(path));
+            program = QTextStream(&in).readAll();
+        }
+    } else {
+        program = request.args.value("program").toString();
+    }
+    return CommandResult::success();
+}
+
+static CommandResult
+openLayouts(Athlete *athlete, QList<OverviewLayout> &layouts, QString &source)
+{
+    layouts = readLayouts(athlete, source);
+    if (layouts.isEmpty())
+        return CommandResult::failure(Status::Failed, QString("no analysis layouts in %1").arg(source));
+    return CommandResult::success();
+}
+
+static CommandResult
+listLayouts(CommandEnvironment &env, const CommandRequest &)
+{
+    QString source;
+    QList<OverviewLayout> layouts;
+    CommandResult opened = openLayouts(env.session->athlete(), layouts, source);
+    if (!opened.ok()) return opened;
+
+    QJsonArray list;
+    for (const OverviewLayout &l : layouts) {
+        QJsonObject o;
+        o.insert("name", l.name);
+        o.insert("expression", l.expression);
+        list.append(o);
+    }
+    QJsonObject data;
+    data.insert("layouts", list);
+    data.insert("file", source);
+    return CommandResult::success(data);
+}
+
+static CommandResult
+listTiles(CommandEnvironment &env, const CommandRequest &request)
+{
+    QString source;
+    QList<OverviewLayout> layouts;
+    CommandResult opened = openLayouts(env.session->athlete(), layouts, source);
+    if (!opened.ok()) return opened;
+
+    int index = 0;
+    CommandResult chosen = resolveLayout(layouts, request.args.value("layout").toString(), index);
+    if (!chosen.ok()) return chosen;
+    const OverviewLayout &layout = layouts.at(index);
+
+    QJsonArray tiles;
+    for (const OverviewChart &chart : layout.charts) {
+        for (const QJsonValue &v : chart.tiles) {
+            QJsonObject config = v.toObject();
+            QJsonObject o;
+            o.insert("name", config["name"].toString());
+            o.insert("kind", tileKind(config["type"].toInt()));
+            o.insert("chart", chart.title);
+            tiles.append(o);
+        }
+    }
+    QJsonObject data;
+    data.insert("layout", layout.name);
+    data.insert("expression", layout.expression);
+    data.insert("tiles", tiles);
+    return CommandResult::success(data);
+}
+
+static CommandResult
+locateTile(Athlete *athlete, const CommandRequest &request, OverviewLayout &layout, TileHit &hit, QString &source)
+{
+    QList<OverviewLayout> layouts;
+    CommandResult opened = openLayouts(athlete, layouts, source);
+    if (!opened.ok()) return opened;
+
+    int index = 0;
+    CommandResult chosen = resolveLayout(layouts, request.args.value("layout").toString(), index);
+    if (!chosen.ok()) return chosen;
+    layout = layouts.at(index);
+
+    QString name = request.args.value("tile").toString();
+    QList<TileHit> hits = findTiles(layout, name);
+    if (hits.isEmpty())
+        return CommandResult::failure(Status::NotFound,
+            QString("no tile called '%1' in the '%2' layout, the tiles are: %3")
+                .arg(name).arg(layout.name).arg(tileNames(layout).join(", ")));
+    if (hits.count() > 1)
+        return CommandResult::failure(Status::Usage,
+            QString("more than one tile called '%1' in the '%2' layout").arg(name).arg(layout.name));
+    hit = hits.first();
+    return CommandResult::success();
+}
+
+static QString
+tileProgram(const QJsonObject &config)
+{
+    return Utils::jsonunprotect2(config["program"].toString());
+}
+
+static CommandResult
+showTile(CommandEnvironment &env, const CommandRequest &request)
+{
+    OverviewLayout layout;
+    TileHit hit;
+    QString source;
+    CommandResult found = locateTile(env.session->athlete(), request, layout, hit, source);
+    if (!found.ok()) return found;
+    if (!hit.config.contains("program"))
+        return CommandResult::failure(Status::Usage, QString("tile '%1' has no program").arg(hit.config["name"].toString()));
+
+    QString program = tileProgram(hit.config);
+    QJsonObject data;
+    data.insert("layout", layout.name);
+    data.insert("name", hit.config["name"].toString());
+    data.insert("kind", tileKind(hit.config["type"].toInt()));
+    data.insert("program", program);
+    data.insert("file", source);
+    CommandResult result = CommandResult::success(data);
+    result.text = program.endsWith('\n') ? program : program + "\n";
+    return result;
+}
+
+// replace one tile's program inside an overview chart's config attribute
+static bool
+patchConfig(const QString &attributeValue, int tileIndex, const QString &program, QString &patched, QString &error)
+{
+    QJsonParseError pe;
+    QJsonDocument doc = QJsonDocument::fromJson(Utils::unprotect(attributeValue).toUtf8(), &pe);
+    if (pe.error != QJsonParseError::NoError || !doc.isObject()) {
+        error = "overview config is not JSON";
+        return false;
+    }
+    QJsonObject root = doc.object();
+    QJsonArray charts = root["CHARTS"].toArray();
+    if (tileIndex < 0 || tileIndex >= charts.count()) {
+        error = "tile is not in this overview";
+        return false;
+    }
+    QJsonObject tile = charts.at(tileIndex).toObject();
+    if (!tile.contains("program")) {
+        error = QString("tile '%1' has no program").arg(tile["name"].toString());
+        return false;
+    }
+    tile.insert("program", Utils::jsonprotect2(program));
+    charts.replace(tileIndex, tile);
+    root.insert("CHARTS", charts);
+    patched = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    return true;
+}
+
+static CommandResult
+ensurePerspectives(Athlete *athlete, QString &path)
+{
+    path = perspectivesPath(athlete);
+    if (QFileInfo::exists(path)) return CommandResult::success();
+
+    QFile in(":xml/analysis-perspectives.xml");
+    if (!in.open(QIODevice::ReadOnly))
+        return CommandResult::failure(Status::Failed, "can't read the default analysis layouts");
+    if (!athlete->home->config().mkpath("."))
+        return CommandResult::failure(Status::Failed, QString("can't create %1").arg(athlete->home->config().absolutePath()));
+
+    QFile out(path);
+    if (!out.open(QIODevice::WriteOnly))
+        return CommandResult::failure(Status::Failed, QString("can't write %1").arg(path));
+    if (out.write(in.readAll()) < 0)
+        return CommandResult::failure(Status::Failed, QString("can't write %1").arg(path));
+    return CommandResult::success();
+}
+
+static CommandResult
+writeTileProgram(const QString &path, const QString &layoutName, const TileHit &hit, const QString &program)
+{
+    QFile in(path);
+    if (!in.open(QIODevice::ReadOnly))
+        return CommandResult::failure(Status::Failed, QString("can't read %1").arg(path));
+    QByteArray original = in.readAll();
+    in.close();
+
+    QXmlStreamReader xml(original);
+    QByteArray rewritten;
+    QXmlStreamWriter out(&rewritten);
+    out.setAutoFormatting(false);
+
+    bool inLayout = false;
+    int window = -1;
+    int overviewCharts = -1;
+    bool patched = false;
+    QString error;
+
+    while (!xml.atEnd()) {
+        xml.readNext();
+        switch (xml.tokenType()) {
+        case QXmlStreamReader::StartDocument:
+            out.writeStartDocument();
+            break;
+        case QXmlStreamReader::EndDocument:
+            out.writeEndDocument();
+            break;
+        case QXmlStreamReader::StartElement: {
+            out.writeStartElement(xml.qualifiedName().toString());
+            QXmlStreamAttributes attrs = xml.attributes();
+            if (xml.name() == QLatin1String("layout")) {
+                inLayout = Utils::unprotect(attrs.value("name").toString()).compare(layoutName, Qt::CaseInsensitive) == 0;
+                window = -1;
+                overviewCharts = -1;
+            } else if (xml.name() == QLatin1String("chart")) {
+                window = attrs.value("id").toInt();
+                if (inLayout && (window == overviewWindow || window == blankOverviewWindow)) overviewCharts++;
+            }
+            bool configProp = xml.name() == QLatin1String("property")
+                && inLayout && overviewCharts == hit.chart
+                && (window == overviewWindow || window == blankOverviewWindow)
+                && attrs.value("name") == QLatin1String("config");
+            for (const QXmlStreamAttribute &a : attrs) {
+                QString value = a.value().toString();
+                if (configProp && a.name() == QLatin1String("value")) {
+                    if (!patchConfig(value, hit.index, program, value, error))
+                        return CommandResult::failure(Status::Failed, error);
+                    patched = true;
+                }
+                out.writeAttribute(a.qualifiedName().toString(), value);
+            }
+            break;
+        }
+        case QXmlStreamReader::EndElement:
+            out.writeEndElement();
+            break;
+        case QXmlStreamReader::Characters:
+            out.writeCharacters(xml.text().toString());
+            break;
+        case QXmlStreamReader::Comment:
+            out.writeComment(xml.text().toString());
+            break;
+        case QXmlStreamReader::EntityReference:
+            out.writeEntityReference(xml.name().toString());
+            break;
+        case QXmlStreamReader::ProcessingInstruction:
+            out.writeProcessingInstruction(xml.processingInstructionTarget().toString(),
+                                           xml.processingInstructionData().toString());
+            break;
+        default:
+            break;
+        }
+    }
+    if (xml.hasError())
+        return CommandResult::failure(Status::Failed, QString("can't read %1: %2").arg(path).arg(xml.errorString()));
+    if (!patched)
+        return CommandResult::failure(Status::Failed, QString("didn't find the tile in %1").arg(path));
+
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly))
+        return CommandResult::failure(Status::Failed, QString("can't write %1").arg(path));
+    if (file.write(rewritten) < 0 || !file.commit())
+        return CommandResult::failure(Status::Failed, QString("can't write %1").arg(path));
+    return CommandResult::success();
+}
+
+static CommandResult
+setTile(CommandEnvironment &env, const CommandRequest &request)
+{
+    OverviewLayout layout;
+    TileHit hit;
+    QString source;
+    CommandResult found = locateTile(env.session->athlete(), request, layout, hit, source);
+    if (!found.ok()) return found;
+    if (!hit.config.contains("program"))
+        return CommandResult::failure(Status::Usage, QString("tile '%1' has no program").arg(hit.config["name"].toString()));
+
+    QString program;
+    CommandResult read = readTileProgram(request, program);
+    if (!read.ok()) return read;
+    CommandResult compiled = checkTileProgram(env.session->context(), program);
+    if (!compiled.ok()) return compiled;
+
+    QString path;
+    CommandResult ready = ensurePerspectives(env.session->athlete(), path);
+    if (!ready.ok()) return ready;
+    CommandResult written = writeTileProgram(path, layout.name, hit, program);
+    if (!written.ok()) return written;
+
+    QJsonObject data;
+    data.insert("status", "updated");
+    data.insert("layout", layout.name);
+    data.insert("name", hit.config["name"].toString());
+    data.insert("kind", tileKind(hit.config["type"].toInt()));
+    data.insert("program", program);
+    data.insert("file", path);
+    CommandResult result = CommandResult::success(data);
+    result.text = QString("updated %1 / %2\n").arg(layout.name).arg(hit.config["name"].toString());
+    return result;
+}
+
 void
 registerOverviewCommands(CommandRegistry &registry)
 {
@@ -644,6 +1061,57 @@ registerOverviewCommands(CommandRegistry &registry)
     overview.spec.httpPath = "/athletes/{athlete}/activities/{activity}/overview";
     overview.handler = overviewCommand;
     registry.add(overview);
+
+    Command layouts;
+    layouts.spec.name = "layout.list";
+    layouts.spec.summary = "list the analysis layouts the activity overview switches between";
+    layouts.spec.scope = Scope::Athlete;
+    layouts.spec.httpMethod = "GET";
+    layouts.spec.httpPath = "/athletes/{athlete}/layouts";
+    layouts.handler = listLayouts;
+    registry.add(layouts);
+
+    Command tiles;
+    tiles.spec.name = "layout.tile.list";
+    tiles.spec.summary = "list the tiles on an analysis layout";
+    tiles.spec.scope = Scope::Athlete;
+    tiles.spec.params << ParamSpec("layout", ParamType::String, "layout name, e.g. Run; required when there is more than one");
+    tiles.spec.httpMethod = "GET";
+    tiles.spec.httpPath = "/athletes/{athlete}/layouts/{layout}/tiles";
+    tiles.handler = listTiles;
+    registry.add(tiles);
+
+    Command show;
+    show.spec.name = "layout.tile.show";
+    show.spec.summary = "show the program of an overview tile, as Tile Settings does";
+    show.spec.description =
+        "The intervals table on the activity overview is this program, not the\n"
+        "favourites list. On the Run and Swim layouts the tile is 'Intervals Data'.";
+    show.spec.scope = Scope::Athlete;
+    show.spec.params << ParamSpec("tile", ParamType::String, "tile title, e.g. Intervals Data").req().pos();
+    show.spec.params << ParamSpec("layout", ParamType::String, "layout name, e.g. Run; required when there is more than one");
+    show.spec.httpMethod = "GET";
+    show.spec.httpPath = "/athletes/{athlete}/layouts/{layout}/tiles/{tile}";
+    show.handler = showTile;
+    registry.add(show);
+
+    Command set;
+    set.spec.name = "layout.tile.set";
+    set.spec.summary = "replace the program of an overview tile";
+    set.spec.description =
+        "A column is a formula name, as 'metric list' prints it (Average_Heart_Rate).\n"
+        "A name that is not one symbol, such as HRR/v, is refused and the file is\n"
+        "left unchanged. The program is checked before it is written.";
+    set.spec.scope = Scope::Athlete;
+    set.spec.modifies = true;
+    set.spec.params << ParamSpec("tile", ParamType::String, "tile title, e.g. Intervals Data").req().pos();
+    set.spec.params << ParamSpec("layout", ParamType::String, "layout name, e.g. Run; required when there is more than one");
+    set.spec.params << ParamSpec("program", ParamType::String, "the tile program");
+    set.spec.params << ParamSpec("file", ParamType::String, "read the program from this file, or - for stdin");
+    set.spec.httpMethod = "PUT";
+    set.spec.httpPath = "/athletes/{athlete}/layouts/{layout}/tiles/{tile}";
+    set.handler = setTile;
+    registry.add(set);
 }
 
 } // namespace Headless

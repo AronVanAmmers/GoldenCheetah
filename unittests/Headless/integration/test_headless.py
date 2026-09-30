@@ -1083,5 +1083,75 @@ class TestUserMetricsAndZones(Headless):
         self.assertClosed()
 
 
+HEART_RATE_TABLE = """{
+names {
+    metricname(name, Average_Heart_Rate);
+}
+units {
+    metricunit(name, Average_Heart_Rate);
+}
+values {
+    c(intervalstrings(name), intervalstrings(Average_Heart_Rate));
+}
+i {
+    intervalstrings(name);
+}
+}
+"""
+
+
+class TestLayoutTiles(Headless):
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        r = cls.gc_class("--athlete", cls.athlete, "import", RUN_STRYD)
+        assert r.code == 0, r
+
+    def perspectives_file(self):
+        return os.path.join(self.folder, "config", "analysis-perspectives.xml")
+
+    def test_tile_program_is_checked_then_shown(self):
+        path = self.perspectives_file()
+        self.assertFalse(os.path.exists(path))
+
+        layouts = {l["name"]: l["expression"] for l in self.gcj("layout", "list")["data"]["layouts"]}
+        self.assertEqual(layouts["Run"], "isRun")
+        self.gcj("layout", "tile", "list", expect=2)
+
+        tiles = self.gcj("layout", "tile", "list", "--layout", "Run")["data"]["tiles"]
+        kinds = {t["name"]: t["kind"] for t in tiles}
+        self.assertEqual(kinds["Intervals Data"], "table")
+        self.assertEqual(kinds["Route"], "route")
+
+        shown = self.gcj("layout", "tile", "show", "Intervals Data", "--layout", "Run")["data"]
+        self.assertIn("Average_Heart_Rate", shown["program"])
+        swim = self.gcj("layout", "tile", "show", "Intervals Data", "--layout", "Swim")["data"]["program"]
+        self.assertIn("Pace_Swim", swim)
+
+        self.gcj("layout", "tile", "set", "Intervals Data", "--layout", "Run",
+                 "--program", "{ names { metricname(HRR/v); } }", expect=2)
+        self.gcj("layout", "tile", "set", "Intervals Data", "--layout", "Run",
+                 "--program", "{ names { metricname(Average_Heart_Rate)", expect=2)
+        self.gcj("layout", "tile", "set", "Route", "--layout", "Run",
+                 "--program", HEART_RATE_TABLE, expect=2)
+        self.assertFalse(os.path.exists(path))
+
+        env = self.gcj("layout", "tile", "set", "Intervals Data", "--layout", "Run",
+                       "--program", HEART_RATE_TABLE)
+        self.assertEqual(env["data"]["status"], "updated")
+        self.assertTrue(os.path.exists(path))
+        self.assertEqual(self.gcj("layout", "tile", "show", "Intervals Data", "--layout", "Run")["data"]["program"],
+                         HEART_RATE_TABLE)
+        self.assertEqual(self.gcj("layout", "tile", "show", "Intervals Data", "--layout", "Swim")["data"]["program"],
+                         swim)
+
+        table = [t for t in self.gcj("activity", "overview", "last", "--tile", "Intervals Data")["data"]["tiles"]][0]
+        names = [c["name"] for c in table["columns"]]
+        self.assertEqual(names, ["Name", "Average Heart Rate"])
+        self.assertGreater(len(table["rows"]), 1)
+        self.assertClosed()
+
+
 if __name__ == "__main__":
     unittest.main()
