@@ -53,8 +53,9 @@ QStringList modelNames();
 RideFile::SeriesType seriesFromName(const QString &name, bool &ok);
 QStringList seriesNames();
 
-// performance manager data, owned by the athlete
-PMCData *pmcFor(AthleteSession &session, const QString &metric, int sts, int lts);
+// performance manager data with the athlete's time constants, owned (and
+// cached by metric) by the athlete
+PMCData *pmcFor(AthleteSession &session, const QString &metric);
 
 } // namespace Headless
 

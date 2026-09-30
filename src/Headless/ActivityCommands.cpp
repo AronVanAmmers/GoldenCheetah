@@ -108,7 +108,7 @@ showActivity(CommandEnvironment &env, const CommandRequest &request)
     if (!metricSymbol(pmcMetric).isEmpty()) pmcMetric = metricSymbol(pmcMetric);
     if (!RideMetricFactory::instance().haveMetric(pmcMetric))
         return CommandResult::failure(Status::Usage, QString("unknown metric '%1', see 'metric list'").arg(pmcMetric));
-    PMCData *pmc = pmcFor(*env.session, pmcMetric, -1, -1);
+    PMCData *pmc = pmcFor(*env.session, pmcMetric);
     if (pmc) {
         QDate day = item->dateTime.date();
         QJsonObject p;

@@ -338,7 +338,7 @@ evaluateTile(AthleteSession &session, RideItem *item, const QJsonObject &config,
     case PMC: {
         // shown as whole numbers, without a title (PMCOverviewItem)
         QString symbol = config["symbol"].toString();
-        PMCData *pmc = pmcFor(session, symbol, -1, -1);
+        PMCData *pmc = pmcFor(session, symbol);
         QDate day = item->dateTime.date();
         tile.insert("kind", "pmc");
         tile.insert("metric", symbol);

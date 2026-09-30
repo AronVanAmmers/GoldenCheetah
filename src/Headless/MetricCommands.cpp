@@ -135,10 +135,10 @@ seriesFromName(const QString &name, bool &ok)
 QStringList seriesNames() { return { "watts", "hr", "cad", "speed", "nm", "vam", "wpk", "xpower", "isopower", "apower" }; }
 
 PMCData *
-pmcFor(AthleteSession &session, const QString &metric, int sts, int lts)
+pmcFor(AthleteSession &session, const QString &metric)
 {
     // the athlete keeps these cached for charts, do the same
-    return session.athlete()->getPMCFor(metric, sts, lts);
+    return session.athlete()->getPMCFor(metric);
 }
 
 //
@@ -213,7 +213,15 @@ pmcCommand(CommandEnvironment &env, const CommandRequest &request)
 
     int sts = request.args.value("sts").toInt(-1);
     int lts = request.args.value("lts").toInt(-1);
-    PMCData *pmc = pmcFor(*env.session, metric, sts, lts);
+    // the athlete's cached PMC has the athlete's time constants (it is
+    // cached by metric only), other constants get a PMC of their own
+    std::unique_ptr<PMCData> custom;
+    PMCData *pmc = nullptr;
+    if (sts < 0 && lts < 0) pmc = pmcFor(*env.session, metric);
+    else {
+        custom.reset(new PMCData(env.session->context(), Specification(), metric, sts, lts));
+        pmc = custom.get();
+    }
     if (!pmc) return CommandResult::failure(Status::Failed, "could not compute the performance manager data");
 
     QDate from = request.args.contains("from") ? QDate::fromString(request.args.value("from").toString(), Qt::ISODate) : pmc->start();
