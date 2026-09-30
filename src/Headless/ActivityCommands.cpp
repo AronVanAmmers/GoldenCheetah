@@ -237,7 +237,8 @@ setFields(CommandEnvironment &env, const CommandRequest &request)
     Status status;
     if (!selection.resolve(*env.session, items, error, status)) return CommandResult::failure(status, error);
 
-    QList<RideItem *> changed;
+    RideCache *cache = env.session->rideCache();
+    int updated = 0, failed = 0;
     QJsonArray report;
     for (RideItem *item : items) {
         RideFile *ride = item->ride();
@@ -245,7 +246,9 @@ setFields(CommandEnvironment &env, const CommandRequest &request)
         r.insert("activity", QFileInfo(item->fileName).completeBaseName());
         if (!ride) {
             r.insert("status", "failed");
+            r.insert("message", QString("can't open the activity file: %1").arg(item->errors().join("; ")));
             report.append(r);
+            failed++;
             continue;
         }
         bool any = false;
@@ -259,25 +262,33 @@ setFields(CommandEnvironment &env, const CommandRequest &request)
             }
         }
         r.insert("status", any ? "updated" : "unchanged");
-        report.append(r);
         if (any) {
             item->notifyRideMetadataChanged();
             item->setDirty(true);
-            changed << item;
+            QString saveError;
+            if (cache->saveActivity(item, saveError)) {
+                updated++;
+            } else {
+                r.insert("status", "failed");
+                r.insert("message", saveError);
+                failed++;
+            }
         }
+        report.append(r);
     }
 
-    if (!changed.isEmpty()) {
-        QString saveError;
-        if (!env.session->rideCache()->saveActivities(changed, saveError))
-            return CommandResult::failure(Status::Failed, saveError);
-        env.session->refresh();
-    }
+    if (updated) env.session->refresh();
 
     QJsonObject data;
     data.insert("activities", report);
-    data.insert("updated", changed.count());
-    return CommandResult::success(data);
+    data.insert("updated", updated);
+    data.insert("failed", failed);
+    CommandResult result = CommandResult::success(data);
+    if (failed) {
+        result.status = failed < items.count() ? Status::Partial : Status::Failed;
+        result.error = QString("%1 activit%2 could not be saved").arg(failed).arg(failed == 1 ? "y" : "ies");
+    }
+    return result;
 }
 
 static CommandResult

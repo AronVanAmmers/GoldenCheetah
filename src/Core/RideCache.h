@@ -154,7 +154,7 @@ class RideCache : public QObject
 
         // write the activity to disk in GC (json) format, renaming and
         // converting as needed, no questions asked
-        void saveSilent(RideItem *item);
+        bool saveSilent(RideItem *item, QString *error = nullptr); // false: nothing changed on disk, the ride stays unsaved
 
         bool saveActivity(RideItem *item, QString &error);
         bool saveActivities(QList<RideItem*> items, QString &error);

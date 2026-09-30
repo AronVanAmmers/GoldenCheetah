@@ -331,8 +331,8 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
 
     RideCache *cache = env.session->rideCache();
     QJsonArray report;
-    QList<RideItem *> toSave;
-    int processed = 0, skipped = 0, failed = 0;
+    QList<RideItem *> discard;
+    int processed = 0, skipped = 0, failed = 0, saved = 0;
     QString text;
 
     for (RideItem *item : items) {
@@ -358,10 +358,22 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
             r.insert("message", "no change");
             skipped++;
         } else {
+            // saved as we go, so a file that can't be written is reported as such
             item->setDirty(true);
-            toSave << item;
-            r.insert("status", "processed");
-            processed++;
+            QString saveError;
+            if (dryRun) {
+                discard << item;
+            } else if (cache->saveActivity(item, saveError)) {
+                saved++;
+            } else {
+                r.insert("status", "failed");
+                r.insert("message", saveError);
+                failed++;
+            }
+            if (!r.contains("status")) {
+                r.insert("status", "processed");
+                processed++;
+            }
         }
         report.append(r);
 
@@ -373,16 +385,9 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
         }
     }
 
-    // save, the trends and CP estimates only use what is on disk
-    if (!dryRun && !toSave.isEmpty()) {
-        QString saveError;
-        if (!cache->saveActivities(toSave, saveError)) {
-            return CommandResult::failure(Status::Failed, saveError);
-        }
-        env.session->refresh();
-    } else if (dryRun) {
-        for (RideItem *item : toSave) { item->setDirty(false); item->close(); }
-    }
+    // the trends and CP estimates only use what is on disk
+    if (saved) env.session->refresh();
+    for (RideItem *item : discard) { item->setDirty(false); item->close(); }
 
     QJsonObject data;
     data.insert("processor", dp->id());

@@ -1777,8 +1777,8 @@ RideCache::shiftPlannedActivities
 // Silently save ride and convert to GC format without warning user
 // (used by the GUI save paths and by headless sessions)
 //----------------------------------------------------------------------
-void
-RideCache::saveSilent(RideItem *rideItem)
+bool
+RideCache::saveSilent(RideItem *rideItem, QString *error)
 {
     if (context->mainWindow) QGuiApplication::setOverrideCursor(Qt::WaitCursor);
     QFile   currentFile(rideItem->path + QDir::separator() + rideItem->fileName);
@@ -1786,6 +1786,10 @@ RideCache::saveSilent(RideItem *rideItem)
     QString currentType =  currentFI.completeSuffix().toUpper();
     QFile   savedFile;
     bool    convert;
+
+    // put back if the new file can't be written
+    const QString originalPath = rideItem->path, originalName = rideItem->fileName;
+    QString movedToBak, removeWhenSaved;
 
     // Do we need to convert the file type?
     if (currentType != "JSON") convert = true;
@@ -1813,10 +1817,12 @@ RideCache::saveSilent(RideItem *rideItem)
 
         // rename as backup current if converting, or just delete it if its already .gc
         // unlink previous .bak if it is already there
+        // (a .gc file is deleted once the new one is written)
         if (convert) {
             QFile::remove(currentFile.fileName()+".bak"); // ignore errors if not there
-            currentFile.rename(currentFile.fileName(), currentFile.fileName() + ".bak");
-        } else currentFile.remove();
+            if (currentFile.rename(currentFile.fileName(), currentFile.fileName() + ".bak"))
+                movedToBak = currentFile.fileName();
+        } else removeWhenSaved = currentFile.fileName();
         convert = false; // we just did it already!
 
         // set the new filename & Start time everywhere
@@ -1831,12 +1837,14 @@ RideCache::saveSilent(RideItem *rideItem)
     } else {
         savedFile.setFileName(currentFile.fileName());
     }
+    bool newFile = !savedFile.exists();
 
     // run the data processors configured to run "on save"
     DataProcessorFactory::instance().autoProcess(rideItem->ride(), "Save", "UPDATE");
 
     // update the change history
-    QString log = rideItem->ride()->getTag("Change History", "");
+    QString history = rideItem->ride()->getTag("Change History", "");
+    QString log = history;
     log +=  tr("Changes on ");
     log +=  QDateTime::currentDateTime().toString() + ":";
     log += '\n' + rideItem->ride()->command->changeLog();
@@ -1844,7 +1852,18 @@ RideCache::saveSilent(RideItem *rideItem)
 
     // save in GC format
     JsonFileReader reader;
-    reader.writeRideFile(context, rideItem->ride(), savedFile);
+    if (!reader.writeRideFile(context, rideItem->ride(), savedFile)) {
+
+        // leave everything as it was: the ride stays unsaved
+        if (error) *error = tr("can't write %1: %2").arg(savedFile.fileName(), savedFile.errorString());
+        if (newFile) QFile::remove(savedFile.fileName());
+        if (!movedToBak.isEmpty()) QFile::rename(movedToBak + ".bak", movedToBak);
+        rideItem->setFileName(originalPath, originalName);
+        rideItem->ride()->setTag("Change History", history);
+        if (context->mainWindow) QGuiApplication::restoreOverrideCursor();
+        return false;
+    }
+    if (!removeWhenSaved.isEmpty()) QFile::remove(removeWhenSaved);
 
     // rename the file and update the rideItem list to reflect the change
     if (convert) {
@@ -1864,6 +1883,7 @@ RideCache::saveSilent(RideItem *rideItem)
     // model estimates (lazy refresh)
     estimator->refresh();
     if (context->mainWindow) QGuiApplication::restoreOverrideCursor();
+    return true;
 }
 
 bool
@@ -1876,7 +1896,7 @@ RideCache::saveActivity
         return false;
     }
     if (item->isDirty()) {
-        saveSilent(item);
+        if (!saveSilent(item, &error)) return false;
         item->setDirty(false);
         emit itemSaved(item);
     }

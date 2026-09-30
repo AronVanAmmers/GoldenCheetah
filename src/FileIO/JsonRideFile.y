@@ -799,9 +799,11 @@ JsonFileReader::writeRideFile(Context *context, const RideFile *ride, QFile &fil
 
     out << xml;
     out.flush();
+    bool written = out.status() == QTextStream::Ok;
 
     // close
     file.close();
 
-    return true;
+    // a full disk shows up here, not when opening
+    return written && file.error() == QFileDevice::NoError;
 }
