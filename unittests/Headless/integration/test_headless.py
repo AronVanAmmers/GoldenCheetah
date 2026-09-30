@@ -1047,6 +1047,24 @@ class TestRest(Headless):
         self.assertIn("program", props)
         self.assertNotIn("file", props)
 
+    def test_user_metric_names_follow_edits(self):
+        """one server, the metrics change between requests"""
+        a = "/athletes/" + self.athlete
+        # (not a ride the workflow test imports)
+        with open(RIDE_GPS, "rb") as f:
+            self.call("POST", a + "/imports?filename=gps.fit", raw=f.read(), headers={"Content-Type": "application/octet-stream"})
+        self.jcall("POST", a + "/user-metrics", body={"symbol": "test_metric", "name": "Test Metric", "program": ONES})
+        self.addCleanup(self.call, "DELETE", a + "/user-metrics/test_metric")
+        self.addCleanup(self.call, "DELETE", a + "/user-metrics/renamed_metric")
+        self.jcall("GET", a + "/charts/trend?metric=Test%20Metric&envelope=1")
+
+        self.jcall("PATCH", a + "/user-metrics/test_metric", body={"rename": "renamed_metric", "name": "Renamed Metric"})
+        env = self.jcall("GET", a + "/charts/trend?metric=Test%20Metric&envelope=1", expect=400)
+        self.assertIn("unknown metric", env["error"])
+        self.jcall("GET", a + "/charts/pmc?metric=Test%20Metric&envelope=1", expect=400)
+        self.jcall("GET", a + "/charts/trend?metric=Renamed%20Metric&envelope=1")
+        self.jcall("GET", a + "/charts/trend?metric=renamed_metric&envelope=1")
+
     def test_cross_site_requests_are_refused(self):
         status, _, _ = self.call("GET", "/athletes", headers={"Origin": "http://evil.example"})
         self.assertEqual(status, 403)

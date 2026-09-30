@@ -91,6 +91,7 @@ static void
 metricsChanged(AthleteSession &s)
 {
     GlobalContext::context()->notifyConfigChanged(CONFIG_USERMETRICS);
+    invalidateMetricLookup();
     s.waitForRefresh();
 }
 

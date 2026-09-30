@@ -78,6 +78,10 @@ QString activityStart(RideItem *item);
 // a metric by symbol (average_power) or by the name formulas and the GUI's
 // tables use (Average_Power, W'_Work), any case; empty when unknown
 QString metricSymbol(const QString &name);
+
+// the lookup behind metricSymbol is rebuilt when the metric count or the
+// user metrics change; this forces it, for when a user metric is replaced
+void invalidateMetricLookup();
 QString metricFormulaName(const QString &symbol);
 
 // an interval type as interval list --type takes it (user, effort ...)

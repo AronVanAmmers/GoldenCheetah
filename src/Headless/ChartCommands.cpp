@@ -250,8 +250,8 @@ static CommandResult
 pmcChart(CommandEnvironment &env, const CommandRequest &request)
 {
     QString metric = metricSymbol(request.args.value("metric").toString());
-    if (metric.isEmpty())
-        return CommandResult::failure(Status::Usage, QString("unknown metric '%1'").arg(request.args.value("metric").toString()));
+    const RideMetric *m = RideMetricFactory::instance().rideMetric(metric);
+    if (!m) return CommandResult::failure(Status::Usage, QString("unknown metric '%1'").arg(request.args.value("metric").toString()));
 
     PMCData *pmc = pmcFor(*env.session, metric, -1, -1);
     if (!pmc || !pmc->start().isValid()) return CommandResult::failure(Status::Failed, "no activities to compute the PMC from");
@@ -283,7 +283,7 @@ pmcChart(CommandEnvironment &env, const CommandRequest &request)
     panel.series << stress << ctl << atl << tsb;
 
     ChartSpec spec;
-    spec.title = QString("Performance manager (%1)").arg(RideMetricFactory::instance().rideMetric(metric)->name());
+    spec.title = QString("Performance manager (%1)").arg(m->name());
     spec.panels << panel;
 
     QJsonObject data;
