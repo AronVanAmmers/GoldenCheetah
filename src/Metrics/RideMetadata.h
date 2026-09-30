@@ -213,6 +213,20 @@ class RideMetadata : public QWidget
 
         void setLinkedDefaults(RideFile* ride);
 
+        // set a field of an activity, or of one of its intervals, from its
+        // text the way the Details tab does when a field is edited: Device,
+        // Identifier and Recording Interval go to the ride, Start Date
+        // (dd/MM/yyyy) and Start Time (hh:mm:ss.zzz) change its start, a
+        // metric sets its override (removed when the text is empty), and
+        // anything else is a tag. Numbers are in the units shown. The
+        // defaults linked to the new value are filled in, and text is what
+        // was stored (in metric units). Returns whether anything changed;
+        // false with error set when the text doesn't fit the field. The
+        // caller tells the item and marks it dirty.
+        static bool applyFieldValue(RideItem *item, RideFileInterval *interval, const FieldDefinition &field,
+                                    QString &text, const QList<DefaultDefinition> &defaults,
+                                    bool metricOverride = true, QString *error = nullptr);
+
         bool active;            // ignore signals when editing is active
 
     public slots:

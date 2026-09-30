@@ -502,6 +502,76 @@ class TestLivesWithOtherTools(Headless):
         self.assertClosed()
 
 
+
+class TestActivityFields(Headless):
+    """activity set edits a field as the Details tab does"""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        r = cls.gc_class("--athlete", cls.athlete, "import", RIDE_POWER, RUN_STRYD)
+        assert r.code == 0, r
+
+    def saved(self, activity):
+        with open(os.path.join(self.folder, "activities", activity + ".json"), encoding="utf-8-sig") as f:
+            return json.load(f)["RIDE"]
+
+    def test_metric_fields_set_an_override(self):
+        bike = "2020_01_26_13_00_38"
+        computed = self.gcj("activity", "show", bike)["data"]["metrics"]["average_power"]
+        self.gcj("activity", "set", bike, "--set", "Average Power=250")
+        self.assertEqual(self.gcj("activity", "show", bike)["data"]["metrics"]["average_power"], 250)
+        overrides = {k: v for o in self.saved(bike).get("OVERRIDES", []) for k, v in o.items()}
+        self.assertEqual(overrides["average_power"]["value"], "250")
+        self.assertNotIn("Average Power", self.saved(bike).get("TAGS", {}))
+
+        self.gcj("activity", "set", bike, "--set", "Average Power=")
+        self.assertEqual(self.gcj("activity", "show", bike)["data"]["metrics"]["average_power"], computed)
+        self.assertNotIn("average_power", {k for o in self.saved(bike).get("OVERRIDES", []) for k in o})
+        self.gcj("activity", "set", bike, "--set", "Average Power=lots", expect=2)
+
+    def test_values_are_checked(self):
+        for bad in ("Start Date=nonsense", "Start Time=25:61", "Summary=x", "Commute=maybe", "RPE=hard", "Start Date="):
+            self.gcj("activity", "set", "last", "--set", bad, expect=2)
+        self.gcj("activity", "set", "last", "--set", "Commute=yes", "--set", "Device=Test Device")
+        run = self.gcj("activity", "list", "last", "--field", "Commute")["data"]["activities"][0]
+        self.assertEqual(run["metadata"]["Commute"], "1")
+        self.assertEqual(self.saved(run["id"])["DEVICETYPE"].strip(), "Test Device")   # the writer adds a space
+
+    def test_start_time_renames_the_file(self):
+        self.addCleanup(self.gc, "--athlete", self.athlete, "activity", "set", "2020_01_26_14_30_00",
+                        "--set", "Start Time=13:00:38")
+        env = self.gcj("activity", "set", "2020_01_26_13_00_38", "--set", "Start Time=14:30")
+        self.assertEqual(env["data"]["activities"][0]["renamed"], "2020_01_26_14_30_00")
+        files = self.activity_files()
+        self.assertIn("2020_01_26_14_30_00.json", files)
+        self.assertNotIn("2020_01_26_13_00_38.json", files)
+        self.assertEqual(self.gcj("activity", "show", "2020_01_26_14_30_00")["data"]["start"], "2020-01-26T14:30:00")
+
+        # never onto another activity
+        run = self.gcj("activity", "show", "last")["data"]["start"]
+        env = self.gcj("activity", "set", "2020_01_26_14_30_00", "--set", "Start Date=" + run[:10],
+                       "--set", "Start Time=" + run[11:], expect=5)
+        self.assertIn("another activity starts", env["data"]["activities"][0]["message"])
+        self.assertEqual(self.activity_files(), files)
+
+    def test_linked_defaults_are_filled_in(self):
+        path = os.path.join(self.home, "metadata.xml")
+        with open(path, encoding="utf-8") as f:
+            original = f.read()
+        self.addCleanup(lambda: open(path, "w", encoding="utf-8").write(original))
+        linked = ('\t\t<default>\n\t\t\t<defaultfield>"Workout Code"</defaultfield>\n'
+                  '\t\t\t<defaultvalue>"Z2"</defaultvalue>\n'
+                  '\t\t\t<defaultlinkedfield>"Objective"</defaultlinkedfield>\n'
+                  '\t\t\t<defaultlinkedvalue>"Endurance"</defaultlinkedvalue>\n\t\t</default>\n')
+        self.assertIn("\t</defaults>", original)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(original.replace("\t</defaults>", linked + "\t</defaults>", 1))
+        self.gcj("activity", "set", "last", "--set", "Workout Code=Z2")
+        run = self.gcj("activity", "list", "last", "--field", "Objective", "--field", "Workout Code")["data"]["activities"][0]
+        self.assertEqual(run["metadata"]["Workout Code"], "Z2")
+        self.assertEqual(run["metadata"]["Objective"], "Endurance")
+
 class TestActivitiesMetricsCharts(Headless):
 
     @classmethod
@@ -1222,7 +1292,7 @@ class TestReadOnlyFolders(Headless):
         before = {f: open(os.path.join(activities, f), "rb").read() for f in os.listdir(activities)}
         self.read_only(activities)
         r = self.assertFails("--format", "json", "activity", "set", "last", "--set", "Notes=can't be saved",
-                             mentions="could not be saved")
+                             mentions="not updated")
         report = json.loads(r.out)["data"]["activities"]
         self.assertEqual(report[0]["status"], "failed")
         self.assertIn(".json", report[0]["message"])

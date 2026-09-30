@@ -1245,101 +1245,14 @@ FormField::editFinished()
 
     meta->active = active = true;
 
-    // Update special field
-    if (definition.name == "Device") {
+    // the value goes where it belongs: special fields, a metric's override,
+    // a tag, and the fields linked to it (the same for the command line)
+    QDateTime start = ourRideItem->ride()->startTime();
+    bool metricOverride = SpecialFields::getInstance().isMetric(definition.name) && enabled->isChecked();
+    changed = RideMetadata::applyFieldValue(ourRideItem, form->interval, definition, text, meta->getDefaults(), metricOverride);
 
-        if (ourRideItem->ride()->deviceType() != text) {
-            changed = true;
-            ourRideItem->ride()->setDeviceType(text);
-        }
-
-    } else if (definition.name == "Identifier") {
-
-        if (ourRideItem->ride()->id() != text) {
-            changed = true;
-            ourRideItem->ride()->setId(text);
-        }
-
-    } else if (definition.name == "Recording Interval") {
-
-        if (ourRideItem->ride()->recIntSecs() != text.toDouble()) {
-            changed = true;
-            ourRideItem->ride()->setRecIntSecs(text.toDouble());
-        }
-
-    } else if (definition.name == "Start Date") {
-        QDateTime current = ourRideItem->ride()->startTime();
-        QDate date(/* year*/text.mid(6,4).toInt(),
-                   /* month */text.mid(3,2).toInt(),
-                   /* day */text.mid(0,2).toInt());
-        QDateTime update = QDateTime(date, current.time());
-
-        if (update != current) {
-            changed = true;
-            ourRideItem->setStartTime(update);
-
-            // warn if the ride already exists with that date/time
-            meta->warnDateTime(update);
-        }
-
-    } else if (definition.name == "Start Time") {
-        QDateTime current = ourRideItem->ride()->startTime();
-        QTime time(/* hours*/ text.mid(0,2).toInt(),
-                   /* minutes */ text.mid(3,2).toInt(),
-                   /* seconds */ text.mid(6,2).toInt(),
-                   /* milliseconds */ text.mid(9,3).toInt());
-        QDateTime update = QDateTime(current.date(), time);
-
-        if (update != current) {
-
-            changed = true;
-            ourRideItem->setStartTime(update);
-
-            // warn if the ride already exists with that date/time
-            meta->warnDateTime(update);
-        }
-
-    } else if (definition.name != "Summary") {
-        if (SpecialFields::getInstance().isMetric(definition.name) && enabled->isChecked()) {
-
-            // convert from imperial to metric if needed
-            if (!GlobalContext::context()->useMetricUnits) {
-                double value = text.toDouble() * (1/ SpecialFields::getInstance().rideMetric(definition.name)->conversion());
-                value -= SpecialFields::getInstance().rideMetric(definition.name)->conversionSum();
-                text = QString("%1").arg(value);
-            }
-
-            QMap<QString, QString> empty;
-            QMap<QString,QString> current = ourRideItem->ride()->metricOverrides.value(SpecialFields::getInstance().metricSymbol(definition.name), empty);
-            QString currentvalue = current.value("value", "");
-
-            if (currentvalue != text) {
-                // update metric override QMap!
-                changed = true;
-                QMap<QString,QString> override;
-                override.insert("value", text);
-                ourRideItem->ride()->metricOverrides.insert(SpecialFields::getInstance().metricSymbol(definition.name), override);
-            }
-
-        } else {
-
-            // we need to convert from display value to
-            // stored value for the Weight field:
-            if (definition.type == GcFieldType::FIELD_DOUBLE && definition.name == "Weight" && GlobalContext::context()->useMetricUnits == false) {
-                double kg = text.toDouble() / LB_PER_KG;
-                text = QString("%1").arg(kg);
-            }
-
-            // just update the tags QMap!
-            QString current = definition.interval ? form->interval->getTag(definition.name, "")
-                                                  : ourRideItem->ride()->getTag(definition.name, "");
-            if (current != text) {
-                changed = true;
-                if (definition.interval) form->interval->setTag(definition.name, text);
-                else ourRideItem->ride()->setTag(definition.name, text);
-            }
-        }
-    }
+    // warn if the ride already exists with that date/time
+    if (changed && ourRideItem->ride()->startTime() != start) meta->warnDateTime(ourRideItem->ride()->startTime());
 
     // update everything, because metric changes like CP
     // need to flush through. For interval metadata we
@@ -1347,7 +1260,8 @@ FormField::editFinished()
     // but still mark the item as dirty so changes can be saved.
     if (changed) {
 
-        // we actually edited it !
+        // we actually edited it ! (the linked fields' tags are set, this
+        // updates their widgets)
         if (definition.interval == false) setLinkedDefault(text);
 
         // and update !
@@ -1357,6 +1271,169 @@ FormField::editFinished()
         ourRideItem->setDirty(true);
     }
     meta->active = active = false;
+}
+
+// fill in the fields linked to field=value, and the ones linked to those
+static void
+applyLinkedDefaults(RideFile *ride, const QList<DefaultDefinition> &defaults, const QString &field,
+                    const QString &value, QStringList &seen)
+{
+    if (seen.contains(field)) return; // defaults that link back
+    seen << field;
+    foreach (DefaultDefinition adefault, defaults) {
+        if (adefault.field == field && adefault.value == value) {
+            if (ride->getTag(adefault.linkedField, "") == "")
+                ride->setTag(adefault.linkedField, adefault.linkedValue);
+            applyLinkedDefaults(ride, defaults, adefault.linkedField, adefault.linkedValue, seen);
+        }
+    }
+}
+
+bool
+RideMetadata::applyFieldValue(RideItem *item, RideFileInterval *interval, const FieldDefinition &field, QString &text,
+                              const QList<DefaultDefinition> &defaults, bool metricOverride, QString *error)
+{
+    auto fail = [error](const QString &why) { if (error) *error = why; return false; };
+    RideFile *ride = item ? item->ride() : NULL;
+    if (ride == NULL) return fail(tr("the activity can't be opened"));
+    if (field.interval && interval == NULL) return fail(tr("'%1' is an interval field").arg(field.name));
+
+    auto number = [&text](bool &ok) { return text.trimmed().toDouble(&ok); };
+    bool ok = true;
+    bool changed = false;
+
+    // Update special field
+    if (field.name == "Device") {
+
+        if (ride->deviceType() != text) {
+            changed = true;
+            ride->setDeviceType(text);
+        }
+
+    } else if (field.name == "Identifier") {
+
+        if (ride->id() != text) {
+            changed = true;
+            ride->setId(text);
+        }
+
+    } else if (field.name == "Recording Interval") {
+
+        double secs = number(ok);
+        if (!ok) return fail(tr("'%1' is a number of seconds, not '%2'").arg(field.name, text));
+        if (ride->recIntSecs() != secs) {
+            changed = true;
+            ride->setRecIntSecs(secs);
+        }
+
+    } else if (field.name == "Start Date") {
+
+        QDate date = QDate::fromString(text, "dd/MM/yyyy");
+        if (!date.isValid()) return fail(tr("'%1' is a date, not '%2'").arg(field.name, text));
+        QDateTime current = ride->startTime();
+        QDateTime update = QDateTime(date, current.time());
+
+        if (update != current) {
+            changed = true;
+            item->setStartTime(update);
+        }
+
+    } else if (field.name == "Start Time") {
+
+        QTime time = QTime::fromString(text, "hh:mm:ss.zzz");
+        if (!time.isValid()) return fail(tr("'%1' is a time of day, not '%2'").arg(field.name, text));
+        QDateTime current = ride->startTime();
+        QDateTime update = QDateTime(current.date(), time);
+
+        if (update != current) {
+            changed = true;
+            item->setStartTime(update);
+        }
+
+    } else if (field.name != "Summary") {
+        if (SpecialFields::getInstance().isMetric(field.name) && metricOverride) {
+
+            QString symbol = SpecialFields::getInstance().metricSymbol(field.name);
+
+            // no value: back to the computed one
+            if (text.isEmpty()) {
+                if (ride->metricOverrides.contains(symbol)) {
+                    changed = true;
+                    ride->metricOverrides.remove(symbol);
+                }
+            } else {
+
+                number(ok);
+                if (!ok) return fail(tr("'%1' is a number, not '%2'").arg(field.name, text));
+
+                // convert from imperial to metric if needed
+                if (!GlobalContext::context()->useMetricUnits) {
+                    double value = text.toDouble() * (1/ SpecialFields::getInstance().rideMetric(field.name)->conversion());
+                    value -= SpecialFields::getInstance().rideMetric(field.name)->conversionSum();
+                    text = QString("%1").arg(value);
+                }
+
+                QMap<QString, QString> empty;
+                QMap<QString,QString> current = ride->metricOverrides.value(symbol, empty);
+                QString currentvalue = current.value("value", "");
+
+                if (currentvalue != text) {
+                    // update metric override QMap!
+                    changed = true;
+                    QMap<QString,QString> override;
+                    override.insert("value", text);
+                    ride->metricOverrides.insert(symbol, override);
+                }
+            }
+
+        } else {
+
+            // the formats the Details tab stores
+            if (!text.isEmpty()) {
+                switch (field.type) {
+                case GcFieldType::FIELD_INTEGER:
+                case GcFieldType::FIELD_DOUBLE:
+                case GcFieldType::FIELD_CHECKBOX:
+                    number(ok);
+                    if (!ok) return fail(tr("'%1' is a number, not '%2'").arg(field.name, text));
+                    break;
+                case GcFieldType::FIELD_DATE:
+                    if (!QDate::fromString(text, "dd/MM/yyyy").isValid())
+                        return fail(tr("'%1' is a date (dd/MM/yyyy), not '%2'").arg(field.name, text));
+                    break;
+                case GcFieldType::FIELD_TIME:
+                    if (!QTime::fromString(text, "hh:mm:ss.zzz").isValid())
+                        return fail(tr("'%1' is a time of day (hh:mm:ss.zzz), not '%2'").arg(field.name, text));
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            // we need to convert from display value to
+            // stored value for the Weight field:
+            if (field.type == GcFieldType::FIELD_DOUBLE && field.name == "Weight" && GlobalContext::context()->useMetricUnits == false) {
+                double kg = text.toDouble() / LB_PER_KG;
+                text = QString("%1").arg(kg);
+            }
+
+            // just update the tags QMap!
+            QString current = field.interval ? interval->getTag(field.name, "")
+                                             : ride->getTag(field.name, "");
+            if (current != text) {
+                changed = true;
+                if (field.interval) interval->setTag(field.name, text);
+                else ride->setTag(field.name, text);
+            }
+        }
+    }
+
+    // no defaults on interval metadata
+    if (changed && !field.interval) {
+        QStringList seen;
+        applyLinkedDefaults(ride, defaults, field.name, text, seen);
+    }
+    return changed;
 }
 
 void

@@ -90,6 +90,17 @@ Commands that work on several activities accept the same selection options:
 
 All given criteria must match. `processor run` and `activity set` change nothing unless activities are chosen or `--all` is given.
 
+### Setting fields
+
+`activity set ACTIVITY --set 'Field=value'` edits a field the way the Details tab does:
+
+- A metric field (`Distance`, `Average Power`, `Work` ...) sets that metric's override, as ticking its box and typing a value does. `--set 'Average Power='` removes the override, and the computed value is used again. Values are in the units the GUI shows.
+- `Start Date` (`2026-03-01`) and `Start Time` (`09:30` or `09:30:15`) change when the activity started, and its file is renamed after the new start, as in the GUI. A start another activity already has is refused, because saving would overwrite that activity.
+- `Device` and `Recording Interval` change the activity itself.
+- Other fields are tags. Numbers, dates (`yyyy-mm-dd`), times of day and checkboxes (`1`, `0`, `yes`, `no`) are checked against the field's type. An empty value clears the field.
+- Fields linked by a default (Preferences, Data Fields, Defaults) are filled in when they are empty, as in the GUI.
+- `Summary` is computed and fields of intervals can't be set here.
+
 ### What the activity view shows
 
 `activity overview ACTIVITY` returns the activity's overview as the GUI draws it. It uses the athlete's own layout, the same one the GUI switches to for that activity: the first layout whose expression matches (for example `isRun`), or else the first layout. Each tile is worked out the way the GUI works it out:
