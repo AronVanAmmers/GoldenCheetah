@@ -237,3 +237,7 @@ Notes:
 - HTTP status codes follow the exit status: 400 bad arguments, 404 not found, 409 athlete in use, 422 failed.
 
 The server listens on 127.0.0.1 by default. It refuses requests from web pages on other sites and requests with an unexpected `Host`. Listening on another address requires `--token` (or `$GC_API_TOKEN`), and clients then send `Authorization: Bearer <token>`.
+
+### The older API web service
+
+GoldenCheetah also has an older, separate web service: **Enable API Web Services** in Preferences, Integration, or `GoldenCheetah --server` (see `doc/user/rest-api.txt`). It is read-only, returns CSV on port 12021, and runs inside the GUI. It reads the saved cache as it is and doesn't take the athlete lock, so it keeps answering while the GUI has the athlete open. `serve` refuses (409) an athlete that the GUI has open. Use the older service to read data while the GUI is open. Use `serve` for everything else: changes, imports, processors, charts, and data that is always up to date with the files on disk. Neither service changes the other, and they can run side by side.
