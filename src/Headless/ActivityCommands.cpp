@@ -29,6 +29,7 @@
 #include "IntervalItem.h"
 #include "RideMetric.h"
 #include "RideMetadata.h"
+#include "SpecialFields.h"
 #include "DataFilter.h"
 #include "CsvRideFile.h"
 #include "PMCData.h"
@@ -200,6 +201,81 @@ exportActivity(CommandEnvironment &env, const CommandRequest &request)
     return result;
 }
 
+// a value as typed on the command line, in the form the Details tab stores
+// it: dates as dd/MM/yyyy, times of day as hh:mm:ss.zzz, a checkbox as 0 or 1
+static bool
+storedText(const FieldDefinition &field, const QString &value, QString &text, QString &error)
+{
+    text = value;
+    QString v = value.trimmed();
+    bool isMetric = SpecialFields::getInstance().isMetric(field.name);
+    bool date = field.name == "Start Date" || (!isMetric && field.type == GcFieldType::FIELD_DATE);
+    bool time = field.name == "Start Time" || (!isMetric && field.type == GcFieldType::FIELD_TIME);
+
+    if (field.name == "Summary") {
+        error = "'Summary' is computed, it can't be set";
+        return false;
+    }
+    if (field.interval) {
+        error = QString("'%1' is a field of intervals, not of the activity").arg(field.name);
+        return false;
+    }
+    if (v.isEmpty()) {
+        if (date || time || field.name == "Recording Interval") {
+            error = QString("'%1' can't be empty").arg(field.name);
+            return false;
+        }
+        return true;
+    }
+
+    if (date) {
+        QDate d = QDate::fromString(v, Qt::ISODate);
+        if (!d.isValid()) d = QDate::fromString(v, "dd/MM/yyyy");
+        if (!d.isValid()) {
+            error = QString("'%1' is a date (yyyy-mm-dd), not '%2'").arg(field.name, value);
+            return false;
+        }
+        text = d.toString("dd/MM/yyyy");
+    } else if (time) {
+        QTime t;
+        for (const char *format : { "hh:mm:ss.zzz", "hh:mm:ss", "hh:mm", "h:mm:ss", "h:mm" }) {
+            t = QTime::fromString(v, format);
+            if (t.isValid()) break;
+        }
+        if (!t.isValid()) {
+            error = QString("'%1' is a time of day (hh:mm:ss), not '%2'").arg(field.name, value);
+            return false;
+        }
+        text = t.toString("hh:mm:ss.zzz");
+    } else if (field.type == GcFieldType::FIELD_CHECKBOX && !isMetric) {
+        QString b = v.toLower();
+        if (b == "1" || b == "true" || b == "yes" || b == "on") text = "1";
+        else if (b == "0" || b == "false" || b == "no" || b == "off") text = "0";
+        else {
+            error = QString("'%1' is a checkbox, give 1 or 0, not '%2'").arg(field.name, value);
+            return false;
+        }
+    } else if (isMetric || field.name == "Recording Interval" || field.type == GcFieldType::FIELD_INTEGER
+               || field.type == GcFieldType::FIELD_DOUBLE) {
+        bool ok = false;
+        v.toDouble(&ok);
+        if (!ok) {
+            error = QString("field '%1' is numeric, '%2' is not a number").arg(field.name, value);
+            return false;
+        }
+    }
+    return true;
+}
+
+// another activity already starts then: saving would give this one its file name
+static bool
+startTaken(RideCache *cache, const RideItem *item)
+{
+    for (const RideItem *other : cache->rides())
+        if (other != item && other->dateTime == item->dateTime) return true;
+    return false;
+}
+
 static CommandResult
 setFields(CommandEnvironment &env, const CommandRequest &request)
 {
@@ -207,10 +283,12 @@ setFields(CommandEnvironment &env, const CommandRequest &request)
     if (selection.isEmpty() && !request.args.value("all").toBool(false))
         return CommandResult::failure(Status::Usage, "choose activities (by name, --filter, --from ...) or pass --all");
 
-    // NAME=VALUE pairs, an empty value removes the field
-    QList<QPair<QString,QString>> assignments;
+    // NAME=VALUE pairs, checked before any activity is touched
+    struct Assignment { FieldDefinition field; QString text; };
+    QList<Assignment> assignments;
     QMap<QString, FieldDefinition> defs;
-    for (const FieldDefinition &f : GlobalContext::context()->rideMetadata->getFields()) defs.insert(f.name, f);
+    RideMetadata *metadata = GlobalContext::context()->rideMetadata;
+    for (const FieldDefinition &f : metadata->getFields()) defs.insert(f.name, f);
 
     for (const QJsonValue &v : request.args.value("set").toArray()) {
         QString text = v.toString();
@@ -218,18 +296,18 @@ setFields(CommandEnvironment &env, const CommandRequest &request)
         if (eq <= 0) return CommandResult::failure(Status::Usage, QString("expected NAME=VALUE, got '%1'").arg(text));
         QString name = text.left(eq).trimmed(), value = text.mid(eq + 1);
 
-        if (defs.contains(name) && defs.value(name).isNumericField() && !value.isEmpty()) {
-            GcFieldType t = defs.value(name).type;
-            if (t == GcFieldType::FIELD_INTEGER || t == GcFieldType::FIELD_DOUBLE || t == GcFieldType::FIELD_CHECKBOX) {
-                bool ok = false;
-                value.trimmed().toDouble(&ok);
-                if (!ok) return CommandResult::failure(Status::Usage, QString("field '%1' is numeric, '%2' is not a number").arg(name).arg(value));
-            }
-        }
         if (!defs.contains(name) && !request.args.value("allow-undefined").toBool(false))
             return CommandResult::failure(Status::Usage,
                         QString("'%1' is not a defined field, add it with 'field add' or pass --allow-undefined").arg(name));
-        assignments << qMakePair(name, value);
+        Assignment a;
+        if (defs.contains(name)) a.field = defs.value(name);
+        else {
+            a.field.name = name;
+            a.field.type = GcFieldType::FIELD_TEXT;
+        }
+        QString error;
+        if (!storedText(a.field, value, a.text, error)) return CommandResult::failure(Status::Usage, error);
+        assignments << a;
     }
 
     QList<RideItem *> items;
@@ -244,26 +322,46 @@ setFields(CommandEnvironment &env, const CommandRequest &request)
         // an activity opened here is closed again once it is saved, so
         // --all doesn't hold every activity's samples in memory at once
         bool wasOpen = item->isOpen();
-        RideFile *ride = item->ride();
         QJsonObject r;
         r.insert("activity", QFileInfo(item->fileName).completeBaseName());
-        if (!ride) {
+        if (!item->ride()) {
             r.insert("status", "failed");
             r.insert("message", QString("can't open the activity file: %1").arg(item->errors().join("; ")));
             report.append(r);
             failed++;
             continue;
         }
+
+        // as the Details tab edits a field: special fields, metric
+        // overrides, tags, and the fields linked to the value
+        QDateTime start = item->dateTime;
         bool any = false;
-        for (const auto &a : assignments) {
-            QString before = ride->getTag(a.first, QString());
-            if (a.second.isEmpty()) {
-                if (ride->removeTag(a.first)) any = true;
-            } else if (before != a.second) {
-                ride->setTag(a.first, a.second);
-                any = true;
+        QString why;
+        for (const Assignment &a : assignments) {
+            QString text = a.text;
+            QString error;
+            bool changed = RideMetadata::applyFieldValue(item, nullptr, a.field, text, metadata->getDefaults(), true, &error);
+            if (!error.isEmpty()) {
+                why = error;
+                break;
             }
+            any |= changed;
         }
+        if (why.isEmpty() && item->dateTime != start && startTaken(cache, item))
+            why = QString("another activity starts at %1").arg(item->dateTime.toString("yyyy-MM-dd hh:mm:ss"));
+
+        if (!why.isEmpty()) {
+            // throw the change away
+            if (item->dateTime != start) item->setStartTime(start);
+            item->setDirty(false);
+            item->close();
+            r.insert("status", "failed");
+            r.insert("message", why);
+            report.append(r);
+            failed++;
+            continue;
+        }
+
         r.insert("status", any ? "updated" : "unchanged");
         if (any) {
             item->notifyRideMetadataChanged();
@@ -271,9 +369,12 @@ setFields(CommandEnvironment &env, const CommandRequest &request)
             QString saveError;
             if (cache->saveActivity(item, saveError)) {
                 updated++;
+                // the file is named after the start
+                if (item->dateTime != start) r.insert("renamed", QFileInfo(item->fileName).completeBaseName());
             } else {
                 r.insert("status", "failed");
                 r.insert("message", saveError);
+                if (item->dateTime != start) item->setStartTime(start);
                 item->setDirty(false);  // the change is thrown away
                 failed++;
             }
@@ -291,7 +392,7 @@ setFields(CommandEnvironment &env, const CommandRequest &request)
     CommandResult result = CommandResult::success(data);
     if (failed) {
         result.status = failed < items.count() ? Status::Partial : Status::Failed;
-        result.error = QString("%1 activit%2 could not be saved").arg(failed).arg(failed == 1 ? "y" : "ies");
+        result.error = QString("%1 activit%2 not updated").arg(failed).arg(failed == 1 ? "y was" : "ies were");
     }
     return result;
 }
@@ -405,7 +506,7 @@ registerActivityCommands(CommandRegistry &registry)
     set.spec.scope = Scope::Athlete;
     set.spec.modifies = true;
     set.spec.params << ActivitySelection::params(true);
-    set.spec.params << ParamSpec("set", ParamType::String, "NAME=VALUE, an empty value removes the field").req().many();
+    set.spec.params << ParamSpec("set", ParamType::String, "NAME=VALUE, as the Details tab edits the field; an empty value clears it").req().many();
     set.spec.params << ParamSpec("all", ParamType::Bool, "change every activity when nothing else is chosen");
     set.spec.params << ParamSpec("allow-undefined", ParamType::Bool, "allow fields that are not defined");
     set.spec.httpMethod = "PATCH";
