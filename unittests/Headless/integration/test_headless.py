@@ -1180,7 +1180,7 @@ class TestReadOnlyFolders(Headless):
     def assertFails(self, *args, mentions):
         r = self.gc("--athlete", self.athlete, *args, timeout=60)
         self.assertEqual(r.code, 5, r)
-        self.assertIn(mentions.encode(), r.err, r)
+        self.assertIn(mentions.encode(), r.err + r.out, r)   # the envelope carries it with --format json
         return r
 
     def test_athlete_config(self):
@@ -1193,6 +1193,17 @@ class TestReadOnlyFolders(Headless):
         self.assertFails("measures", "add", "--when", "2026-01-01", "--set", "WEIGHTKG=70", mentions="bodymeasures.json")
         with open(os.path.join(config, "power.zones"), "rb") as f:
             self.assertEqual(f.read(), zones)
+
+    def test_read_only_activities(self):
+        activities = os.path.join(self.folder, "activities")
+        before = {f: open(os.path.join(activities, f), "rb").read() for f in os.listdir(activities)}
+        self.read_only(activities)
+        r = self.assertFails("--format", "json", "activity", "set", "last", "--set", "Notes=can't be saved",
+                             mentions="could not be saved")
+        report = json.loads(r.out)["data"]["activities"]
+        self.assertEqual(report[0]["status"], "failed")
+        self.assertIn(".json", report[0]["message"])
+        self.assertEqual({f: open(os.path.join(activities, f), "rb").read() for f in os.listdir(activities)}, before)
 
     def test_read_only_charts(self):
         charts = os.path.join(self.folder, "config", "charts.xml")
