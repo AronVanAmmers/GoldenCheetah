@@ -453,14 +453,14 @@ INCLUDEPATH += ./Headless
 HEADERS +=  Headless/AthleteLock.h Headless/HeadlessCommand.h Headless/CommandRegistry.h \
             Headless/HeadlessApp.h Headless/AthleteSession.h Headless/ActivitySelection.h \
             Headless/HeadlessCommands.h Headless/MetricData.h Headless/ChartRenderer.h \
-            Headless/ResultFormat.h Headless/ZoneData.h
+            Headless/ResultFormat.h Headless/ZoneData.h Headless/ProgramArgs.h
 SOURCES +=  Headless/AthleteLock.cpp Headless/CommandRegistry.cpp Headless/HeadlessApp.cpp \
             Headless/AthleteSession.cpp Headless/ActivitySelection.cpp Headless/HeadlessCommands.cpp \
             Headless/AthleteCommands.cpp Headless/ActivityCommands.cpp Headless/ImportCommands.cpp \
             Headless/FieldCommands.cpp Headless/ProcessorCommands.cpp Headless/MetricCommands.cpp \
             Headless/ChartCommands.cpp Headless/ChartLibraryCommands.cpp Headless/ChartRenderer.cpp Headless/ResultFormat.cpp \
             Headless/IntervalCommands.cpp Headless/ZoneData.cpp Headless/OverviewCommands.cpp \
-            Headless/UserMetricCommands.cpp
+            Headless/UserMetricCommands.cpp Headless/ProgramArgs.cpp
 
 # the entry points: command line and REST
 HEADERS +=  Headless/CliParser.h Headless/CliMain.h Headless/RestRouter.h Headless/RestServer.h

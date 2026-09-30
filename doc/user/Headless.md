@@ -249,7 +249,7 @@ This serves every command as JSON under `http://127.0.0.1:12022/v1` until interr
 | `GET /v1/athletes/Joe/activities/last/intervals/Lap%203` | `interval show last "Lap 3"` |
 | `POST /v1/athletes/Joe/imports` (multipart, or the raw file with `?filename=`) | `import` |
 | `POST /v1/fields` `{"name": ["EP CdA"], "type": "double"}` | `field add` |
-| `PUT /v1/processors/estimate-power` `{"file": "/path/script.py"}` | `processor install` |
+| `PUT /v1/processors/estimate-power` `{"source": "..."}` | `processor install` |
 | `POST /v1/athletes/Joe/processors/estimate-power/runs` `{"filter": "isRun = 0"}` | `processor run` |
 | `GET /v1/athletes/Joe/charts` | `chart library list` |
 | `POST /v1/athletes/Joe/charts` `{"name": "P v", "metric": ["p_v"]}` | `chart library add` |
@@ -260,6 +260,7 @@ This serves every command as JSON under `http://127.0.0.1:12022/v1` until interr
 Notes:
 
 - Query parameters and JSON body fields have the same names as the command line options. Send JSON bodies with `Content-Type: application/json`.
+- Options that read a file where the command runs (`--file` of `processor install`, `metric user` and `layout tile set`) are refused with 400: the server's files aren't the client's to read. Send the content instead (`source`, `program`). Activity files for `import` are uploaded.
 - Charts and exports come back as files. Add `?envelope=1` to get the JSON envelope instead.
 - Add `?format=csv` to get a result as CSV (`text/csv`), laid out as `--format csv` does. Errors are still JSON.
 - HTTP status codes follow the exit status: 400 bad arguments, 404 not found, 409 athlete in use, 422 failed.

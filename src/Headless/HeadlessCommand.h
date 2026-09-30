@@ -63,6 +63,7 @@ struct ParamSpec {
     bool repeated = false;      // may be given many times, value is an array
     QJsonValue defaultValue;    // used when not supplied
     QStringList choices;        // allowed values, empty means any
+    bool commandLine = false;   // reads a file where the command runs: refused over REST
 
     ParamSpec() {}
     ParamSpec(const QString &name, ParamType type, const QString &description)
@@ -74,6 +75,7 @@ struct ParamSpec {
     ParamSpec &many() { repeated = true; return *this; }
     ParamSpec &def(const QJsonValue &v) { defaultValue = v; return *this; }
     ParamSpec &oneOf(const QStringList &c) { choices = c; return *this; }
+    ParamSpec &cliOnly() { commandLine = true; return *this; }
 };
 
 // does a command need an athlete opened before it runs?

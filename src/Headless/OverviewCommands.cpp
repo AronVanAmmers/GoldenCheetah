@@ -23,6 +23,7 @@
 //
 
 #include "HeadlessCommands.h"
+#include "ProgramArgs.h"
 #include "ActivitySelection.h"
 #include "MetricData.h"
 #include "ZoneData.h"
@@ -717,48 +718,6 @@ resolveLayout(const QList<OverviewLayout> &layouts, const QString &wanted, int &
     return CommandResult::success();
 }
 
-// the editor's parse, without requiring a value block: a tile program
-// uses names, units and values
-static CommandResult
-checkTileProgram(Context *context, const QString &program)
-{
-    if (program.trimmed().isEmpty()) return CommandResult::failure(Status::Usage, "program is empty");
-    DataFilter checker(nullptr, context);
-    QStringList errors = checker.check(program);
-    if (!errors.isEmpty() || !checker.root()) {
-        if (errors.isEmpty()) errors << QString("malformed expression.");
-        return CommandResult::failure(Status::Usage, errors.join("\n"));
-    }
-    return CommandResult::success();
-}
-
-static CommandResult
-readTileProgram(const CommandRequest &request, QString &program)
-{
-    bool hasProgram = request.args.contains("program");
-    bool hasFile = request.args.contains("file");
-    if (hasProgram && hasFile)
-        return CommandResult::failure(Status::Usage, "give the program with --program or --file, not both");
-    if (!hasProgram && !hasFile)
-        return CommandResult::failure(Status::Usage, "give the program with --program or --file");
-
-    if (hasFile) {
-        QString path = request.args.value("file").toString();
-        if (path == "-") {
-            QTextStream in(stdin);
-            program = in.readAll();
-        } else {
-            QFile in(path);
-            if (!in.open(QIODevice::ReadOnly | QIODevice::Text))
-                return CommandResult::failure(Status::NotFound, QString("can't read %1").arg(path));
-            program = QTextStream(&in).readAll();
-        }
-    } else {
-        program = request.args.value("program").toString();
-    }
-    return CommandResult::success();
-}
-
 static CommandResult
 openLayouts(Athlete *athlete, QList<OverviewLayout> &layouts, QString &source)
 {
@@ -1021,10 +980,11 @@ setTile(CommandEnvironment &env, const CommandRequest &request)
     if (!hit.config.contains("program"))
         return CommandResult::failure(Status::Usage, QString("tile '%1' has no program").arg(hit.config["name"].toString()));
 
+    // a tile program uses names, units and values, no value block
     QString program;
-    CommandResult read = readTileProgram(request, program);
+    CommandResult read = readProgramArg(request, true, program);
     if (!read.ok()) return read;
-    CommandResult compiled = checkTileProgram(env.session->context(), program);
+    CommandResult compiled = checkProgram(env.session->context(), program, false);
     if (!compiled.ok()) return compiled;
 
     QString path;
@@ -1107,7 +1067,7 @@ registerOverviewCommands(CommandRegistry &registry)
     set.spec.params << ParamSpec("tile", ParamType::String, "tile title, e.g. Intervals Data").req().pos();
     set.spec.params << ParamSpec("layout", ParamType::String, "layout name, e.g. Run; required when there is more than one");
     set.spec.params << ParamSpec("program", ParamType::String, "the tile program");
-    set.spec.params << ParamSpec("file", ParamType::String, "read the program from this file, or - for stdin");
+    set.spec.params << programFileParam("read the program from this file, or - for stdin");
     set.spec.httpMethod = "PUT";
     set.spec.httpPath = "/athletes/{athlete}/layouts/{layout}/tiles/{tile}";
     set.handler = setTile;

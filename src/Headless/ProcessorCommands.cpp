@@ -443,7 +443,7 @@ registerProcessorCommands(CommandRegistry &registry)
     install.spec.scope = Scope::Global;
     install.spec.modifies = true;
     install.spec.params << ParamSpec("name", ParamType::String, "name to install it under").req().pos();
-    install.spec.params << ParamSpec("file", ParamType::Path, "python script file");
+    install.spec.params << ParamSpec("file", ParamType::Path, "python script file").cliOnly();
     install.spec.params << ParamSpec("source", ParamType::String, "the script itself, instead of --file");
     install.spec.params << ParamSpec("replace", ParamType::Bool, "replace an existing processor with the same name");
     install.spec.params << ParamSpec("automation", ParamType::String,

@@ -954,6 +954,19 @@ class TestRest(Headless):
         self.jcall("POST", "/athletes/%s/imports" % self.athlete, raw=b"xx",
                    headers={"Content-Type": "application/octet-stream"}, expect=400)
 
+    def test_no_server_files_through_the_api(self):
+        a = "/athletes/%s" % self.athlete
+        for method, path, body in [("PUT", a + "/layouts/Run/tiles/Intervals%20Data", {"file": "/etc/passwd"}),
+                                   ("POST", a + "/user-metrics", {"symbol": "x", "name": "X", "file": "-"}),
+                                   ("PUT", "/processors/x", {"file": "/etc/passwd"})]:
+            env = self.jcall(method, path, body=body, expect=400)
+            self.assertIn("only for the command line", env["error"])
+        doc = self.jcall("GET", "/openapi.json")
+        tile = doc["paths"]["/v1/athletes/{athlete}/layouts/{layout}/tiles/{tile}"]["put"]
+        props = tile["requestBody"]["content"]["application/json"]["schema"]["properties"]
+        self.assertIn("program", props)
+        self.assertNotIn("file", props)
+
     def test_cross_site_requests_are_refused(self):
         status, _, _ = self.call("GET", "/athletes", headers={"Origin": "http://evil.example"})
         self.assertEqual(status, 403)
