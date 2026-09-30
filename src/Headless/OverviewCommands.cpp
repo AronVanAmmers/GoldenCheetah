@@ -145,27 +145,10 @@ sortTable(const QVector<QString> &names, QVector<QString> &values, int column, b
     int rows = values.count() / names.count();
     if (rows < 2) return;
 
-    static const QRegularExpression renumber("^[0-9.-]*$"), retime("^[0-9:]*$");
-    bool strings = false;
-    for (int i = rows * column; i < values.count() && i < rows * (column + 1); i++)
-        if (!renumber.match(values[i]).hasMatch() && !retime.match(values[i]).hasMatch()) strings = true;
-
-    QVector<int> order;
-    if (strings) {
-        QVector<QString> in;
-        for (int i = rows * column; i < rows * (column + 1); i++) in << values[i];
-        order = Utils::argsort(in, ascending);
-    } else {
-        QVector<double> in;
-        for (int i = rows * column; i < rows * (column + 1); i++) {
-            const QString &v = values[i];
-            if (renumber.match(v).hasMatch()) { in << v.toDouble(); continue; }
-            QTime t;
-            for (const char *f : { "h:mm:ss", "hh:mm:ss", "mm:ss", "s" }) if ((t = QTime::fromString(v, f)).isValid()) break;
-            in << QTime(0, 0, 0).secsTo(t);
-        }
-        order = Utils::argsort(in, ascending);
-    }
+    // as DataOverviewItem::sort orders it
+    QVector<QString> in;
+    for (int i = rows * column; i < values.count() && i < rows * (column + 1); i++) in << values[i];
+    QVector<int> order = Utils::argsortShown(in, ascending);
 
     QVector<QString> sorted = values;
     for (int c = 0; c < names.count(); c++)

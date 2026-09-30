@@ -53,6 +53,10 @@ namespace Utils
     QVector<int> rank(QVector<double>&, bool ascending=false);
     QVector<int> argsort(QVector<double>&, bool ascending=false);
     QVector<int> argsort(QVector<QString>&v, bool ascending=false);
+
+    // the order of a table column as shown: as numbers, times or dates
+    // ("dd MMM yyyy") when every value is one, otherwise as text
+    QVector<int> argsortShown(const QVector<QString> &values, bool ascending);
     QVector<int> arguniq(QVector<double> &v);
     QVector<int> arguniq(QVector<QString> &v);
     QVector<double> smooth_sma(QVector<double>&, int pos, int window, int sample=1);
