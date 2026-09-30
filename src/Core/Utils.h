@@ -66,6 +66,10 @@ namespace Utils
     // media
     bool isImage(QString);
 
+    // write a whole file, replacing it only once all of it is written;
+    // false with a message in error when that fails
+    bool saveFile(const QString &path, const QByteArray &bytes, QString *error = nullptr);
+
     // used std::sort, std::lower_bound et al
     struct comparedouble { bool operator()(const double p1, const double p2) { return p1 < p2; } };
     struct compareqstring { bool operator()(const QString p1, const QString p2) { return p1 < p2; } };

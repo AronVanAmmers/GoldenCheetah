@@ -20,6 +20,7 @@
 #include "UserMetricSettings.h"
 #include "Context.h"
 #include "Utils.h"
+#include "GcNotify.h"
 
 #include <QDate>
 #include <QDebug>
@@ -96,24 +97,20 @@ bool UserMetricParser::endDocument()
 // << and >> operators. We just put them into the character
 // data for a chart.
 //
-void
-UserMetricParser::serialize(QString filename, QList<UserMetricSettings> metrics)
+bool
+UserMetricParser::serialize(QString filename, QList<UserMetricSettings> metrics, QString *error)
 {
-    // open file - truncate contents
-    QFile file(filename);
-    if (!file.open(QFile::WriteOnly)) {
-        QMessageBox msgBox;
-        msgBox.setIcon(QMessageBox::Critical);
-        msgBox.setText(tr("Problem Saving User Metric Configuration"));
-        msgBox.setInformativeText(tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
-        msgBox.exec();
-        return;
-    };
-    file.resize(0);
-
-    QTextStream out(&file);
+    QString text;
+    QTextStream out(&text);
     serializeToQTextStream(out, metrics);
-    file.close();
+    out.flush();
+
+    if (!Utils::saveFile(filename, text.toUtf8(), error)) {
+        GcNotify::message(QMessageBox::Critical, tr("Problem Saving User Metric Configuration"),
+                          tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
+        return false;
+    }
+    return true;
 }
 
 void

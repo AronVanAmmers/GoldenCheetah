@@ -74,14 +74,7 @@ struct MetadataConfig {
     }
 
     bool write(QString &error) {
-        QString file = metadataFile();
-        QFile probe(file);
-        if (!probe.open(QFile::ReadWrite)) {
-            error = QString("can't write %1").arg(file);
-            return false;
-        }
-        probe.close();
-        RideMetadata::serialize(file, keywords, fields, colorfield, defaults);
+        if (!RideMetadata::serialize(metadataFile(), keywords, fields, colorfield, defaults, &error)) return false;
 
         // everyone reads the new definitions
         GlobalContext::context()->notifyConfigChanged(CONFIG_FIELDS);

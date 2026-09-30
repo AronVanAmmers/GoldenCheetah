@@ -21,6 +21,7 @@
 #include "LTMTool.h"
 #include "Athlete.h"
 #include "Utils.h"
+#include "GcNotify.h"
 
 #include <QDate>
 #include <QDebug>
@@ -81,25 +82,18 @@ bool LTMChartParser::endDocument()
 // << and >> operators. We just put them into the character
 // data for a chart.
 //
-void
-LTMChartParser::serialize(QString filename, QList<LTMSettings> charts)
+bool
+LTMChartParser::serialize(QString filename, QList<LTMSettings> charts, QString *error)
 {
-    // open file - truncate contents
-    QFile file(filename);
-    if (!file.open(QFile::WriteOnly)) {
-        QMessageBox msgBox;
-        msgBox.setIcon(QMessageBox::Critical);
-        msgBox.setText(tr("Problem Saving Charts Configuration"));
-        msgBox.setInformativeText(tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
-        msgBox.exec();
-        return;
-    };
-    file.resize(0);
-    QTextStream out(&file);
-    serializeToQTextStream(out, charts);
+    QString text;
+    serializeToQString(&text, charts);
 
-    // close file
-    file.close();
+    if (!Utils::saveFile(filename, text.toUtf8(), error)) {
+        GcNotify::message(QMessageBox::Critical, tr("Problem Saving Charts Configuration"),
+                          tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
+        return false;
+    }
+    return true;
 }
 
 void

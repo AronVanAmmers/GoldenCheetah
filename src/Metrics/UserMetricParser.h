@@ -30,7 +30,7 @@ class UserMetricParser : public QXmlDefaultHandler
     Q_DECLARE_TR_FUNCTIONS(UserMetricParser)
 
 public:
-    static void serialize(QString, QList<UserMetricSettings>);
+    static bool serialize(QString, QList<UserMetricSettings>, QString *error = nullptr); // false: not saved
     static void serializeToQTextStream(QTextStream&, QList<UserMetricSettings>);
     QList<UserMetricSettings> &getSettings() { return settings; }
 

@@ -108,22 +108,23 @@ createAthlete(CommandEnvironment &env, const CommandRequest &request)
 
     int cp = request.args.value("cp").toInt();
     int ftp = request.args.contains("ftp") ? request.args.value("ftp").toInt() : cp;
+    QString error;
     Zones zones;
     zones.addZoneRange(dob, cp, 0, ftp, request.args.value("w").toInt(), request.args.value("pmax").toInt());
-    zones.write(dirs.config());
+    if (!zones.write(dirs.config(), &error)) return CommandResult::failure(Status::Failed, error);
 
     HrZones hrzones;
     hrzones.addHrZoneRange(dob, request.args.value("lthr").toInt(), 0,
                            request.args.value("resthr").toInt(), request.args.value("maxhr").toInt());
-    hrzones.write(dirs.config());
+    if (!hrzones.write(dirs.config(), &error)) return CommandResult::failure(Status::Failed, error);
 
     // pace zones from critical velocity in km/h, as the wizard's defaults
     PaceZones runPace(false);
     runPace.addZoneRange(dob, request.args.value("cv-run").toDouble(), 0);
-    runPace.write(dirs.config());
+    if (!runPace.write(dirs.config(), &error)) return CommandResult::failure(Status::Failed, error);
     PaceZones swimPace(true);
     swimPace.addZoneRange(dob, request.args.value("cv-swim").toDouble(), 0);
-    swimPace.write(dirs.config());
+    if (!swimPace.write(dirs.config(), &error)) return CommandResult::failure(Status::Failed, error);
 
     appsettings->syncQSettingsAllAthletes();
 
@@ -338,6 +339,7 @@ setZones(CommandEnvironment &env, const CommandRequest &request)
     QString sport = RideFile::sportTag(request.args.value("sport").toString());
     QDate from = QDate::fromString(request.args.value("from").toString(), Qt::ISODate);
     QString type = request.args.value("type").toString();
+    QString error;
     QJsonObject data;
     data.insert("sport", sport);
     data.insert("from", from.toString(Qt::ISODate));
@@ -372,9 +374,11 @@ setZones(CommandEnvironment &env, const CommandRequest &request)
             if (has("pmax")) zones->setPmax(range, val("pmax"));
             zones->setZonesFromCP(range);
         }
-        zones->write(athlete->home->config());
+        // the file is read back, which also undoes the change when it wasn't saved
+        bool saved = zones->write(athlete->home->config(), &error);
         QFile file(athlete->home->config().canonicalPath() + "/" + zones->fileName());
         zones->read(file);
+        if (!saved) return CommandResult::failure(Status::Failed, error);
         data.insert("status", added ? "added" : "updated");
         data.insert("power", powerZonesJson(zones));
 
@@ -403,9 +407,11 @@ setZones(CommandEnvironment &env, const CommandRequest &request)
             if (has("maxhr")) zones->setMaxHr(range, val("maxhr"));
             zones->setHrZonesFromLT(range);
         }
-        zones->write(athlete->home->config());
+        // the file is read back, which also undoes the change when it wasn't saved
+        bool saved = zones->write(athlete->home->config(), &error);
         QFile file(athlete->home->config().canonicalPath() + "/" + zones->fileName());
         zones->read(file);
+        if (!saved) return CommandResult::failure(Status::Failed, error);
         data.insert("status", added ? "added" : "updated");
         data.insert("hr", hrZonesJson(zones));
 
@@ -433,9 +439,11 @@ setZones(CommandEnvironment &env, const CommandRequest &request)
             if (has("aet")) zones->setAeT(range, val("aet"));
             zones->setZonesFromCV(range);
         }
-        zones->write(athlete->home->config());
+        // the file is read back, which also undoes the change when it wasn't saved
+        bool saved = zones->write(athlete->home->config(), &error);
         QFile file(athlete->home->config().canonicalPath() + "/" + zones->fileName());
         zones->read(file);
+        if (!saved) return CommandResult::failure(Status::Failed, error);
         data.insert("status", added ? "added" : "updated");
         data.insert("cv", jsonNumber(zones->getCV(range)));
     }
@@ -526,12 +534,17 @@ addMeasure(CommandEnvironment &env, const CommandRequest &request)
     }
 
     // replace a reading at the same time
-    QList<Measure> list = g->measures();
+    QList<Measure> before = g->measures();
+    QList<Measure> list = before;
     for (int i = list.count() - 1; i >= 0; i--) if (list.at(i).when == when) list.removeAt(i);
     list.append(m);
     std::sort(list.begin(), list.end());
     g->setMeasures(list);
-    g->write();
+    QString error;
+    if (!g->write(&error)) {
+        g->setMeasures(before);
+        return CommandResult::failure(Status::Failed, error);
+    }
 
     // weight feeds per kg metrics: recompute what changed
     s.refresh();

@@ -1146,6 +1146,63 @@ class TestUserMetricsAndZones(Headless):
         self.assertClosed()
 
 
+
+def running_as_root():
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+@unittest.skipIf(os.name == "nt" or running_as_root(), "file permissions don't stop Windows or root")
+class TestReadOnlyFolders(Headless):
+    """a folder that can't be written: a command fails promptly and says why, and changes nothing"""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        r = cls.gc_class("--athlete", cls.athlete, "import", RIDE_POWER)
+        assert r.code == 0, r
+
+    def read_only(self, *paths):
+        """chmod a-w, undone when the test ends"""
+        for path in paths:
+            for root, dirs, files in os.walk(path, topdown=False):
+                for name in files + dirs:
+                    full = os.path.join(root, name)
+                    mode = os.stat(full).st_mode
+                    os.chmod(full, mode & ~0o222)
+                    self.addCleanup(os.chmod, full, mode)
+            mode = os.stat(path).st_mode
+            os.chmod(path, mode & ~0o222)
+            self.addCleanup(os.chmod, path, mode)
+
+    def assertFails(self, *args, mentions):
+        r = self.gc("--athlete", self.athlete, *args, timeout=60)
+        self.assertEqual(r.code, 5, r)
+        self.assertIn(mentions.encode(), r.err, r)
+        return r
+
+    def test_athlete_config(self):
+        config = os.path.join(self.folder, "config")
+        with open(os.path.join(config, "power.zones"), "rb") as f:
+            zones = f.read()
+        self.read_only(config)
+        self.assertFails("zones", "set", "--from", "2026-01-01", "--cp", "260", mentions="power.zones")
+        self.assertFails("zones", "set", "--type", "hr", "--from", "2026-01-01", "--lthr", "170", mentions="hr.zones")
+        self.assertFails("measures", "add", "--when", "2026-01-01", "--set", "WEIGHTKG=70", mentions="bodymeasures.json")
+        with open(os.path.join(config, "power.zones"), "rb") as f:
+            self.assertEqual(f.read(), zones)
+
+    def test_settings_shared_by_all_athletes(self):
+        # the files the athletes folder holds, and the folder itself
+        shared = [os.path.join(self.home, f) for f in os.listdir(self.home) if os.path.isfile(os.path.join(self.home, f))]
+        self.read_only(*shared)
+        mode = os.stat(self.home).st_mode
+        os.chmod(self.home, mode & ~0o222)
+        self.addCleanup(os.chmod, self.home, mode)
+        self.assertFails("metric", "user", "add", "--symbol", "ones", "--name", "Ones", "--program", ONES,
+                         mentions="usermetrics.xml")
+        self.assertFails("field", "add", "Read Only Field", mentions="metadata.xml")
+        self.assertFalse(os.path.exists(os.path.join(self.home, "usermetrics.xml")))
+
 HEART_RATE_TABLE = """{
 names {
     metricname(name, Average_Heart_Rate);

@@ -18,6 +18,8 @@
 
 #include <QMessageBox>
 #include "Zones.h"
+#include "GcNotify.h"
+#include "Utils.h"
 #include "Colors.h"
 #include "Settings.h"
 #include "TimeUtils.h"
@@ -816,7 +818,7 @@ QString Zones::summarize(int rnum, QVector<double> &time_in_zone, QColor color) 
 }
 
 #define USE_SHORT_POWER_ZONES_FORMAT true   /* whether a less redundent format should be used */
-void Zones::write(QDir home)
+bool Zones::write(QDir home, QString *error)
 {
     QString strzones;
 
@@ -902,20 +904,12 @@ void Zones::write(QDir home)
 #endif
     }
 
-    QFile file(home.canonicalPath() + "/" + fileName_);
-    if (file.open(QFile::WriteOnly)) {
-
-        QTextStream stream(&file);
-        stream << strzones;
-        file.close();
-    } else {
-        QMessageBox msgBox;
-        msgBox.setIcon(QMessageBox::Critical);
-        msgBox.setText(tr("Problem Saving Power Zones"));
-        msgBox.setInformativeText(tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(home.canonicalPath() + "/" + fileName_));
-        msgBox.exec();
-        return;
+    if (!Utils::saveFile(home.canonicalPath() + "/" + fileName_, strzones.toUtf8(), error)) {
+        GcNotify::message(QMessageBox::Critical, tr("Problem Saving Power Zones"),
+                          tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(home.canonicalPath() + "/" + fileName_));
+        return false;
     }
+    return true;
 }
 
 void Zones::addZoneRange(QDate _start, QDate _end, int _cp, int _aet, int _ftp, int _wprime, int _pmax)
