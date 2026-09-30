@@ -191,24 +191,26 @@ tableTile(Context *context, RideItem *item, const QJsonObject &config, QJsonObje
     for (QString &u : units) if (u == QObject::tr("seconds")) u.clear();   // shown as times
 
     // as the GUI: one column per name when there is more than one row of
-    // values, else a list of name, value and units
+    // values, else a list of name, value and units. Text and JSON keep that
+    // list. CSV always uses the column grid, for no rows, one, or many.
     QJsonArray columns, rows;
+    int records = names.isEmpty() ? 0 : values.count() / names.count();
     bool grid = !names.isEmpty() && values.count() > names.count();
     tile.insert("style", grid ? "grid" : "list");
     if (grid) {
         // one column per name, values column by column
         if (config.contains("sortcolumn"))
             sortTable(names, values, config["sortcolumn"].toInt(-1), config["sortorder"].toInt() == Qt::AscendingOrder);
-        int n = values.count() / names.count();
+        records = values.count() / names.count();
         for (int c = 0; c < names.count(); c++) {
             QJsonObject col;
             col.insert("name", names[c]);
             col.insert("units", c < units.count() ? units[c] : QString());
             columns.append(col);
         }
-        for (int r = 0; r < n; r++) {
+        for (int r = 0; r < records; r++) {
             QJsonArray row;
-            for (int c = 0; c < names.count(); c++) row.append(values[c * n + r]);
+            for (int c = 0; c < names.count(); c++) row.append(values[c * records + r]);
             rows.append(row);
         }
     } else {
@@ -216,6 +218,22 @@ tableTile(Context *context, RideItem *item, const QJsonObject &config, QJsonObje
         for (const char *c : { "name", "value", "units" }) columns.append(QJsonObject{ { "name", c }, { "units", "" } });
         for (int r = 0; r < names.count(); r++)
             rows.append(QJsonArray{ names[r], r < values.count() ? values[r] : QString(), r < units.count() ? units[r] : QString() });
+
+        // the column grid for CSV, stripped before the JSON result
+        QJsonArray csvColumns, csvRows;
+        for (int c = 0; c < names.count(); c++) {
+            QJsonObject col;
+            col.insert("name", names[c]);
+            col.insert("units", c < units.count() ? units[c] : QString());
+            csvColumns.append(col);
+        }
+        for (int r = 0; r < records; r++) {
+            QJsonArray row;
+            for (int c = 0; c < names.count(); c++) row.append(values[c * records + r]);
+            csvRows.append(row);
+        }
+        tile.insert("_csv_columns", csvColumns);
+        tile.insert("_csv_rows", csvRows);
     }
     tile.insert("columns", columns);
     tile.insert("rows", rows);
@@ -439,7 +457,8 @@ tileText(const QJsonObject &tile)
 }
 
 //
-// CSV: one table tile as that table, else a line per value
+// CSV: one table tile as that table's columns, else a line per value.
+// The interval count line stays in the text report and in JSON.
 //
 
 // a data table whose program lists intervals, as the default Intervals tiles do
@@ -450,21 +469,22 @@ intervalProgram(const QString &program)
 }
 
 static QString
-tilesCsv(const QJsonArray &tiles, const QList<bool> &intervalTiles, const QString &censusLine)
+tilesCsv(const QJsonArray &tiles)
 {
     auto line = [](const QStringList &f) { return ResultFormat::csvLine(f); };
 
     if (tiles.count() == 1 && tiles[0]["kind"] == "table" && !tiles[0].toObject().contains("error")) {
         QJsonObject t = tiles[0].toObject();
+        // list style keeps name, value, units for JSON; CSV uses the column grid
+        QJsonArray columns = t.contains("_csv_columns") ? t["_csv_columns"].toArray() : t["columns"].toArray();
+        QJsonArray rows = t.contains("_csv_rows") ? t["_csv_rows"].toArray() : t["rows"].toArray();
         QStringList head;
-        for (const QJsonValue &c : t["columns"].toArray()) {
+        for (const QJsonValue &c : columns) {
             QString units = c["units"].toString();
-            head << (units.isEmpty() || t["style"] == "list" ? c["name"].toString() : QString("%1 (%2)").arg(c["name"].toString()).arg(units));
+            head << (units.isEmpty() ? c["name"].toString() : QString("%1 (%2)").arg(c["name"].toString()).arg(units));
         }
-        QString text;
-        if (!intervalTiles.isEmpty() && intervalTiles[0]) text += line({ censusLine });
-        text += line(head);
-        for (const QJsonValue &r : t["rows"].toArray()) {
+        QString text = line(head);
+        for (const QJsonValue &r : rows) {
             QStringList fields;
             for (const QJsonValue &v : r.toArray()) fields << v.toString();
             text += line(fields);
@@ -473,7 +493,6 @@ tilesCsv(const QJsonArray &tiles, const QList<bool> &intervalTiles, const QStrin
     }
 
     QString text = line({ "tile", "kind", "row", "column", "units", "value" });
-    if (intervalTiles.contains(true)) text += line({ "", "summary", "", "", "", censusLine });
     for (const QJsonValue &v : tiles) {
         QJsonObject t = v.toObject();
         QString name = t["name"].toString(), kind = t["kind"].toString();
@@ -587,6 +606,15 @@ overviewCommand(CommandEnvironment &env, const CommandRequest &request)
         return CommandResult::failure(Status::NotFound,
                     QString("no tile called '%1' in the '%2' layout").arg(tileNames.join("', '")).arg(layout.name));
 
+    QString csv = tilesCsv(tiles);
+    for (int i = 0; i < tiles.count(); i++) {
+        QJsonObject t = tiles.at(i).toObject();
+        if (!t.contains("_csv_columns")) continue;
+        t.remove("_csv_columns");
+        t.remove("_csv_rows");
+        tiles.replace(i, t);
+    }
+
     QJsonObject data;
     data.insert("activity", QFileInfo(item->fileName).completeBaseName());
     data.insert("layout", layout.name);
@@ -595,7 +623,7 @@ overviewCommand(CommandEnvironment &env, const CommandRequest &request)
     data.insert("discovered_efforts", census.discoveredEfforts);
     data.insert("tiles", tiles);
     CommandResult result = CommandResult::success(data);
-    result.csv = tilesCsv(tiles, intervalTiles, censusLine);
+    result.csv = csv;
     result.text = QString("%1, %2 layout\n\n").arg(activityStart(item).replace("T", " ")).arg(layout.name) + text;
     return result;
 }
