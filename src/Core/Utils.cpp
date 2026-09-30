@@ -664,6 +664,73 @@ bool isImage(QString filename)
     return false;
 }
 
+QVector<int> argsortShown(const QVector<QString> &values, bool ascending)
+{
+    // step 1: infer the type for column
+    int isstring=0;
+
+    // dates in German are weird, a month is "Mai", "Juli" or even "Jan."
+    // even when requesting a date in format dd MMM yyyy
+    // remember: a dot (.) inside brackets ([]) does NOT need to be escaped
+    // (whole values only, as QRegExp::exactMatch)
+    static const QRegularExpression redate(QRegularExpression::anchoredPattern(QString::fromWCharArray(L"[0-9][0-9] [.A-Za-zÀ-žͰ-ϿЀ-ӿ]+ [0-9][0-9]*")));
+    static const QRegularExpression retime(QRegularExpression::anchoredPattern("[0-9:]*"));
+    static const QRegularExpression renumber(QRegularExpression::anchoredPattern("[0-9.-]*"));
+    auto exactMatch = [](const QRegularExpression &re, const QString &val) { return re.match(val).hasMatch(); };
+
+    foreach(const QString &val, values) {
+
+        // check, the order here is important
+        if (exactMatch(renumber, val)) continue; // numbers + .
+        else if (exactMatch(retime, val)) continue; // numbers + :
+        else if (exactMatch(redate, val)) continue; // numbers + date
+        else isstring++; // all bets are off
+    }
+    // step 2: generate an argsort index as strings or numbers
+    if (isstring) {
+
+        QVector<QString> in = values;
+        return argsort(in, ascending);
+
+    } else {
+
+        const QDate epoch(1970,1,1);
+        QVector<double> in;
+        foreach(const QString &val, values) {
+
+            // convert to double based upon type
+            if (exactMatch(renumber, val)) in << val.toDouble();
+            else if (exactMatch(retime, val)) {
+
+                // time formats are painful- these are formats we use in the code...
+                QStringList formats = { "h:mm:ss", "hh:mm:ss", "mm:ss", "s" };
+                QTime attempt;
+
+                foreach(QString format, formats) {
+                    attempt = QTime::fromString(val, format);
+                    if (attempt.isValid()) break;
+                }
+
+                in << QTime(0,0,0).secsTo(attempt);
+
+            } else if (exactMatch(redate, val)) {
+
+                // common formats
+                QStringList formats = { "dd MMM yyyy", "dd MMM yy" };
+                QDate attempt;
+
+                foreach(QString format, formats) {
+                    attempt = QDate::fromString(val, format);
+                    if (attempt.isValid()) break;
+                }
+                in <<  epoch.daysTo(attempt);
+
+            } else in << 0; // nope, don't understand
+        }
+        return argsort(in, ascending);
+    }
+}
+
 bool saveFile(const QString &path, const QByteArray &bytes, QString *error)
 {
     // a crash or a full disk leaves the old file rather than half a new one.

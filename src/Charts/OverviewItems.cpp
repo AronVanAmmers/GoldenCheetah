@@ -1266,74 +1266,12 @@ DataOverviewItem::sort(int column, Qt::SortOrder order)
 {
     if (column >= names.count()) return; // out of bounds
 
-    // step 1: infer the type for column
-    int isstring=0;
-
     int rows = values.count() / names.count();
 
-    // dates in German are weird, a month is "Mai", "Juli" or even "Jan."
-    // even when requesting a date in format dd MMM yyyy
-    // remember: a dot (.) inside brackets ([]) does NOT need to be escaped
-    QRegExp redate(QString::fromWCharArray(L"^[0-9][0-9] [.A-Za-zÀ-ž\u0370-\u03FF\u0400-\u04FF]+ [0-9][0-9]*$"));
-    QRegExp retime("^[0-9:]*$");
-    QRegExp renumber("^[0-9.-]*$");
-
-    for(int i= rows * column; i<values.count() && i< rows * (column+1) ; i++) {
-        QString &val = values[i];
-
-        // check, the order here is important
-        if (renumber.exactMatch(val)) continue; // numbers + .
-        else if (retime.exactMatch(val)) continue; // numbers + :
-        else if (redate.exactMatch(val)) continue; // numbers + date
-        else isstring++; // all bets are off
-    }
-    // step 2: generate an argsort index as strings or numbers
-    QVector<int> argsortindex;
-    if (isstring) {
-
-        QVector<QString> in;
-        for(int i= rows * column; i<values.count() && i< rows * (column+1) ; i++) in<<values[i];
-        argsortindex = Utils::argsort(in, order==Qt::AscendingOrder);
-
-    } else {
-
-        const QDate epoch(1970,1,1);
-        QVector<double> in;
-        for(int i= rows * column; i<values.count() && i< rows * (column+1) ; i++) {
-
-            QString &val = values[i];
-
-            // convert to double based upon type
-            if (renumber.exactMatch(val)) in << val.toDouble();
-            else if (retime.exactMatch(val)) {
-
-                // time formats are painful- these are formats we use in the code...
-                QStringList formats = { "h:mm:ss", "hh:mm:ss", "mm:ss", "s" };
-                QTime attempt;
-
-                foreach(QString format, formats) {
-                    attempt = QTime::fromString(val, format);
-                    if (attempt.isValid()) break;
-                }
-
-                in << QTime(0,0,0).secsTo(attempt);
-
-            } else if (redate.exactMatch(val)) {
-
-                // common formats
-                QStringList formats = { "dd MMM yyyy", "dd MMM yy" };
-                QDate attempt;
-
-                foreach(QString format, formats) {
-                    attempt = QDate::fromString(val, format);
-                    if (attempt.isValid()) break;
-                }
-                in <<  epoch.daysTo(attempt);
-
-            } else in << 0; // nope, don't understand
-        }
-        argsortindex = Utils::argsort(in, order==Qt::AscendingOrder);
-    }
+    // steps 1 and 2: infer the type for column and argsort it
+    QVector<QString> in;
+    for(int i= rows * column; i<values.count() && i< rows * (column+1) ; i++) in<<values[i];
+    QVector<int> argsortindex = Utils::argsortShown(in, order==Qt::AscendingOrder);
 
     // step 3: reorder values by the argsort index
     QVector<QString> ordered = values;
