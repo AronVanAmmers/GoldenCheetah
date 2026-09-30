@@ -289,6 +289,9 @@ FixElevation::FetchElevationData(QString latLngCollection)
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Accept", "application/json");
 
+    // don't wait for ever on a server that doesn't answer
+    request.setTransferTimeout(30000);
+
     QNetworkAccessManager *networkMgr = new QNetworkAccessManager();
     QNetworkReply *reply = networkMgr->post(request, latLngCollection.toUtf8());
 
