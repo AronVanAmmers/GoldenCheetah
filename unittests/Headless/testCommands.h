@@ -69,6 +69,14 @@ inline CommandRegistry testRegistry()
     chart.handler = noop;
     r.add(chart);
 
+    Command shift;
+    shift.spec.name = "calendar.shift";
+    shift.spec.summary = "move an activity";
+    shift.spec.params << ParamSpec("activity", ParamType::String, "id").req().pos();
+    shift.spec.params << ParamSpec("days", ParamType::Int, "days").pos();
+    shift.handler = noop;
+    r.add(shift);
+
     Command cp;
     cp.spec.name = "cp";
     cp.spec.summary = "fit";

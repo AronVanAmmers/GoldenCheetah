@@ -71,6 +71,18 @@ private slots:
         QCOMPARE(p.args.value("activity").toString(), QString("x"));
     }
 
+    void negativeNumbersAreValues() {
+        CliParse p = parse({ "chart", "activity", "x", "--width", "-5", "--smooth", "-0.5" });
+        QCOMPARE(p.error, QString());
+        QCOMPARE(p.args.value("width").toString(), QString("-5"));
+        QCOMPARE(p.args.value("smooth").toString(), QString("-0.5"));
+        QCOMPARE(parse({ "chart", "activity", "x", "--smooth", "-.5" }).args.value("smooth").toString(), QString("-.5"));
+        p = parse({ "calendar", "shift", "x", "-3" });
+        QCOMPARE(p.error, QString());
+        QCOMPARE(p.args.value("days").toString(), QString("-3"));
+        QVERIFY(parse({ "activity", "list", "-x" }).error.contains("unknown option"));
+    }
+
     void doubleDashEndsOptions() {
         CliParse p = parse({ "import", "--", "--weird-name.fit" });
         QCOMPARE(p.error, QString());

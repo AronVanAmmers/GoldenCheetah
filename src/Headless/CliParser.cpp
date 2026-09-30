@@ -104,7 +104,9 @@ CliParser::parse(const QStringList &argv, const CommandRegistry &registry)
     for (int i = 0; i < argv.count(); i++) {
         QString arg = argv.at(i);
 
-        if (endOfOptions || !arg.startsWith("-") || arg == "-") {
+        // a negative number is a value (--offset -5), no option starts with a digit
+        static const QRegularExpression negative("^-(\\d|\\.\\d)");
+        if (endOfOptions || !arg.startsWith("-") || arg == "-" || negative.match(arg).hasMatch()) {
             words << arg;
             continue;
         }
