@@ -186,7 +186,7 @@ class RideMetadata : public QWidget
 
     public:
         RideMetadata(Context *, bool singlecolumn = false);
-        static void serialize(QString filename, QList<KeywordDefinition>, QList<FieldDefinition>, QString colofield, QList<DefaultDefinition>defaultDefinitions);
+        static bool serialize(QString filename, QList<KeywordDefinition>, QList<FieldDefinition>, QString colofield, QList<DefaultDefinition>defaultDefinitions, QString *error = nullptr); // false: not saved
         static void readXML(QString filename, QList<KeywordDefinition>&, QList<FieldDefinition>&, QString &colorfield, QList<DefaultDefinition>&defaultDefinitions);
         QList<KeywordDefinition> getKeywords() { return keywordDefinitions; }
         QList<FieldDefinition> getFields() { return fieldDefinitions; }

@@ -25,6 +25,7 @@
 #include <QDir>
 #include <QVector>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QStringRef>
 
 #include "GenericChart.h"
@@ -660,6 +661,18 @@ bool isImage(QString filename)
     foreach(QString ext, imageexts) {
         if (lowername.endsWith(ext)) return true;
     }
+    return false;
+}
+
+bool saveFile(const QString &path, const QByteArray &bytes, QString *error)
+{
+    // a crash or a full disk leaves the old file rather than half a new one.
+    // Where no temporary file can be made next to it (a folder we may not
+    // create files in), the file is written in place as it always was.
+    QSaveFile file(path);
+    file.setDirectWriteFallback(true);
+    if (file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size() && file.commit()) return true;
+    if (error) *error = QString("can't write %1: %2").arg(path, file.errorString());
     return false;
 }
 

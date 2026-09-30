@@ -18,6 +18,8 @@
 
 #include <QMessageBox>
 #include "HrZones.h"
+#include "GcNotify.h"
+#include "Utils.h"
 #include "Colors.h"
 #include "TimeUtils.h"
 #include <QtGui>
@@ -702,7 +704,7 @@ QString HrZones::summarize(int rnum, QVector<double> &time_in_zone, QColor color
 }
 
 #define USE_SHORT_POWER_ZONES_FORMAT true   /* whether a less redundent format should be used */
-void HrZones::write(QDir home)
+bool HrZones::write(QDir home, QString *error)
 {
     QString strzones;
 
@@ -741,20 +743,12 @@ void HrZones::write(QDir home)
         }
     }
 
-    QFile file(home.canonicalPath() + "/" + fileName_);
-    if (file.open(QFile::WriteOnly))
-    {
-        QTextStream stream(&file);
-        stream << strzones;
-        file.close();
-    } else {
-        QMessageBox msgBox;
-        msgBox.setIcon(QMessageBox::Critical);
-        msgBox.setText(tr("Problem Saving Heartrate Zones"));
-        msgBox.setInformativeText(tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(home.canonicalPath() + "/" + fileName_));
-        msgBox.exec();
-        return;
+    if (!Utils::saveFile(home.canonicalPath() + "/" + fileName_, strzones.toUtf8(), error)) {
+        GcNotify::message(QMessageBox::Critical, tr("Problem Saving Heartrate Zones"),
+                          tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(home.canonicalPath() + "/" + fileName_));
+        return false;
     }
+    return true;
 }
 
 void HrZones::addHrZoneRange(QDate _start, QDate _end, int _lt, int _aet, int _restHr, int _maxHr)

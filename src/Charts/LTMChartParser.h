@@ -31,7 +31,7 @@ class LTMChartParser : public QXmlDefaultHandler
     Q_DECLARE_TR_FUNCTIONS(LTMChartParser)
 
 public:
-    static void serialize(QString, QList<LTMSettings>);
+    static bool serialize(QString, QList<LTMSettings>, QString *error = nullptr); // false: not saved
     static void serializeToQString(QString*, QList<LTMSettings>);
 
     // unmarshall

@@ -21,6 +21,8 @@
 
 #include <QMessageBox>
 #include "PaceZones.h"
+#include "GcNotify.h"
+#include "Utils.h"
 #include "Colors.h"
 #include "Settings.h"
 #include "TimeUtils.h"
@@ -768,7 +770,7 @@ QString PaceZones::summarize(int rnum, QVector<double> &time_in_zone, QColor col
 }
 
 #define USE_SHORT_POWER_ZONES_FORMAT true   /* whether a less redundent format should be used */
-void PaceZones::write(QDir home)
+bool PaceZones::write(QDir home, QString *error)
 {
     QString strzones;
 
@@ -845,19 +847,12 @@ void PaceZones::write(QDir home)
 #endif
     }
 
-    QFile file(home.canonicalPath() + "/" + fileName_);
-    if (file.open(QFile::WriteOnly)) {
-        QTextStream stream(&file);
-        stream << strzones;
-        file.close();
-    } else {
-        QMessageBox msgBox;
-        msgBox.setIcon(QMessageBox::Critical);
-        msgBox.setText(tr("Problem Saving Pace Zones"));
-        msgBox.setInformativeText(tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(home.canonicalPath() + "/" + fileName_));
-        msgBox.exec();
-        return;
+    if (!Utils::saveFile(home.canonicalPath() + "/" + fileName_, strzones.toUtf8(), error)) {
+        GcNotify::message(QMessageBox::Critical, tr("Problem Saving Pace Zones"),
+                          tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(home.canonicalPath() + "/" + fileName_));
+        return false;
     }
+    return true;
 }
 
 void PaceZones::addZoneRange(QDate _start, QDate _end, double _cv, double _aet)

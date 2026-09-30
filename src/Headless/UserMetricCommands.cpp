@@ -79,18 +79,11 @@ loadUserMetrics()
     return metrics;
 }
 
+// all athletes share the file: a failed write must leave the old one
 static bool
 writeUserMetrics(const QList<UserMetricSettings> &metrics, QString &error)
 {
-    QString filename = userMetricsFile();
-    QFile file(filename);
-    if (!file.open(QFile::WriteOnly | QFile::Truncate)) {
-        error = QString("can't write %1").arg(filename);
-        return false;
-    }
-    QTextStream out(&file);
-    UserMetricParser::serializeToQTextStream(out, metrics);
-    return true;
+    return UserMetricParser::serialize(userMetricsFile(), metrics, &error);
 }
 
 static void

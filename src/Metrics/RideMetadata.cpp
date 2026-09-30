@@ -31,6 +31,7 @@
 #include "AbstractView.h"
 #include "HelpWhatsThis.h"
 #include "Utils.h"
+#include "GcNotify.h"
 #include "RideEditor.h"
 
 #include <QXmlDefaultHandler>
@@ -1666,25 +1667,11 @@ KeywordDefinition::fingerprint(QList<KeywordDefinition> list)
  * Read / Write metadata.xml file
  *--------------------------------------------------------------------*/
 
-void
-RideMetadata::serialize(QString filename, QList<KeywordDefinition>keywordDefinitions, QList<FieldDefinition>fieldDefinitions, QString colorfield, QList<DefaultDefinition>defaultDefinitions)
+bool
+RideMetadata::serialize(QString filename, QList<KeywordDefinition>keywordDefinitions, QList<FieldDefinition>fieldDefinitions, QString colorfield, QList<DefaultDefinition>defaultDefinitions, QString *error)
 {
-    // open file - truncate contents
-    QFile file(filename);
-    if (!file.open(QFile::WriteOnly)) {
-        if (GlobalContext::isHeadless()) {
-            qWarning() << "can't write" << filename;
-            return;
-        }
-        QMessageBox msgBox;
-        msgBox.setIcon(QMessageBox::Critical);
-        msgBox.setText(tr("Problem Saving Meta Data"));
-        msgBox.setInformativeText(tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
-        msgBox.exec();
-        return;
-    };
-    file.resize(0);
-    QTextStream out(&file);
+    QString text;
+    QTextStream out(&text);
 
     // begin document
     out << "<metadata>\n";
@@ -1749,9 +1736,14 @@ RideMetadata::serialize(QString filename, QList<KeywordDefinition>keywordDefinit
 
     // end document
     out << "</metadata>\n";
+    out.flush();
 
-    // close file
-    file.close();
+    if (!Utils::saveFile(filename, text.toUtf8(), error)) {
+        GcNotify::message(QMessageBox::Critical, tr("Problem Saving Meta Data"),
+                          tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
+        return false;
+    }
+    return true;
 }
 
 void

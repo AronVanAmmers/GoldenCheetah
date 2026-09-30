@@ -90,7 +90,7 @@ public:
     MeasuresGroup(QString symbol, QString name, QStringList symbols, QStringList names, QStringList metricUnits, QStringList imperialUnits, QList<double> unitsFactors, QList<QStringList> headers,  QDir dir=QDir(), bool withData=false);
     MeasuresGroup(QDir dir=QDir(), bool withData=false) : dir(dir), withData(withData) {}
     ~MeasuresGroup() {}
-    void write();
+    bool write(QString *error = nullptr); // false: not saved
     QList<Measure>& measures() { return measures_; }
     void setMeasures(QList<Measure>&x);
     void getMeasure(QDate date, Measure&) const;
@@ -129,7 +129,7 @@ private:
     QList<QStringList> headers;
     QList<Measure> measures_;
 
-    bool serialize(QString, QList<Measure> &);
+    bool serialize(QString, QList<Measure> &, QString *error);
     bool unserialize(QFile &, QList<Measure> &);
 };
 

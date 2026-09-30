@@ -18,6 +18,7 @@
 
 #include "Measures.h"
 #include "GcNotify.h"
+#include "Utils.h"
 #include "Units.h"
 #include "MainWindow.h" // for gcroot
 
@@ -83,14 +84,14 @@ MeasuresGroup::MeasuresGroup(QString symbol, QString name, QStringList symbols, 
     }
 }
 
-void
-MeasuresGroup::write()
+bool
+MeasuresGroup::write(QString *error)
 {
     // Nothing to do if data not loaded
-    if (!withData) return;
+    if (!withData) return true;
 
     // now save data away
-    serialize(QString("%1/%2measures.json").arg(dir.canonicalPath()).arg(symbol.toLower()), measures_);
+    return serialize(QString("%1/%2measures.json").arg(dir.canonicalPath()).arg(symbol.toLower()), measures_, error);
 }
 
 void
@@ -150,22 +151,8 @@ MeasuresGroup::getFieldValue(QDate date, int field, bool useMetricUnits) const
 }
 
 bool
-MeasuresGroup::serialize(QString filename, QList<Measure> &data)
+MeasuresGroup::serialize(QString filename, QList<Measure> &data, QString *error)
 {
-
-    // open file - truncate contents
-    QFile file(filename);
-    if (!file.open(QFile::WriteOnly)) {
-        QMessageBox msgBox;
-        msgBox.setIcon(QMessageBox::Critical);
-        msgBox.setText(QObject::tr("Problem Saving Measures"));
-        msgBox.setInformativeText(QObject::tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
-        msgBox.exec();
-        return false;
-    };
-    file.resize(0);
-    QTextStream out(&file);
-
     Measure *m = NULL;
     QJsonArray measures;
     for (int i = 0; i < data.count(); i++) {
@@ -191,9 +178,11 @@ MeasuresGroup::serialize(QString filename, QList<Measure> &data)
     QJsonDocument json;
     json.setObject(jsonObject);
 
-    out << json.toJson();
-    out.flush();
-    file.close();
+    if (!Utils::saveFile(filename, json.toJson(), error)) {
+        GcNotify::message(QMessageBox::Critical, QObject::tr("Problem Saving Measures"),
+                          QObject::tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
+        return false;
+    }
     return true;
 
 }
