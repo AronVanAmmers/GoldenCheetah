@@ -160,18 +160,33 @@ addFields(CommandEnvironment &env, const CommandRequest &request)
                 r.insert("status", "added");
                 added++;
             } else {
+                // type and tab always (they have defaults), the rest when given
                 FieldDefinition &f = config.fields[i];
-                bool same = f.type == type && f.tab == tab;
+                bool setSummary = request.args.contains("summary");
+                bool setInterval = request.args.contains("interval");
+                bool setValues = request.args.contains("value");
+                bool same = f.type == type && f.tab == tab
+                            && (!setSummary || f.diary == summary)
+                            && (!setInterval || f.interval == interval)
+                            && (!setValues || f.values == values);
                 if (same) {
                     r.insert("status", "unchanged");
                     unchanged++;
                 } else if (!update) {
+                    QStringList as;
+                    as << QString("%1 on tab '%2'").arg(typeName(f.type)).arg(f.tab);
+                    if (f.diary) as << "in the summary";
+                    if (f.interval) as << "for intervals";
+                    if (!f.values.isEmpty()) as << QString("with values %1").arg(f.values.join(", "));
                     r.insert("status", "failed");
-                    r.insert("message", QString("exists as %1 on tab '%2', use --update to change it").arg(typeName(f.type)).arg(f.tab));
+                    r.insert("message", QString("exists as %1, use --update to change it").arg(as.join(", ")));
                     failed++;
                 } else {
                     f.type = type;
                     f.tab = tab;
+                    if (setSummary) f.diary = summary;
+                    if (setInterval) f.interval = interval;
+                    if (setValues) f.values = values;
                     r.insert("status", "updated");
                     changed++;
                 }
@@ -268,7 +283,7 @@ registerFieldCommands(CommandRegistry &registry)
     add.spec.params << ParamSpec("summary", ParamType::Bool, "show in the activity summary (diary)");
     add.spec.params << ParamSpec("interval", ParamType::Bool, "field belongs to intervals rather than activities");
     add.spec.params << ParamSpec("value", ParamType::String, "suggested value for completion").many();
-    add.spec.params << ParamSpec("update", ParamType::Bool, "change type and tab of existing fields");
+    add.spec.params << ParamSpec("update", ParamType::Bool, "change the type, tab, summary, interval or values of existing fields");
     add.spec.httpMethod = "POST";
     add.spec.httpPath = "/fields";
     add.handler = addFields;
