@@ -26,6 +26,7 @@
 #include "httprequest.h"
 #include "httpresponse.h"
 
+#include <QBuffer>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -150,7 +151,8 @@ RestHandler::sendError(HttpResponse &response, int status, const QString &messag
 {
     QJsonObject o;
     o.insert("ok", false);
-    o.insert("status", status == 404 ? "not_found" : status == 401 ? "unauthorized" : status == 403 ? "forbidden" : "usage");
+    o.insert("status", status == 404 ? "not_found" : status == 401 ? "unauthorized" : status == 403 ? "forbidden"
+                       : status == 500 ? "internal" : status == 503 ? "unavailable" : "usage");
     o.insert("error", message);
     sendJson(response, status, o);
 }
@@ -211,15 +213,39 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
     }
 
     // uploaded files become paths in a temporary folder that lives until
-    // the command is done
-    // created when the first file arrives
+    // the command is done, created when the first file arrives. Each file
+    // has a folder of its own, so two uploads may have the same name.
+    // A file that can't be stored whole fails the request: the command
+    // must not run without it.
     QJsonArray uploadedPaths;
     std::unique_ptr<QTemporaryDir> uploadDir;
-    auto uploadFolder = [&]() -> QString {
+    QString uploadError;
+    auto saveUpload = [&](QIODevice &data, const QString &name) -> bool {
         if (!uploadDir) uploadDir.reset(new QTemporaryDir());
+        if (!uploadDir->isValid()) {
+            uploadError = QString("can't store the upload %1: %2").arg(name, uploadDir->errorString());
+            return false;
+        }
         QString folder = uploadDir->filePath(QString::number(uploadedPaths.count() + 1));
-        QDir().mkpath(folder);
-        return folder;
+        QFile out(QDir(folder).filePath(name));
+        if (!QDir().mkpath(folder) || !out.open(QFile::WriteOnly)) {
+            uploadError = QString("can't store the upload %1: %2").arg(name, out.errorString());
+            return false;
+        }
+        while (!data.atEnd()) {
+            QByteArray chunk = data.read(1 << 20);
+            if (chunk.isEmpty() || out.write(chunk) != chunk.size()) {
+                uploadError = QString("can't store the upload %1: %2").arg(name, out.errorString());
+                return false;
+            }
+        }
+        out.close();
+        if (out.error() != QFileDevice::NoError) {
+            uploadError = QString("can't store the upload %1: %2").arg(name, out.errorString());
+            return false;
+        }
+        uploadedPaths.append(out.fileName());
+        return true;
     };
     QMultiMap<QString, QString> query;
     QMultiMap<QByteArray, QByteArray> params = request.getParameterMap();
@@ -230,13 +256,11 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
             if (name.isEmpty()) name = QString("upload-%1").arg(uploadedPaths.count() + 1);
             // keep the original name: the import takes the start time from
             // file names like 2024_01_31_10_00_00.fit, as the GUI does
-            QString target = QDir(uploadFolder()).filePath(name);
             file->seek(0);
-            QFile out(target);
-            if (out.open(QFile::WriteOnly)) {
-                while (!file->atEnd()) out.write(file->read(1 << 20));
-                out.close();
-                uploadedPaths.append(target);
+            if (!saveUpload(*file, name)) {
+                sendError(response, 500, uploadError);
+                log(method, path, 500, timer.elapsed());
+                return;
             }
             continue;
         }
@@ -282,12 +306,12 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
             return;
         }
         query.remove("filename");
-        QString target = QDir(uploadFolder()).filePath(name);
-        QFile out(target);
-        if (out.open(QFile::WriteOnly)) {
-            out.write(body);
-            out.close();
-            uploadedPaths.append(target);
+        QBuffer data(&body);
+        data.open(QIODevice::ReadOnly);
+        if (!saveUpload(data, name)) {
+            sendError(response, 500, uploadError);
+            log(method, path, 500, timer.elapsed());
+            return;
         }
     }
 
