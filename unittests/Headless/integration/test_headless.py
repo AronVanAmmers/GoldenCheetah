@@ -941,6 +941,26 @@ class TestActivitiesMetricsCharts(Headless):
         self.assertTrue(any(victim in f for f in os.listdir(os.path.join(self.folder, "bak"))))
 
 
+
+class TestDelete(Headless):
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        r = cls.gc_class("--athlete", cls.athlete, "import", RIDE_POWER, RIDE_GPS, RUN_STRYD)
+        assert r.code == 0, r
+
+    def test_several_in_one_call(self):
+        ids = [a["id"] for a in self.gcj("activity", "list")["data"]["activities"]]
+        self.assertEqual(len(ids), 3)
+        env = self.gcj("activity", "delete", *ids)
+        self.assertEqual(sorted(env["data"]["deleted"]), sorted(ids))
+        self.assertEqual(env["data"]["failed"], [])
+        self.assertEqual(self.activity_files(), [])
+        self.assertEqual(self.gcj("activity", "list")["data"]["activities"], [])
+        backups = os.listdir(os.path.join(self.folder, "bak"))
+        self.assertTrue(all(any(i in f for f in backups) for i in ids))
+
 def free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -1376,6 +1396,12 @@ class TestReadOnlyFolders(Headless):
         self.assertEqual(report[0]["status"], "failed")
         self.assertIn(".json", report[0]["message"])
         self.assertEqual({f: open(os.path.join(activities, f), "rb").read() for f in os.listdir(activities)}, before)
+
+        env = json.loads(self.assertFails("--format", "json", "activity", "delete", "last",
+                                          mentions="could not be moved").out)
+        self.assertEqual(env["data"]["deleted"], [])
+        self.assertEqual(len(env["data"]["failed"]), 1)
+        self.assertEqual(sorted(os.listdir(activities)), sorted(before))
 
     def test_read_only_charts(self):
         charts = os.path.join(self.folder, "config", "charts.xml")

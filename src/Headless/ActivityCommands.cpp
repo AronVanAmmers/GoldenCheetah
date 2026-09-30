@@ -403,26 +403,35 @@ deleteActivities(CommandEnvironment &env, const CommandRequest &request)
     QStringList ids;
     for (const QJsonValue &v : request.args.value("activity").toArray()) ids << v.toString();
 
-    QStringList files;
+    QStringList files, paths;
     for (const QString &id : ids) {
         QString error;
         RideItem *item = env.session->findActivity(id, error);
         if (!item) return CommandResult::failure(Status::NotFound, error);
+        if (files.contains(item->fileName)) continue;
         files << item->fileName;
+        paths << QDir(item->path).absoluteFilePath(item->fileName);
     }
-    files.removeDuplicates();
 
-    QJsonArray deleted;
-    for (const QString &f : files) {
-        if (env.session->rideCache()->removeRide(f)) deleted.append(QFileInfo(f).completeBaseName());
+    // one refresh for all of them. A file that couldn't be moved to the
+    // backup folder is still there (the ride cache only logs that)
+    env.session->rideCache()->removeRides(files);
+
+    QJsonArray deleted, failed;
+    for (int i = 0; i < files.count(); i++) {
+        QString id = QFileInfo(files.at(i)).completeBaseName();
+        if (QFile::exists(paths.at(i))) failed.append(id);
+        else deleted.append(id);
     }
     QJsonObject data;
     data.insert("deleted", deleted);
+    data.insert("failed", failed);
     data.insert("backup", "activities are moved to the athlete's bak folder");
     CommandResult result = CommandResult::success(data);
-    if (deleted.count() != files.count()) {
-        result.status = Status::Partial;
-        result.error = "some activities could not be deleted";
+    if (!failed.isEmpty()) {
+        result.status = deleted.isEmpty() ? Status::Failed : Status::Partial;
+        result.error = QString("%1 activit%2 could not be moved to the bak folder")
+                       .arg(failed.count()).arg(failed.count() == 1 ? "y" : "ies");
     }
     return result;
 }
