@@ -162,7 +162,8 @@ class TestBasics(Headless):
     def test_commands_are_described(self):
         env = self.gcj("commands")
         names = {c["name"] for c in env["data"]["commands"]}
-        for n in ("import", "field.add", "processor.install", "processor.run", "activity.list", "chart.pmc"):
+        for n in ("import", "field.add", "processor.install", "processor.run", "activity.list", "chart.pmc",
+                  "chart.library.list", "chart.library.add"):
             self.assertIn(n, names)
 
     def test_athlete_list_and_show(self):
@@ -1150,6 +1151,75 @@ class TestLayoutTiles(Headless):
         names = [c["name"] for c in table["columns"]]
         self.assertEqual(names, ["Name", "Average Heart Rate"])
         self.assertGreater(len(table["rows"]), 1)
+        self.assertClosed()
+
+
+class TestChartLibrary(Headless):
+
+    def charts_file(self):
+        return os.path.join(self.folder, "config", "charts.xml")
+
+    def test_library_round_trip_is_checked(self):
+        path = self.charts_file()
+        self.assertFalse(os.path.exists(path))
+
+        listed = self.gcj("chart", "library", "list")["data"]["charts"]
+        names = [c["name"] for c in listed]
+        self.assertIn("PMC (Coggan)", names)
+        self.assertNotIn("P v", names)
+        self.assertFalse(os.path.exists(path))
+
+        self.gcj("chart", "library", "add", "--name", "P v", "--metric", "p_v", expect=2)
+        self.gcj("chart", "library", "add", "--name", "   ", "--metric", "average_power", expect=2)
+        self.gcj("chart", "library", "add", "--name", "Nope", "--metric", "average_power", "--by", "fortnight", expect=2)
+        self.gcj("chart", "library", "remove", "P v", expect=2)
+        self.assertFalse(os.path.exists(path))
+
+        self.gcj("metric", "user", "add", "--symbol", "p_v", "--name", "P v",
+                 "--type", "average", "--units", "W/kph", "--precision", "2",
+                 "--program", "{\n    value { 1; }\n}\n")
+
+        env = self.gcj("chart", "library", "add", "--name", "P v", "--metric", "p_v")
+        self.assertEqual(env["data"]["status"], "added")
+        self.assertEqual(env["data"]["by"], "week")
+        self.assertEqual(env["data"]["metrics"], [{
+            "type": "metric", "symbol": "p_v", "formula": "P_v", "name": "P v",
+        }])
+        self.assertTrue(os.path.exists(path))
+        shown = self.gcj("chart", "library", "show", "P v")["data"]
+        self.assertEqual(shown["by"], "week")
+        self.assertEqual(shown["metrics"][0]["symbol"], "p_v")
+        self.assertEqual(shown["metrics"][0]["type"], "metric")
+
+        with open(path, "rb") as f:
+            saved = f.read()
+        self.assertIn(b"<charts", saved)
+        self.gcj("chart", "library", "add", "--name", "P v", "--metric", "average_power", expect=2)
+        self.gcj("chart", "library", "edit", "P v", "--metric", "not_a_metric", expect=2)
+        self.gcj("chart", "library", "edit", "P v", expect=2)
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), saved)
+
+        env = self.gcj("chart", "library", "edit", "P v", "--name", "Power and speed",
+                       "--metric", "average_power", "--metric", "Average_Speed", "--by", "month")
+        self.assertEqual(env["data"]["status"], "updated")
+        self.assertEqual(env["data"]["name"], "Power and speed")
+        self.assertEqual(env["data"]["by"], "month")
+        self.assertEqual([m["symbol"] for m in env["data"]["metrics"]], ["average_power", "average_speed"])
+        self.gcj("chart", "library", "show", "P v", expect=2)
+        names = [c["name"] for c in self.gcj("chart", "library", "list")["data"]["charts"]]
+        self.assertIn("Power and speed", names)
+        self.assertIn("PMC (Coggan)", names)
+
+        with open(path, "rb") as f:
+            edited = f.read()
+        self.gcj("chart", "library", "remove", "Power and speed")
+        self.gcj("chart", "library", "remove", "Power and speed", expect=2)
+        with open(path, "rb") as f:
+            self.assertNotEqual(f.read(), edited)
+        names = [c["name"] for c in self.gcj("chart", "library", "list")["data"]["charts"]]
+        self.assertNotIn("Power and speed", names)
+        self.assertIn("PMC (Coggan)", names)
         self.assertClosed()
 
 

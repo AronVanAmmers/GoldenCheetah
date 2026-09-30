@@ -458,7 +458,7 @@ SOURCES +=  Headless/AthleteLock.cpp Headless/CommandRegistry.cpp Headless/Headl
             Headless/AthleteSession.cpp Headless/ActivitySelection.cpp Headless/HeadlessCommands.cpp \
             Headless/AthleteCommands.cpp Headless/ActivityCommands.cpp Headless/ImportCommands.cpp \
             Headless/FieldCommands.cpp Headless/ProcessorCommands.cpp Headless/MetricCommands.cpp \
-            Headless/ChartCommands.cpp Headless/ChartRenderer.cpp Headless/ResultFormat.cpp \
+            Headless/ChartCommands.cpp Headless/ChartLibraryCommands.cpp Headless/ChartRenderer.cpp Headless/ResultFormat.cpp \
             Headless/IntervalCommands.cpp Headless/ZoneData.cpp Headless/OverviewCommands.cpp \
             Headless/UserMetricCommands.cpp
 
