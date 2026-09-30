@@ -546,8 +546,7 @@ class TestActivitiesMetricsCharts(Headless):
         self.assertEqual(r.out, b"")
         self.assertIn(b"wrote", r.err)
         saved = open(table, "rb").read()
-        self.assertTrue(saved.startswith(b'"recorded laps:'), saved[:80])
-        self.assertIn(b"number,name,type", saved)
+        self.assertTrue(saved.startswith(b"number,name,type"), saved[:80])
         missing = os.path.join(self.tmp, "no-such-dir", "intervals.csv")
         r = self.gc("--athlete", self.athlete, "--format", "csv", "-o", missing, "interval", "list", "last")
         self.assertNotEqual(r.code, 0)
@@ -640,14 +639,13 @@ class TestActivitiesMetricsCharts(Headless):
         run = "2024_07_09_15_12_48"
         # a list is a table, with its nested metrics as columns
         rows = self.csv_rows("interval", "list", run, "--metric", "average_power,Duration")
-        self.assertIn("recorded laps:", rows[0][0])
-        head, body = rows[1], rows[2:]
+        head, body = rows[0], rows[1:]
         self.assertEqual(head[:4], ["number", "name", "type", "start"])
         intervals = self.gcj("interval", "list", run, "--metric", "average_power")["data"]["intervals"]
         self.assertEqual(len(body), len(intervals))
         self.assertEqual(float(body[1][head.index("average_power")]), intervals[1]["metrics"]["average_power"])
         shown = self.csv_rows("interval", "list", run, "--metric", "workout_time", "--display")
-        self.assertRegex(shown[2][shown[1].index("workout_time")], r"^\d+:\d\d")
+        self.assertRegex(shown[1][shown[0].index("workout_time")], r"^\d+:\d\d")
 
         # fields are quoted where they need it
         self.gcj("activity", "set", run, "--set", 'Notes=easy, then "fast"')
@@ -664,14 +662,25 @@ class TestActivitiesMetricsCharts(Headless):
         self.assertIn("zones.hr.zones[0].name", values)
         self.assertEqual(values["intervals[0].name"], "Entire Activity")
 
-        # an overview table as the GUI shows it, several tiles one value a line
+        # an overview table is the column grid, including a single row.
+        # several tiles stay one value a line, without the count sentence.
         rows = self.csv_rows("activity", "overview", run, "--tile", "Intervals Data")
-        self.assertIn("recorded laps:", rows[0][0])
-        self.assertEqual(rows[1][:2], ["Name", "Pace (min/km)"])
-        self.assertEqual(len(rows) - 2, len(intervals))
+        self.assertEqual(rows[0][:2], ["Name", "Pace (min/km)"])
+        self.assertEqual(len(rows) - 1, len(intervals))
+        self.assertFalse(any("recorded laps:" in cell for row in rows for cell in row))
+        bike = "2020_01_26_13_00_38"
+        listed = {(t["name"], t["kind"]): t
+                  for t in self.gcj("activity", "overview", bike)["data"]["tiles"]}[("Intervals", "table")]
+        self.assertEqual(listed["style"], "list")
+        self.assertNotIn("_csv_columns", listed)
+        one = self.csv_rows("activity", "overview", bike, "--tile", "Intervals")
+        self.assertEqual(len(one), 2)
+        self.assertNotEqual(one[0], ["name", "value", "units"])
+        self.assertEqual(one[0], [r[0] if not r[2] else "%s (%s)" % (r[0], r[2]) for r in listed["rows"]])
+        self.assertEqual(one[1], [r[1] for r in listed["rows"]])
         rows = self.csv_rows("activity", "overview", run)
         self.assertEqual(rows[0], ["tile", "kind", "row", "column", "units", "value"])
-        self.assertTrue(any(r[1] == "summary" and "recorded laps:" in r[5] for r in rows))
+        self.assertFalse(any(r[1] == "summary" or "recorded laps:" in r[-1] for r in rows))
         self.assertIn(("Sport", "field", "", "value", "", "Run"), [tuple(r) for r in rows])
 
         # errors go to stderr only
@@ -913,8 +922,7 @@ class TestRest(Headless):
         self.assertEqual(status, 200)
         self.assertIn("text/csv", ctype)
         lines = data.splitlines()
-        self.assertTrue(lines[0].startswith(b'"recorded laps:'), lines[0])
-        self.assertTrue(lines[1].startswith(b"number,name,type"))
+        self.assertTrue(lines[0].startswith(b"number,name,type"), lines[0])
         self.jcall("GET", a + "/activities/last/intervals?format=xml", expect=400)
         self.jcall("GET", a + "/activities/nothing/intervals?format=csv", expect=404)   # errors stay JSON
         env = self.jcall("GET", a + "/activities/last/overview?tile=Intervals%20Data")

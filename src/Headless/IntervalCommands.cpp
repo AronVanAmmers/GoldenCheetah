@@ -201,7 +201,8 @@ listIntervals(CommandEnvironment &env, const CommandRequest &request)
     data.insert("intervals", list);
 
     // the counts are for the whole activity, so they stay when --type
-    // filters the table. Text and CSV lead with that one line.
+    // filters the table. The text report leads with that one line.
+    // CSV is the table, starting at the header.
     QJsonObject table = data;
     table.remove("recorded_laps");
     table.remove("user_intervals");
@@ -210,7 +211,7 @@ listIntervals(CommandEnvironment &env, const CommandRequest &request)
     QString line = intervalCensusLine(census);
     // metric columns follow the favourites, or --metric, rather than sorted keys
     result.text = line + "\n" + ResultFormat::render(table, symbols);
-    result.csv = ResultFormat::csvLine({ line }) + ResultFormat::csv(table, symbols);
+    result.csv = ResultFormat::csv(table, symbols);
     return result;
 }
 

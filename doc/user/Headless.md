@@ -42,7 +42,7 @@ With `--format csv` the result is CSV, for spreadsheets and data tools. Only dat
 
 - A result that is a list (activities, intervals, metrics, fields ...) is one table: a row per item, with nested values such as `metrics` as columns. Numbers are in full precision, or as the GUI shows them with `--display` where a command has it.
 - Other results (`activity show`, `zones show`, `version` ...) are `key,value` lines. Nested values have dotted paths, such as `metrics.average_power` or `zones.hr.zones[0].percent`.
-- `activity overview` with a single table tile (`--tile "Intervals Data"`) gives that table as the GUI shows it. The header has units in brackets, such as `Pace (min/km)`. An interval table is preceded by the interval count line. With several tiles each value is a line: `tile,kind,row,column,units,value`, and that count is one summary row.
+- `activity overview` with a single table tile (`--tile "Intervals Data"`) gives that table: a header, then one row per record, and only the header when there are none. Units stay in the header, such as `Pace (min/km)`, for one row or many. With several tiles each value is a line: `tile,kind,row,column,units,value`.
 
 ```sh
 gc-cli -a Joe --format csv interval list last --metric Average_Power,Duration > laps.csv
@@ -99,7 +99,7 @@ All given criteria must match. `processor run` and `activity set` change nothing
 - Zone tiles give each zone's time and %.
 - PMC tiles give form, fitness, fatigue and risk.
 
-`--tile "Intervals Data"` picks tiles by their title, and `--layout NAME` uses another layout. A table with more than one row of values comes back as a grid (`style: grid`, one entry in `columns` per column). With a single row the GUI shows a list of name, value and units, and so does the command (`style: list`). Route and chart tiles are named but not reproduced as data.
+`--tile "Intervals Data"` picks tiles by their title, and `--layout NAME` uses another layout. A table with more than one row of values comes back as a grid (`style: grid`, one entry in `columns` per column). With a single row the GUI shows a list of name, value and units, and so do the text report and JSON (`style: list`). CSV is always the grid: the tile's column names, units in the header, one record per row. Route and chart tiles are named but not reproduced as data.
 
 ```sh
 gc-cli -a Joe activity overview last --tile "Intervals Data"
@@ -152,7 +152,7 @@ gc-cli -a Joe zones set --type pace --sport Run --from 2026-01-01 --cv 12.5
 
 Intervals are numbered in the order `interval list` shows them: usually the entire activity, the laps and marked intervals, then the efforts, climbs and segments GoldenCheetah found. Each has a `type`, which `--type` accepts: `user`, `all`, `device`, `peakpower`, `peakpace`, `effort`, `route` or `climb`. Each also has a `group`, the title the sidebar shows (`USER`, `EFFORTS`, `PEAK POWER` ...), and `--type` accepts those titles too.
 
-`interval list`, and an interval tile on `activity overview`, start with one line of counts for the whole activity, including zeros: recorded laps (from the device), user intervals, and discovered efforts (efforts, peaks, climbs and segments). The entire activity is not part of that count. `--type` filters the rows and leaves the counts unchanged. In CSV the line is the first row.
+`interval list`, and an interval tile on `activity overview`, start the text report with one line of counts for the whole activity, including zeros: recorded laps (from the device), user intervals, and discovered efforts (efforts, peaks, climbs and segments). The entire activity is not part of that count. `--type` filters the rows and leaves the counts unchanged. JSON has the same counts as `recorded_laps`, `user_intervals` and `discovered_efforts`. CSV does not include that line; it starts with the table header.
 
 ```sh
 gc-cli -a Joe interval list last --type user --metric Pace,Average_Power,Average_Heart_Rate,1m_peak_hr --display
