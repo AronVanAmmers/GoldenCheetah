@@ -157,6 +157,22 @@ class TestBasics(Headless):
         self.assertEqual(r.code, 2, r)
         self.assertIn(b"yyyy-mm-dd", r.err)
 
+    def test_field_add_changes_summary_interval_and_values(self):
+        def shown(name):
+            return [f for f in self.gcj("field", "list")["data"]["fields"] if f["name"] == name][0]
+        self.gcj("field", "add", "Kit", "--type", "text")
+        self.assertEqual(self.gcj("field", "add", "Kit", "--type", "text")["data"]["unchanged"], 1)
+        env = self.gcj("field", "add", "Kit", "--type", "text", "--summary", expect=5)
+        self.assertIn("use --update", env["data"]["fields"][0]["message"])
+        self.assertFalse(shown("Kit").get("summary", False))
+        env = self.gcj("field", "add", "Kit", "--type", "text", "--summary", "--value", "Road", "--value", "TT", "--update")
+        self.assertEqual(env["data"]["updated"], 1)
+        self.assertTrue(shown("Kit")["summary"])
+        # not given: left as it is
+        self.assertEqual(self.gcj("field", "add", "Kit", "--type", "text")["data"]["unchanged"], 1)
+        self.assertTrue(shown("Kit")["summary"])
+        self.gcj("field", "remove", "Kit")
+
     def test_athlete_dir_with_a_trailing_slash(self):
         r = subprocess.run([BINARY, "--cli", "--athlete-dir", self.folder + os.sep, "--format", "json", "athlete", "show"],
                            capture_output=True, timeout=60, env=self.env)
