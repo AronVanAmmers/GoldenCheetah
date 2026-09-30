@@ -3270,6 +3270,18 @@ void Leaf::validateFilter(Context *context, DataFilterRuntime *df, Leaf *leaf)
     }
 }
 
+DataFilter::~DataFilter()
+{
+    clearFilter();
+
+    // the models and the random number generator are ours. A UserMetric's
+    // clones share them through a copy of rt, but hold a reference to us
+    // and are gone before we are deleted
+    qDeleteAll(rt.models);
+    rt.models.clear();
+    if (r) gsl_rng_free(r);
+}
+
 DataFilter::DataFilter(QObject *parent, Context *context) : QObject(parent), context(context), treeRoot(NULL), parent_(parent)
 {
     // let folks know who owns this rumtime for signalling
