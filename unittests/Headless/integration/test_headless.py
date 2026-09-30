@@ -157,6 +157,12 @@ class TestBasics(Headless):
         self.assertEqual(r.code, 2, r)
         self.assertIn(b"yyyy-mm-dd", r.err)
 
+    def test_athlete_dir_with_a_trailing_slash(self):
+        r = subprocess.run([BINARY, "--cli", "--athlete-dir", self.folder + os.sep, "--format", "json", "athlete", "show"],
+                           capture_output=True, timeout=60, env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["data"]["name"], self.athlete)
+
     def test_version(self):
         env = self.gcj("version")
         self.assertTrue(env["ok"])
