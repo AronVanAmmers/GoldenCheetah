@@ -18,9 +18,10 @@
 
 //
 // User metrics (Preferences → Metrics → Custom), the favourites that
-// order the intervals table and the ride summary, and the activity
-// list columns. Formulas are checked the way the editor checks them
-// before anything is written.
+// order the ride summary and interval list, and the activity list
+// columns. The overview's intervals table is a layout tile program.
+// Formulas are checked the way the editor checks them before anything
+// is written.
 //
 
 #include "HeadlessCommands.h"
@@ -678,10 +679,11 @@ registerUserMetricCommands(CommandRegistry &registry)
 
     Command flist;
     flist.spec.name = "metric.favourite.list";
-    flist.spec.summary = "list favourite metrics in the order the intervals table shows them";
+    flist.spec.summary = "list favourite metrics in the order the ride summary and interval list show them";
     flist.spec.description =
-        "This is Preferences → Metrics → Favourites. The intervals table and the\n"
-        "ride summary walk the list from first to last. 'interval list' uses it too.";
+        "This is Preferences → Metrics → Favourites. The ride summary and\n"
+        "'interval list' walk the list from first to last. The intervals table\n"
+        "on the activity overview is a tile program: see 'layout tile show'.";
     flist.spec.scope = Scope::Athlete;
     flist.spec.httpMethod = "GET";
     flist.spec.httpPath = "/athletes/{athlete}/favourites";
@@ -690,7 +692,7 @@ registerUserMetricCommands(CommandRegistry &registry)
 
     Command fadd;
     fadd.spec.name = "metric.favourite.add";
-    fadd.spec.summary = "append metrics to the favourites, so they show at the bottom of the intervals table";
+    fadd.spec.summary = "append metrics to the favourites, so they show at the bottom of the ride summary";
     fadd.spec.scope = Scope::Athlete;
     fadd.spec.modifies = true;
     fadd.spec.params << ParamSpec("symbol", ParamType::String, "metric symbol or formula name").req().pos().many();
@@ -712,10 +714,11 @@ registerUserMetricCommands(CommandRegistry &registry)
 
     Command fset;
     fset.spec.name = "metric.favourite.set";
-    fset.spec.summary = "replace the favourites; argument order is the intervals table order";
+    fset.spec.summary = "replace the favourites; argument order is the ride summary order";
     fset.spec.description =
         "The same list Preferences saves after you move rows with the up and\n"
-        "down buttons. The first symbol is the top row of the intervals table.";
+        "down buttons. The first symbol is the first row of the ride summary\n"
+        "and of 'interval list'. The overview's intervals table is separate.";
     fset.spec.scope = Scope::Athlete;
     fset.spec.modifies = true;
     fset.spec.params << ParamSpec("symbol", ParamType::String, "metric symbol or formula name, in display order").req().pos().many();
