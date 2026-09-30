@@ -163,7 +163,7 @@ class TestBasics(Headless):
         env = self.gcj("commands")
         names = {c["name"] for c in env["data"]["commands"]}
         for n in ("import", "field.add", "processor.install", "processor.run", "activity.list", "chart.pmc",
-                  "chart.library.list", "chart.library.add"):
+                  "chart.library.list", "chart.library.add", "chart.library.curve.add"):
             self.assertIn(n, names)
 
     def test_athlete_list_and_show(self):
@@ -1183,7 +1183,9 @@ class TestChartLibrary(Headless):
         self.assertEqual(env["data"]["status"], "added")
         self.assertEqual(env["data"]["by"], "week")
         self.assertEqual(env["data"]["metrics"], [{
-            "type": "metric", "symbol": "p_v", "formula": "P_v", "name": "P v",
+            "index": 1,
+            "type": "metric", "symbol": "p_v", "formula": "P_v", "name": "P v", "detail": "p_v",
+            "style": "line", "marker": "circle", "color": "0078d4", "fill": False, "filter": "",
         }])
         self.assertTrue(os.path.exists(path))
         shown = self.gcj("chart", "library", "show", "P v")["data"]
@@ -1220,6 +1222,75 @@ class TestChartLibrary(Headless):
         names = [c["name"] for c in self.gcj("chart", "library", "list")["data"]["charts"]]
         self.assertNotIn("Power and speed", names)
         self.assertIn("PMC (Coggan)", names)
+        self.assertClosed()
+
+    def test_library_curves_keep_their_own_drawing(self):
+        self.gcj("chart", "library", "add", "--name", "Estimated VO2max", "--by", "day",
+                 "--metric", "vo2max", "--style", "dots", "--symbol", "none")
+        text = self.gc("--athlete", self.athlete, "chart", "library", "show", "Estimated VO2max")
+        self.assertEqual(text.code, 0, text)
+        self.assertIn(b"metric  vo2max  dots  none", text.out)
+
+        self.gcj("chart", "library", "add", "--name", "Two",
+                 "--metric", "average_power", "--metric", "average_speed", "--style", "dots", expect=2)
+        refused = self.gcj("chart", "library", "add", "--name", "PMC", "--pmc", expect=2)
+        self.assertIn("not supported", refused["error"])
+        refused = self.gcj("chart", "library", "add", "--name", "Bad",
+                           "--estimate", "ftp", "--model", "cp2", expect=2)
+        self.assertIn("ftp", refused["error"])
+
+        best = self.gcj("chart", "library", "add", "--name", "Peak power", "--by", "day",
+                        "--best", "45", "--unit", "min", "--series", "power",
+                        "--style", "dots", "--symbol", "circle")["data"]["metrics"]
+        self.assertEqual(best[0]["type"], "best")
+        self.assertEqual(best[0]["detail"], "45 min power")
+        self.assertEqual(best[0]["series"], "power")
+        self.assertEqual(best[0]["style"], "dots")
+        self.assertEqual(best[0]["marker"], "circle")
+
+        self.gcj("chart", "library", "curve", "add", "Peak power", "--estimate", "cp", "--model", "cp2")
+        self.gcj("chart", "library", "curve", "add", "Peak power",
+                 "--metric", "average_power", "--filter", "isRun", "--fill", "--color", "112233")
+        shown = self.gcj("chart", "library", "show", "Peak power")["data"]["metrics"]
+        self.assertEqual(shown[1]["type"], "estimate")
+        self.assertEqual(shown[1]["detail"], "CP (cp2)")
+        self.assertEqual(shown[1]["model"], "cp2")
+        self.assertEqual(shown[1]["estimate"], "cp")
+        self.assertEqual(shown[1]["style"], "line")
+        self.assertEqual(shown[1]["marker"], "none")
+        self.assertEqual(shown[2]["filter"], "isRun")
+        self.assertEqual(shown[2]["fill"], True)
+        self.assertEqual(shown[2]["color"], "112233")
+        self.assertEqual(shown[2]["style"], "line")
+        self.assertEqual(shown[2]["marker"], "circle")
+
+        self.gcj("chart", "library", "curve", "edit", "Peak power", "1", "--style", "line", "--symbol", "square")
+        shown = self.gcj("chart", "library", "show", "Peak power")["data"]["metrics"]
+        self.assertEqual(shown[0]["style"], "line")
+        self.assertEqual(shown[0]["marker"], "square")
+        self.assertEqual(shown[0]["detail"], "45 min power")
+        self.assertEqual(shown[1]["detail"], "CP (cp2)")
+        self.assertEqual(shown[2]["filter"], "isRun")
+
+        shown = self.gcj("chart", "library", "edit", "Peak power", "--by", "month")["data"]
+        self.assertEqual(shown["by"], "month")
+        self.assertEqual([m["type"] for m in shown["metrics"]], ["best", "estimate", "metric"])
+
+        path = self.charts_file()
+        with open(path, "rb") as f:
+            saved = f.read()
+        self.gcj("chart", "library", "curve", "add", "Peak power",
+                 "--metric", "average_speed", "--filter", "this is not a filter !!!", expect=2)
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), saved)
+
+        self.gcj("chart", "library", "curve", "remove", "Peak power", "3")
+        shown = self.gcj("chart", "library", "show", "Peak power")["data"]["metrics"]
+        self.assertEqual([m["type"] for m in shown], ["best", "estimate"])
+        self.gcj("chart", "library", "remove", "Estimated VO2max")
+        self.gcj("chart", "library", "remove", "Peak power")
+        os.remove(self.charts_file())
+        self.assertFalse(os.path.exists(self.charts_file()))
         self.assertClosed()
 
 
