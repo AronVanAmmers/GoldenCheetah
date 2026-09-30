@@ -1278,6 +1278,21 @@ class TestChartLibrary(Headless):
     def charts_file(self):
         return os.path.join(self.folder, "config", "charts.xml")
 
+    def test_library_file_is_only_written_by_a_change(self):
+        path = self.charts_file()
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        self.gcj("chart", "library", "add", "--name", "Speed", "--metric", "average_speed")
+        # a write on close would change the time stamp
+        t = os.stat(path).st_mtime - 100
+        os.utime(path, (t, t))
+        with open(path, "rb") as f:
+            saved = f.read()
+        self.gcj("activity", "list")
+        self.gcj("chart", "library", "list")
+        self.assertEqual(os.stat(path).st_mtime, t)
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), saved)
+
     def test_library_round_trip_is_checked(self):
         path = self.charts_file()
         self.assertFalse(os.path.exists(path))

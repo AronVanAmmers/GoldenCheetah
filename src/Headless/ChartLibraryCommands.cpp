@@ -36,7 +36,6 @@
 #include "RideMetric.h"
 #include "Utils.h"
 
-#include <QSaveFile>
 #include <QXmlInputSource>
 #include <QXmlSimpleReader>
 
@@ -385,7 +384,7 @@ penColor(int index)
 static QString
 chartsPath(const Athlete *athlete)
 {
-    return athlete->home->config().canonicalPath() + "/charts.xml";
+    return LTMSettings::chartsFile(athlete->home->config());
 }
 
 static QJsonObject
@@ -897,19 +896,7 @@ writeCharts(Athlete *athlete, const QList<LTMSettings> &charts)
 {
     QString error;
     if (!roundTrip(charts, error)) return CommandResult::failure(Status::Usage, error);
-
-    QString xml;
-    LTMChartParser::serializeToQString(&xml, charts);
-    QString path = chartsPath(athlete);
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly))
-        return CommandResult::failure(Status::Failed, QString("can't write %1").arg(path));
-    QByteArray bytes = xml.toUtf8();
-    if (file.write(bytes) != bytes.size() || !file.commit())
-        return CommandResult::failure(Status::Failed, QString("can't write %1").arg(path));
-
-    athlete->presets = charts;
-    athlete->presetsDirty = true;
+    if (!athlete->saveCharts(charts, &error)) return CommandResult::failure(Status::Failed, error);
     return CommandResult::success();
 }
 
