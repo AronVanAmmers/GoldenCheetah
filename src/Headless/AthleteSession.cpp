@@ -35,7 +35,8 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
-#include <QThread>
+#include <QTimer>
+#include <QEventLoop>
 
 namespace Headless {
 
@@ -172,11 +173,18 @@ AthleteSession::waitForRefresh()
     RideCache *cache = rideCache();
     if (!cache) return;
 
-    // refresh threads report back via queued signals, keep the loop turning
+    // refresh threads report back via queued signals, so the loop turns
+    // until the last one has: RideCache then emits refreshEnd (unless it
+    // was cancelled, which the timer catches)
     QCoreApplication::processEvents();
-    while (cache->isRunning()) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-        QThread::msleep(10);
+    if (cache->isRunning()) {
+        QEventLoop loop;
+        QObject::connect(context_, &Context::refreshEnd, &loop, &QEventLoop::quit);
+        QTimer guard;
+        QObject::connect(&guard, &QTimer::timeout, &loop, [&]() { if (!cache->isRunning()) loop.quit(); });
+        guard.start(200);
+        // it may have finished while connecting
+        if (cache->isRunning()) loop.exec();
     }
     QCoreApplication::processEvents();
 }
