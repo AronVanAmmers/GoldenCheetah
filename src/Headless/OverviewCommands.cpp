@@ -155,13 +155,28 @@ sortTable(const QVector<QString> &names, QVector<QString> &values, int column, b
     values = sorted;
 }
 
+// one tile as the overview shows it, and what the outputs are made of: the
+// JSON, the lines of the text report, and the CSV lines (row, column,
+// units, value). Each kind fills all of them in one place.
+struct TileValue {
+    QJsonObject json;
+    QList<QStringList> lines;       // text, a line of cells each
+    QList<QStringList> csv;         // row, column, units, value
+    QStringList gridHead;           // a table as columns, for a CSV of just that table
+    QList<QStringList> grid;
+
+    void csvLine(const QString &row, const QString &column, const QString &units, const QString &value) {
+        csv << QStringList{ row, column, units, value };
+    }
+};
+
 // a table tile: a program with names, units and values functions (DataOverviewItem::setData)
 static void
-tableTile(Context *context, RideItem *item, const QJsonObject &config, QJsonObject &tile)
+tableTile(Context *context, RideItem *item, const QJsonObject &config, TileValue &tile)
 {
     DataFilter parser(nullptr, context, Utils::jsonunprotect2(config["program"].toString()));
     if (!parser.root() || !parser.errorList().isEmpty()) {
-        tile.insert("error", parser.errorList().join("; "));
+        tile.json.insert("error", parser.errorList().join("; "));
         return;
     }
     Specification spec;
@@ -177,61 +192,70 @@ tableTile(Context *context, RideItem *item, const QJsonObject &config, QJsonObje
     // as the GUI: one column per name when there is more than one row of
     // values, else a list of name, value and units. Text and JSON keep that
     // list. CSV always uses the column grid, for no rows, one, or many.
-    QJsonArray columns, rows;
-    int records = names.isEmpty() ? 0 : values.count() / names.count();
     bool grid = !names.isEmpty() && values.count() > names.count();
-    tile.insert("style", grid ? "grid" : "list");
-    if (grid) {
-        // one column per name, values column by column
-        if (config.contains("sortcolumn"))
-            sortTable(names, values, config["sortcolumn"].toInt(-1), config["sortorder"].toInt() == Qt::AscendingOrder);
-        records = values.count() / names.count();
+    tile.json.insert("style", grid ? "grid" : "list");
+    if (grid && config.contains("sortcolumn"))
+        sortTable(names, values, config["sortcolumn"].toInt(-1), config["sortorder"].toInt() == Qt::AscendingOrder);
+
+    // the column grid: one column per name, values column by column
+    int records = names.isEmpty() ? 0 : values.count() / names.count();
+    QJsonArray gridColumns, gridRows;
+    bool anyUnits = false;
+    for (int c = 0; c < names.count(); c++) {
+        QString u = c < units.count() ? units[c] : QString();
+        gridColumns.append(QJsonObject{ { "name", names[c] }, { "units", u } });
+        tile.gridHead << (u.isEmpty() ? names[c] : QString("%1 (%2)").arg(names[c]).arg(u));
+        if (!u.isEmpty()) anyUnits = true;
+    }
+    for (int r = 0; r < records; r++) {
+        QJsonArray row;
+        QStringList cells;
         for (int c = 0; c < names.count(); c++) {
-            QJsonObject col;
-            col.insert("name", names[c]);
-            col.insert("units", c < units.count() ? units[c] : QString());
-            columns.append(col);
+            row.append(values[c * records + r]);
+            cells << values[c * records + r];
         }
-        for (int r = 0; r < records; r++) {
-            QJsonArray row;
-            for (int c = 0; c < names.count(); c++) row.append(values[c * records + r]);
-            rows.append(row);
+        gridRows.append(row);
+        tile.grid << cells;
+    }
+
+    if (grid) {
+        tile.json.insert("columns", gridColumns);
+        tile.json.insert("rows", gridRows);
+        QStringList head, unitLine;
+        for (int c = 0; c < names.count(); c++) {
+            head << names[c];
+            unitLine << (c < units.count() ? units[c] : QString());
+        }
+        tile.lines << head;
+        if (anyUnits) tile.lines << unitLine;
+        for (int r = 0; r < tile.grid.count(); r++) {
+            tile.lines << tile.grid[r];
+            for (int c = 0; c < names.count(); c++) tile.csvLine(QString::number(r + 1), names[c], unitLine[c], tile.grid[r][c]);
         }
     } else {
         // name, value and units per line
+        QJsonArray columns, rows;
         for (const char *c : { "name", "value", "units" }) columns.append(QJsonObject{ { "name", c }, { "units", "" } });
-        for (int r = 0; r < names.count(); r++)
-            rows.append(QJsonArray{ names[r], r < values.count() ? values[r] : QString(), r < units.count() ? units[r] : QString() });
-
-        // the column grid for CSV, stripped before the JSON result
-        QJsonArray csvColumns, csvRows;
-        for (int c = 0; c < names.count(); c++) {
-            QJsonObject col;
-            col.insert("name", names[c]);
-            col.insert("units", c < units.count() ? units[c] : QString());
-            csvColumns.append(col);
+        for (int r = 0; r < names.count(); r++) {
+            QStringList cells{ names[r], r < values.count() ? values[r] : QString(), r < units.count() ? units[r] : QString() };
+            rows.append(QJsonArray::fromStringList(cells));
+            tile.lines << cells;
+            tile.csvLine(cells[0], "value", cells[2], cells[1]);
         }
-        for (int r = 0; r < records; r++) {
-            QJsonArray row;
-            for (int c = 0; c < names.count(); c++) row.append(values[c * records + r]);
-            csvRows.append(row);
-        }
-        tile.insert("_csv_columns", csvColumns);
-        tile.insert("_csv_rows", csvRows);
+        tile.json.insert("columns", columns);
+        tile.json.insert("rows", rows);
     }
-    tile.insert("columns", columns);
-    tile.insert("rows", rows);
 }
 
 static void
-zoneTile(AthleteSession &session, RideItem *item, const QJsonObject &config, QJsonObject &tile)
+zoneTile(AthleteSession &session, RideItem *item, const QJsonObject &config, TileValue &tile)
 {
     int series = config["series"].toInt();
     bool polarized = config["polarized"].toInt() != 0;
     static const QMap<int, QString> types = { { RideFile::watts, "power" }, { RideFile::hr, "hr" },
                                               { RideFile::kph, "pace" }, { RideFile::wbal, "fatigue" } };
     QString type = types.value(series, "power");
-    tile.insert("zones", type);
+    tile.json.insert("zones", type);
 
     // names and times as the tile's bars, percent of the time in all of them
     QStringList names;
@@ -242,7 +266,7 @@ zoneTile(AthleteSession &session, RideItem *item, const QJsonObject &config, QJs
     } else {
         ActivityZones zones;
         QString error;
-        if (!activityZones(session.athlete(), item, type, zones, error)) { tile.insert("error", error); return; }
+        if (!activityZones(session.athlete(), item, type, zones, error)) { tile.json.insert("error", error); return; }
         for (const ZoneRow &r : zones.rows) { names << r.name; seconds << std::round(r.seconds); }
     }
     double sum = 0;
@@ -250,46 +274,81 @@ zoneTile(AthleteSession &session, RideItem *item, const QJsonObject &config, QJs
     QJsonArray rows;
     for (int i = 0; i < names.count(); i++) {
         QJsonObject z;
+        QString time = time_to_string(seconds[i], true);
+        double percent = sum > 0 ? std::round(seconds[i] / sum * 100) : 0;
         z.insert("name", names[i]);
-        z.insert("time", time_to_string(seconds[i], true));
+        z.insert("time", time);
         z.insert("seconds", seconds[i]);
-        z.insert("percent", sum > 0 ? std::round(seconds[i] / sum * 100) : 0);
+        z.insert("percent", percent);
         rows.append(z);
+        tile.lines << QStringList{ names[i], time, QString("%1 %").arg(percent) };
+        tile.csvLine(names[i], "time", "", time);
+        tile.csvLine(names[i], "percent", "%", ResultFormat::csvValue(z["percent"]));
     }
-    tile.insert("rows", rows);
+    tile.json.insert("rows", rows);
 }
 
 static void
-intervalTile(RideItem *item, const QJsonObject &config, bool metricUnits, QJsonObject &tile)
+intervalTile(RideItem *item, const QJsonObject &config, bool metricUnits, TileValue &tile)
 {
     // the bubble chart: one bubble per interval
     QJsonArray axes, rows;
     QStringList symbols = { config["xsymbol"].toString(), config["ysymbol"].toString(), config["zsymbol"].toString() };
+    QStringList head{ "" }, axisNames, axisUnits;
     for (const QString &s : symbols) {
         const RideMetric *m = RideMetricFactory::instance().rideMetric(s);
-        axes.append(QJsonObject{ { "symbol", s }, { "name", m ? m->name() : s }, { "units", m ? m->units(metricUnits) : QString() } });
+        axisNames << (m ? m->name() : s);
+        axisUnits << (m ? m->units(metricUnits) : QString());
+        axes.append(QJsonObject{ { "symbol", s }, { "name", axisNames.last() }, { "units", axisUnits.last() } });
+        head << axisNames.last();
     }
+    tile.lines << head;
     for (IntervalItem *i : item->intervals()) {
         QJsonObject r;
+        QStringList line{ i->name };
         r.insert("name", i->name);
-        for (int a = 0; a < 3; a++) r.insert(QString("xyz").mid(a, 1), i->getStringForSymbol(symbols[a], metricUnits));
+        for (int a = 0; a < 3; a++) {
+            QString v = i->getStringForSymbol(symbols[a], metricUnits);
+            r.insert(QString("xyz").mid(a, 1), v);
+            line << v;
+            tile.csvLine(i->name, axisNames[a], axisUnits[a], v);
+        }
         rows.append(r);
+        tile.lines << line;
     }
-    tile.insert("axes", axes);
-    tile.insert("rows", rows);
+    tile.json.insert("axes", axes);
+    tile.json.insert("rows", rows);
 }
 
-static QJsonObject
+// a tile showing one value: metric, field, RPE, KPI
+static void
+valueTile(TileValue &tile, const QString &value, const QString &units)
+{
+    tile.json.insert("value", value);
+    tile.json.insert("units", units);
+    tile.lines << QStringList{ value, units };
+    tile.csvLine("", "value", units, value);
+}
+
+static void
+noteTile(TileValue &tile, const QString &note)
+{
+    tile.json.insert("note", note);
+    tile.lines << QStringList{ note };
+    tile.csvLine("", "note", "", note);
+}
+
+static TileValue
 evaluateTile(AthleteSession &session, RideItem *item, const QJsonObject &config, bool metricUnits)
 {
     Context *context = session.context();
     int type = config["type"].toInt();
-    QJsonObject tile;
-    tile.insert("name", config["name"].toString());
+    TileValue tile;
+    tile.json.insert("name", config["name"].toString());
 
     switch (type) {
     case DATATABLE:
-        tile.insert("kind", "table");
+        tile.json.insert("kind", "table");
         tableTile(context, item, config, tile);
         break;
 
@@ -297,23 +356,26 @@ evaluateTile(AthleteSession &session, RideItem *item, const QJsonObject &config,
         QString symbol = config["symbol"].toString();
         const RideMetric *m = RideMetricFactory::instance().rideMetric(symbol);
         QString value = item->getStringForSymbol(symbol, metricUnits);
-        tile.insert("kind", "metric");
-        tile.insert("symbol", symbol);
-        tile.insert("value", value == "nan" ? QString() : value);
+        tile.json.insert("kind", "metric");
+        tile.json.insert("symbol", symbol);
         QString units = m ? m->units(metricUnits) : QString();
-        tile.insert("units", units == QObject::tr("seconds") ? QString() : units);
+        valueTile(tile, value == "nan" ? QString() : value, units == QObject::tr("seconds") ? QString() : units);
         break;
     }
 
     case META:
-        tile.insert("kind", "field");
-        tile.insert("field", config["symbol"].toString());
-        tile.insert("value", item->getText(config["symbol"].toString(), ""));
+        tile.json.insert("kind", "field");
+        tile.json.insert("field", config["symbol"].toString());
+        tile.json.insert("value", item->getText(config["symbol"].toString(), ""));
+        tile.lines << QStringList{ tile.json["value"].toString(), QString() };
+        tile.csvLine("", "value", "", tile.json["value"].toString());
         break;
 
     case RPE:
-        tile.insert("kind", "rpe");
-        tile.insert("value", item->getText("RPE", "0"));
+        tile.json.insert("kind", "rpe");
+        tile.json.insert("value", item->getText("RPE", "0"));
+        tile.lines << QStringList{ tile.json["value"].toString(), QString() };
+        tile.csvLine("", "value", "", tile.json["value"].toString());
         break;
 
     case KPI: {
@@ -321,15 +383,14 @@ evaluateTile(AthleteSession &session, RideItem *item, const QJsonObject &config,
         QString value = parser.evaluate(item, nullptr).string();
         if (value == "nan") value.clear();
         if (config["istime"].toInt()) value = time_to_string(value.toDouble(), true);
-        tile.insert("kind", "kpi");
-        tile.insert("value", value);
-        tile.insert("units", config["units"].toString());
-        if (!parser.getErrors().isEmpty()) tile.insert("error", parser.getErrors().join("; "));
+        tile.json.insert("kind", "kpi");
+        valueTile(tile, value, config["units"].toString());
+        if (!parser.getErrors().isEmpty()) tile.json.insert("error", parser.getErrors().join("; "));
         break;
     }
 
     case ZONE:
-        tile.insert("kind", "zones");
+        tile.json.insert("kind", "zones");
         zoneTile(session, item, config, tile);
         break;
 
@@ -338,30 +399,34 @@ evaluateTile(AthleteSession &session, RideItem *item, const QJsonObject &config,
         QString symbol = config["symbol"].toString();
         PMCData *pmc = pmcFor(session, symbol);
         QDate day = item->dateTime.date();
-        tile.insert("kind", "pmc");
-        tile.insert("metric", symbol);
+        tile.json.insert("kind", "pmc");
+        tile.json.insert("metric", symbol);
         if (pmc) {
-            tile.insert("form", std::round(pmc->sb(day)));
-            tile.insert("fitness", std::round(pmc->lts(day)));
-            tile.insert("fatigue", std::round(pmc->sts(day)));
-            tile.insert("risk", std::round(pmc->rr(day)));
+            tile.json.insert("form", std::round(pmc->sb(day)));
+            tile.json.insert("fitness", std::round(pmc->lts(day)));
+            tile.json.insert("fatigue", std::round(pmc->sts(day)));
+            tile.json.insert("risk", std::round(pmc->rr(day)));
+        }
+        for (const char *k : { "form", "fitness", "fatigue", "risk" }) {
+            tile.lines << QStringList{ QString(k).replace(0, 1, QString(k).at(0).toUpper()), QString::number(tile.json[k].toDouble()) };
+            tile.csvLine("", k, "", ResultFormat::csvValue(tile.json[k]));
         }
         break;
     }
 
     case INTERVAL:
-        tile.insert("kind", "intervals");
+        tile.json.insert("kind", "intervals");
         intervalTile(item, config, metricUnits, tile);
         break;
 
     case ROUTE:
-        tile.insert("kind", "route");
-        tile.insert("note", "a map, export the track with 'activity export --as gpx'");
+        tile.json.insert("kind", "route");
+        noteTile(tile, "a map, export the track with 'activity export --as gpx'");
         break;
 
     default:
-        tile.insert("kind", "chart");
-        tile.insert("note", "a chart, not reproduced as data");
+        tile.json.insert("kind", "chart");
+        noteTile(tile, "a chart, not reproduced as data");
         break;
     }
     return tile;
@@ -392,52 +457,14 @@ columnsText(const QList<QStringList> &lines)
 }
 
 static QString
-tileText(const QJsonObject &tile)
+tileText(const TileValue &tile)
 {
-    QString text = tile["name"].toString();
-    QString kind = tile["kind"].toString();
+    QString text = tile.json["name"].toString();
+    QString kind = tile.json["kind"].toString();
     if (text.isEmpty()) text = kind == "pmc" ? QString("PMC") : kind;
     text += "\n";
-    if (tile.contains("error")) return text + "  error: " + tile["error"].toString() + "\n";
-
-    QList<QStringList> lines;
-    if (kind == "table") {
-        QJsonArray columns = tile["columns"].toArray();
-        bool list = tile["style"].toString() == "list";
-        if (!list) {
-            QStringList head, units;
-            bool anyUnits = false;
-            for (const QJsonValue &c : columns) {
-                head << c.toObject()["name"].toString();
-                units << c.toObject()["units"].toString();
-                if (!units.last().isEmpty()) anyUnits = true;
-            }
-            lines << head;
-            if (anyUnits) lines << units;
-        }
-        for (const QJsonValue &r : tile["rows"].toArray()) {
-            QStringList l;
-            for (const QJsonValue &v : r.toArray()) l << v.toString();
-            lines << l;
-        }
-    } else if (kind == "zones") {
-        for (const QJsonValue &r : tile["rows"].toArray())
-            lines << QStringList{ r["name"].toString(), r["time"].toString(), QString("%1 %").arg(r["percent"].toDouble()) };
-    } else if (kind == "intervals") {
-        QStringList head{ "" };
-        for (const QJsonValue &a : tile["axes"].toArray()) head << a["name"].toString();
-        lines << head;
-        for (const QJsonValue &r : tile["rows"].toArray())
-            lines << QStringList{ r["name"].toString(), r["x"].toString(), r["y"].toString(), r["z"].toString() };
-    } else if (kind == "pmc") {
-        for (const char *k : { "form", "fitness", "fatigue", "risk" })
-            lines << QStringList{ QString(k).replace(0, 1, QString(k).at(0).toUpper()), QString::number(tile[k].toDouble()) };
-    } else if (tile.contains("value")) {
-        lines << QStringList{ tile["value"].toString(), tile["units"].toString() };
-    } else {
-        lines << QStringList{ tile["note"].toString() };
-    }
-    return text + columnsText(lines);
+    if (tile.json.contains("error")) return text + "  error: " + tile.json["error"].toString() + "\n";
+    return text + columnsText(tile.lines);
 }
 
 //
@@ -453,64 +480,24 @@ intervalProgram(const QString &program)
 }
 
 static QString
-tilesCsv(const QJsonArray &tiles)
+tilesCsv(const QList<TileValue> &tiles)
 {
     auto line = [](const QStringList &f) { return ResultFormat::csvLine(f); };
 
-    if (tiles.count() == 1 && tiles[0]["kind"] == "table" && !tiles[0].toObject().contains("error")) {
-        QJsonObject t = tiles[0].toObject();
-        // list style keeps name, value, units for JSON; CSV uses the column grid
-        QJsonArray columns = t.contains("_csv_columns") ? t["_csv_columns"].toArray() : t["columns"].toArray();
-        QJsonArray rows = t.contains("_csv_rows") ? t["_csv_rows"].toArray() : t["rows"].toArray();
-        QStringList head;
-        for (const QJsonValue &c : columns) {
-            QString units = c["units"].toString();
-            head << (units.isEmpty() ? c["name"].toString() : QString("%1 (%2)").arg(c["name"].toString()).arg(units));
-        }
-        QString text = line(head);
-        for (const QJsonValue &r : rows) {
-            QStringList fields;
-            for (const QJsonValue &v : r.toArray()) fields << v.toString();
-            text += line(fields);
-        }
+    if (tiles.count() == 1 && tiles[0].json["kind"] == "table" && !tiles[0].json.contains("error")) {
+        QString text = line(tiles[0].gridHead);
+        for (const QStringList &r : tiles[0].grid) text += line(r);
         return text;
     }
 
     QString text = line({ "tile", "kind", "row", "column", "units", "value" });
-    for (const QJsonValue &v : tiles) {
-        QJsonObject t = v.toObject();
-        QString name = t["name"].toString(), kind = t["kind"].toString();
-        auto add = [&](const QString &row, const QString &column, const QString &units, const QString &value) {
-            text += line({ name, kind, row, column, units, value });
-        };
-        if (t.contains("error")) { add("", "error", "", t["error"].toString()); continue; }
-
-        if (kind == "table") {
-            QJsonArray columns = t["columns"].toArray();
-            QJsonArray rows = t["rows"].toArray();
-            for (int r = 0; r < rows.count(); r++) {
-                QJsonArray row = rows[r].toArray();
-                if (t["style"] == "list") add(row[0].toString(), "value", row[2].toString(), row[1].toString());
-                else for (int c = 0; c < row.count() && c < columns.count(); c++)
-                    add(QString::number(r + 1), columns[c].toObject()["name"].toString(), columns[c].toObject()["units"].toString(), row[c].toString());
-            }
-        } else if (kind == "zones") {
-            for (const QJsonValue &z : t["rows"].toArray()) {
-                add(z["name"].toString(), "time", "", z["time"].toString());
-                add(z["name"].toString(), "percent", "%", ResultFormat::csvValue(z["percent"]));
-            }
-        } else if (kind == "intervals") {
-            QJsonArray axes = t["axes"].toArray();
-            for (const QJsonValue &r : t["rows"].toArray())
-                for (int a = 0; a < 3 && a < axes.count(); a++)
-                    add(r["name"].toString(), axes[a].toObject()["name"].toString(), axes[a].toObject()["units"].toString(), r[QString("xyz").mid(a, 1)].toString());
-        } else if (kind == "pmc") {
-            for (const char *k : { "form", "fitness", "fatigue", "risk" }) add("", k, "", ResultFormat::csvValue(t[k]));
-        } else if (t.contains("value")) {
-            add("", "value", t["units"].toString(), t["value"].toString());
-        } else {
-            add("", "note", "", t["note"].toString());
+    for (const TileValue &t : tiles) {
+        QString name = t.json["name"].toString(), kind = t.json["kind"].toString();
+        if (t.json.contains("error")) {
+            text += line({ name, kind, "", "error", "", t.json["error"].toString() });
+            continue;
         }
+        for (const QStringList &c : t.csv) text += line(QStringList{ name, kind } + c);
     }
     return text;
 }
@@ -552,7 +539,7 @@ overviewCommand(CommandEnvironment &env, const CommandRequest &request)
     context->ride = item;
 
     QJsonArray tiles;
-    QList<bool> intervalTiles;
+    QList<TileValue> values;
     QString text;
     bool showedCensus = false;
     for (const OverviewChart &chart : layout.charts) {
@@ -569,14 +556,14 @@ overviewCommand(CommandEnvironment &env, const CommandRequest &request)
                 for (const QString &n : tileNames) if (config["name"].toString().trimmed().compare(n, Qt::CaseInsensitive) == 0) match = true;
                 if (!match) continue;
             }
-            QJsonObject tile = evaluateTile(*env.session, item, config, metricUnits);
-            tile.insert("chart", chart.title);
-            tile.insert("column", config["column"].toInt());
+            TileValue tile = evaluateTile(*env.session, item, config, metricUnits);
+            tile.json.insert("chart", chart.title);
+            tile.json.insert("column", config["column"].toInt());
             int tileType = config["type"].toInt();
             bool isIntervals = tileType == INTERVAL
                 || (tileType == DATATABLE && intervalProgram(config["program"].toString()));
-            tiles.append(tile);
-            intervalTiles << isIntervals;
+            tiles.append(tile.json);
+            values << tile;
             if (isIntervals && !showedCensus) {
                 text += censusLine + "\n";
                 showedCensus = true;
@@ -590,14 +577,7 @@ overviewCommand(CommandEnvironment &env, const CommandRequest &request)
         return CommandResult::failure(Status::NotFound,
                     QString("no tile called '%1' in the '%2' layout").arg(tileNames.join("', '")).arg(layout.name));
 
-    QString csv = tilesCsv(tiles);
-    for (int i = 0; i < tiles.count(); i++) {
-        QJsonObject t = tiles.at(i).toObject();
-        if (!t.contains("_csv_columns")) continue;
-        t.remove("_csv_columns");
-        t.remove("_csv_rows");
-        tiles.replace(i, t);
-    }
+    QString csv = tilesCsv(values);
 
     QJsonObject data;
     data.insert("activity", QFileInfo(item->fileName).completeBaseName());
