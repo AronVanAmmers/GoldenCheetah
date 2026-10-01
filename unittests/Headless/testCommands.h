@@ -18,7 +18,7 @@ inline CommandRegistry testRegistry()
     Command import;
     import.spec.name = "import";
     import.spec.summary = "import files";
-    import.spec.params << ParamSpec("file", ParamType::Path, "files").req().pos().many();
+    import.spec.params << ParamSpec("file", ParamType::Path, "files").req().pos().many().upload();
     import.spec.params << ParamSpec("dry-run", ParamType::Bool, "change nothing");
     import.spec.params << ParamSpec("recursive", ParamType::Bool, "recurse");
     import.spec.httpMethod = "POST";

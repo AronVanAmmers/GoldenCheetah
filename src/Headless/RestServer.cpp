@@ -218,6 +218,7 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
     // A file that can't be stored whole fails the request: the command
     // must not run without it.
     QJsonArray uploadedPaths;
+    QMap<QString, QString> displayNames;
     std::unique_ptr<QTemporaryDir> uploadDir;
     QString uploadError;
     auto saveUpload = [&](QIODevice &data, const QString &name) -> bool {
@@ -245,6 +246,7 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
             return false;
         }
         uploadedPaths.append(out.fileName());
+        displayNames.insert(out.fileName(), name);
         return true;
     };
     QMultiMap<QString, QString> query;
@@ -323,18 +325,21 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
         return;
     }
 
-    // uploads feed the command's file parameter
+    // uploads go to the parameter the command takes them in
     if (!uploadedPaths.isEmpty()) {
         const Command *c = commandRegistry().find(match.command);
-        if (!c || !c->spec.param("file")) {
+        const ParamSpec *target = nullptr;
+        if (c) for (const ParamSpec &p : c->spec.params) if (p.uploads) { target = &p; break; }
+        if (!target) {
             sendError(response, 400, QString("'%1' does not take uploaded files").arg(match.command));
             log(method, path, 400, timer.elapsed());
             return;
         }
-        QJsonArray files = match.args.value("file").isArray() ? match.args.value("file").toArray() : QJsonArray();
-        if (match.args.value("file").isString()) files.append(match.args.value("file"));
+        QJsonValue given = match.args.value(target->name);
+        QJsonArray files = given.isArray() ? given.toArray() : QJsonArray();
+        if (given.isString()) files.append(given);
         for (const QJsonValue &v : uploadedPaths) files.append(v);
-        match.args.insert("file", files);
+        match.args.insert(target->name, files);
     }
 
     // binary results (charts, exports) come back as files unless the
@@ -356,6 +361,7 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
     cmd.args = match.args;
     cmd.home = options.home;
     cmd.athlete = match.athlete;
+    cmd.displayNames = displayNames;
 
     // a call dropped at shutdown returns without having run
     CommandResult result;
@@ -370,19 +376,6 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
         sendError(response, 503, "the server is shutting down");
         log(method, path, 503, timer.elapsed());
         return;
-    }
-
-    // report uploads by the name the client sent, not our temporary path
-    if (uploadDir && result.data.value("files").isArray()) {
-        QString prefix = QDir(uploadDir->path()).absolutePath() + "/";
-        QJsonArray files = result.data.value("files").toArray();
-        for (int i = 0; i < files.count(); i++) {
-            QJsonObject f = files.at(i).toObject();
-            QString source = f.value("source").toString();
-            if (source.startsWith(prefix)) f.insert("source", source.mid(prefix.length()).section('/', 1));
-            files[i] = f;
-        }
-        result.data.insert("files", files);
     }
 
     int status = httpStatusFor(result.status);

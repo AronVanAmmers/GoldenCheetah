@@ -306,6 +306,7 @@ CommandRegistry::describe(const CommandSpec &spec)
         if (!p.defaultValue.isUndefined() && !p.defaultValue.isNull()) po.insert("default", p.defaultValue);
         if (!p.choices.isEmpty()) po.insert("choices", QJsonArray::fromStringList(p.choices));
         if (p.commandLine) po.insert("cli_only", true);
+        if (p.uploads) po.insert("upload", true);
         params.append(po);
     }
     o.insert("params", params);
