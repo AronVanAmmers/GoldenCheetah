@@ -108,13 +108,10 @@ intervalTypeNames()
 static QStringList
 summaryMetrics(RideItem *item)
 {
-    QString s = appsettings->contains(GC_SETTINGS_FAVOURITE_METRICS)
-                ? appsettings->value(nullptr, GC_SETTINGS_FAVOURITE_METRICS).toString()
-                : QString(GC_SETTINGS_FAVOURITE_METRICS_DEFAULT);
     QStringList symbols;
     const RideMetricFactory &factory = RideMetricFactory::instance();
-    for (const QString &symbol : s.split(",", Qt::SkipEmptyParts)) {
-        const RideMetric *m = factory.rideMetric(symbol.trimmed());
+    for (const QString &symbol : favouriteMetrics()) {
+        const RideMetric *m = factory.rideMetric(symbol);
         if (m && m->isRelevantForRide(item)) symbols << m->symbol();
     }
     return symbols;
@@ -138,17 +135,17 @@ intervalJson(IntervalItem *interval, int number)
     return o;
 }
 
-// metric values, every one relevant for the activity when no symbols are
-// given; as numbers, or with display as the GUI formats them ("51:51")
+// metric values, every one relevant for the activity with all; as
+// numbers, or with display as the GUI formats them ("51:51")
 static QJsonObject
-intervalMetrics(IntervalItem *interval, QStringList symbols, bool metricUnits, bool display)
+intervalMetrics(IntervalItem *interval, QStringList symbols, bool all, bool metricUnits, bool display)
 {
     const RideMetricFactory &factory = RideMetricFactory::instance();
     QJsonObject m;
     // metrics are computed when the ride cache refreshes, none means not yet
     if (interval->metrics().size() != factory.metricCount()) return m;
 
-    if (symbols.isEmpty()) {
+    if (all) {
         for (int i = 0; i < factory.metricCount(); i++) {
             const RideMetric *metric = factory.rideMetric(factory.metricName(i));
             if (metric && interval->rideItem() && metric->isRelevantForRide(interval->rideItem())) symbols << metric->symbol();
@@ -172,6 +169,8 @@ listIntervals(CommandEnvironment &env, const CommandRequest &request)
     bool display = request.args.value("display").toBool(false);
     QStringList symbols;
     if (!resolveMetrics(splitList(request.args.value("metric")), symbols, error)) return CommandResult::failure(Status::Usage, error);
+    // the intervals sidebar's metrics, unless asked for others (none when
+    // the favourites are set to none, as in the GUI)
     if (symbols.isEmpty()) symbols = summaryMetrics(item);
 
     QList<RideFileInterval::IntervalType> types;
@@ -189,7 +188,7 @@ listIntervals(CommandEnvironment &env, const CommandRequest &request)
         number++;
         if (!types.isEmpty() && !types.contains(interval->type)) continue;
         QJsonObject o = intervalJson(interval, number);
-        o.insert("metrics", intervalMetrics(interval, symbols, metricUnits, display));
+        o.insert("metrics", intervalMetrics(interval, symbols, false, metricUnits, display));
         list.append(o);
     }
     IntervalCensus census = intervalCensus(item);
@@ -252,7 +251,7 @@ showInterval(CommandEnvironment &env, const CommandRequest &request)
     IntervalItem *interval = intervals[matches.first() - 1];
     QJsonObject o = intervalJson(interval, matches.first());
     o.insert("activity", QFileInfo(item->fileName).completeBaseName());
-    o.insert("metrics", intervalMetrics(interval, symbols, metricUnits, display));
+    o.insert("metrics", intervalMetrics(interval, symbols, symbols.isEmpty(), metricUnits, display));
     return CommandResult::success(o);
 }
 

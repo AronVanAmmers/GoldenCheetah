@@ -301,25 +301,6 @@ removeUserMetric(CommandEnvironment &env, const CommandRequest &request)
 // Favourites: the ordered list the intervals table and ride summary walk.
 //
 
-static QStringList
-favouriteSymbols()
-{
-    QString s = appsettings->contains(GC_SETTINGS_FAVOURITE_METRICS)
-                ? appsettings->value(nullptr, GC_SETTINGS_FAVOURITE_METRICS).toString()
-                : QString(GC_SETTINGS_FAVOURITE_METRICS_DEFAULT);
-    if (s.trimmed().isEmpty()) s = GC_SETTINGS_FAVOURITE_METRICS_DEFAULT;
-
-    QStringList symbols;
-    for (const QString &part : s.split(",", Qt::SkipEmptyParts)) symbols << part.trimmed();
-    return symbols;
-}
-
-static void
-saveFavourites(const QStringList &symbols)
-{
-    appsettings->setValue(GC_SETTINGS_FAVOURITE_METRICS, symbols.join(","));
-}
-
 static CommandResult
 resolveSymbols(const QJsonArray &given, QStringList &symbols)
 {
@@ -343,7 +324,7 @@ favouritesJson(const QStringList &symbols)
 static CommandResult
 listFavourites(CommandEnvironment &, const CommandRequest &)
 {
-    return CommandResult::success(favouritesJson(favouriteSymbols()));
+    return CommandResult::success(favouritesJson(favouriteMetrics()));
 }
 
 static CommandResult
@@ -352,7 +333,7 @@ addFavourites(CommandEnvironment &env, const CommandRequest &request)
     CommandResult writable = sharedSettingsWritable(env);
     if (!writable.ok()) return writable;
 
-    QStringList symbols = favouriteSymbols();
+    QStringList symbols = favouriteMetrics();
     QStringList added;
     CommandResult resolved = resolveSymbols(request.args.value("symbol").toArray(), added);
     if (!resolved.ok()) return resolved;
@@ -360,7 +341,7 @@ addFavourites(CommandEnvironment &env, const CommandRequest &request)
     QStringList appended;
     for (const QString &symbol : added)
         if (!symbols.contains(symbol)) { symbols << symbol; appended << symbol; }
-    if (!appended.isEmpty()) saveFavourites(symbols);
+    if (!appended.isEmpty()) setFavouriteMetrics(symbols);
 
     QJsonObject data = favouritesJson(symbols);
     data.insert("added", QJsonArray::fromStringList(appended));
@@ -377,7 +358,7 @@ removeFavourites(CommandEnvironment &env, const CommandRequest &request)
     CommandResult resolved = resolveSymbols(request.args.value("symbol").toArray(), drop);
     if (!resolved.ok()) return resolved;
 
-    QStringList symbols = favouriteSymbols();
+    QStringList symbols = favouriteMetrics();
     QStringList removed;
     for (const QString &symbol : drop) {
         if (!symbols.contains(symbol)) continue;
@@ -386,7 +367,7 @@ removeFavourites(CommandEnvironment &env, const CommandRequest &request)
     }
     if (removed.isEmpty())
         return CommandResult::failure(Status::NotFound, QString("not a favourite: %1").arg(drop.join(", ")));
-    saveFavourites(symbols);
+    setFavouriteMetrics(symbols);
 
     QJsonObject data = favouritesJson(symbols);
     data.insert("removed", QJsonArray::fromStringList(removed));
@@ -402,7 +383,7 @@ setFavourites(CommandEnvironment &env, const CommandRequest &request)
     QStringList symbols;
     CommandResult resolved = resolveSymbols(request.args.value("symbol").toArray(), symbols);
     if (!resolved.ok()) return resolved;
-    saveFavourites(symbols);
+    setFavouriteMetrics(symbols);
     return CommandResult::success(favouritesJson(symbols));
 }
 

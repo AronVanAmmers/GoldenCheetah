@@ -1348,6 +1348,15 @@ class TestUserMetricsAndZones(Headless):
         self.assertNotIn("average_speed", self.gcj("metric", "favourite", "list")["data"]["metrics"])
         self.gcj("metric", "favourite", "add", "not_a_metric", expect=2)
 
+        # none left: the intervals table has no metric columns, as in the GUI
+        listed = self.gcj("metric", "favourite", "list")["data"]["metrics"]
+        self.addCleanup(self.gc, "--athlete", self.athlete, "metric", "favourite", "set", *listed)
+        self.gcj("metric", "favourite", "remove", *listed)
+        self.assertEqual(self.gcj("metric", "favourite", "list")["data"]["metrics"], [])
+        intervals = self.gcj("interval", "list", "last")["data"]["intervals"]
+        self.assertTrue(intervals)
+        self.assertEqual([i.get("metrics", {}) for i in intervals], [{}] * len(intervals))
+
     def test_hr_range_keeps_other_anchors_and_pace_can_be_set(self):
         original = self.gcj("zones", "show")["data"]["hr"]["ranges"][0]
         env = self.gcj("zones", "set", "--type", "hr", "--from", "2026-01-01", "--resthr", "40")
