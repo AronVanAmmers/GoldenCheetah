@@ -325,7 +325,7 @@ RestRouter::openApi(const QString &serverUrl) const
                     { "type", "object" }, { "properties", uploads } } } });
                 content.insert("application/octet-stream", QJsonObject{ { "schema", QJsonObject{
                     { "type", "string" }, { "format", "binary" },
-                    { "description", "one file; give its name with ?filename= or an X-Filename header" } } } });
+                    { "description", "one file, sent as application/octet-stream; give its name with ?filename= or an X-Filename header" } } } });
             }
             op.insert("requestBody", QJsonObject{ { "content", content } });
         }
