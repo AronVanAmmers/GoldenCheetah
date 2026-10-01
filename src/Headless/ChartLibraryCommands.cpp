@@ -33,10 +33,12 @@
 #include "DataFilter.h"
 #include "LTMChartParser.h"
 #include "LTMSettings.h"
+#include "PDModel.h"
 #include "RideFile.h"
 #include "RideMetric.h"
 #include "Utils.h"
 
+#include <QScopeGuard>
 #include <QXmlInputSource>
 #include <QXmlSimpleReader>
 
@@ -100,60 +102,31 @@ curveTypeName(int type)
     }
 }
 
+// the names below are in the order Curve Settings lists them (MetricDetail)
 static QString
 styleName(QwtPlotCurve::CurveStyle style)
 {
-    switch (style) {
-    case QwtPlotCurve::Steps: return "bar";
-    case QwtPlotCurve::Lines: return "line";
-    case QwtPlotCurve::Sticks: return "sticks";
-    case QwtPlotCurve::Dots: return "dots";
-    default: return QString::number(int(style));
-    }
+    int i = MetricDetail::curveStyles().indexOf(style);
+    return i >= 0 ? styleNames.at(i) : QString::number(int(style));
 }
 
 static QwtPlotCurve::CurveStyle
 styleFromName(const QString &name)
 {
-    switch (styleNames.indexOf(name)) {
-    case 0: return QwtPlotCurve::Steps;
-    case 1: return QwtPlotCurve::Lines;
-    case 2: return QwtPlotCurve::Sticks;
-    case 3: return QwtPlotCurve::Dots;
-    default: return QwtPlotCurve::Lines;
-    }
+    return MetricDetail::curveStyles().value(styleNames.indexOf(name), QwtPlotCurve::Lines);
 }
 
 static QString
 markerName(QwtSymbol::Style style)
 {
-    switch (style) {
-    case QwtSymbol::NoSymbol: return "none";
-    case QwtSymbol::Ellipse: return "circle";
-    case QwtSymbol::Rect: return "square";
-    case QwtSymbol::Diamond: return "diamond";
-    case QwtSymbol::Triangle: return "triangle";
-    case QwtSymbol::XCross: return "cross";
-    case QwtSymbol::Hexagon: return "hexagon";
-    case QwtSymbol::Star1: return "star";
-    default: return QString::number(int(style));
-    }
+    int i = MetricDetail::symbolStyles().indexOf(style);
+    return i >= 0 ? markerNames.at(i) : QString::number(int(style));
 }
 
 static QwtSymbol::Style
 markerFromName(const QString &name)
 {
-    switch (markerNames.indexOf(name)) {
-    case 0: return QwtSymbol::NoSymbol;
-    case 1: return QwtSymbol::Ellipse;
-    case 2: return QwtSymbol::Rect;
-    case 3: return QwtSymbol::Diamond;
-    case 4: return QwtSymbol::Triangle;
-    case 5: return QwtSymbol::XCross;
-    case 6: return QwtSymbol::Hexagon;
-    case 7: return QwtSymbol::Star1;
-    default: return QwtSymbol::NoSymbol;
-    }
+    return MetricDetail::symbolStyles().value(markerNames.indexOf(name), QwtSymbol::NoSymbol);
 }
 
 static QString
@@ -176,81 +149,32 @@ unitSeconds(const QString &name)
     }
 }
 
-static QString
-unitWord(int units)
-{
-    if (units == 1) return "second";
-    if (units == 60) return "minute";
-    return "hour";
-}
-
-struct SeriesChoice {
-    const char *name;
-    RideFile::SeriesType series;
-};
-
-static const SeriesChoice seriesChoices[] = {
-    { "power", RideFile::watts },
-    { "wpk", RideFile::wattsKg },
-    { "xpower", RideFile::xPower },
-    { "apower", RideFile::aPower },
-    { "isopower", RideFile::IsoPower },
-    { "heartrate", RideFile::hr },
-    { "speed", RideFile::kph },
-    { "cadence", RideFile::cad },
-    { "torque", RideFile::nm },
-    { "vam", RideFile::vam },
-};
-
+// seriesNames are in the order of MetricDetail::bestSeries()
 static RideFile::SeriesType
 seriesFromName(const QString &name)
 {
-    for (const SeriesChoice &c : seriesChoices)
-        if (name == c.name) return c.series;
-    return RideFile::none;
+    return MetricDetail::bestSeries().value(seriesNames.indexOf(name), RideFile::none);
 }
 
 static QString
 seriesToken(RideFile::SeriesType series)
 {
-    for (const SeriesChoice &c : seriesChoices)
-        if (c.series == series) return c.name;
+    int i = MetricDetail::bestSeries().indexOf(series);
+    if (i >= 0) return seriesNames.at(i);
     QString symbol = RideFile::symbolForSeries(series);
     return symbol.isEmpty() ? QString::number(int(series)) : symbol.toLower();
 }
 
-struct ModelChoice {
-    const char *code;
-    bool wprime;
-    bool cp;
-    bool ftp;
-    bool pmax;
-};
-
-// the three models Curve Settings offers, and the values each one can produce.
-// Best power, endurance index and VO2max are offered for every model.
-static const ModelChoice modelChoices[] = {
-    { "cp2", true, true, false, false },
-    { "cp3", true, true, false, true },
-    { "ext", true, true, true, true },
-};
-
-static const ModelChoice *
-modelChoice(const QString &code)
-{
-    for (const ModelChoice &m : modelChoices)
-        if (code == m.code) return &m;
-    return nullptr;
-}
-
+// the models Curve Settings offers estimates from, and what each one gives:
+// best power, endurance index and VO2max come from every model
 static bool
-modelOffers(const ModelChoice &model, int estimate)
+modelOffers(PDModel *model, int estimate)
 {
     switch (estimate) {
-    case ESTIMATE_WPRIME: return model.wprime;
-    case ESTIMATE_CP: return model.cp;
-    case ESTIMATE_FTP: return model.ftp;
-    case ESTIMATE_PMAX: return model.pmax;
+    case ESTIMATE_WPRIME: return model->hasWPrime();
+    case ESTIMATE_CP: return model->hasCP();
+    case ESTIMATE_FTP: return model->hasFTP();
+    case ESTIMATE_PMAX: return model->hasPMax();
     default: return true;
     }
 }
@@ -278,29 +202,11 @@ estimateToken(int estimate)
 }
 
 static QString
-estimateLabel(int estimate, int duration, int units)
-{
-    switch (estimate) {
-    case ESTIMATE_WPRIME: return "W'";
-    case ESTIMATE_CP: return "CP";
-    case ESTIMATE_FTP: return "FTP";
-    case ESTIMATE_PMAX: return "p-Max";
-    case ESTIMATE_BEST: return QString("Estimate %1 %2 Power").arg(duration).arg(unitWord(units));
-    case ESTIMATE_EI: return "Endurance Index";
-    case ESTIMATE_VO2MAX: return "Vo2Max Estimate";
-    default: return estimateToken(estimate);
-    }
-}
-
-static QString
-offersText(const ModelChoice &model)
+offersText(PDModel *model)
 {
     QStringList offers;
-    if (model.wprime) offers << "wprime";
-    if (model.cp) offers << "cp";
-    if (model.ftp) offers << "ftp";
-    if (model.pmax) offers << "pmax";
-    offers << "best" << "ei" << "vo2max";
+    for (int estimate = 0; estimate < estimateNames.count(); estimate++)
+        if (modelOffers(model, estimate)) offers << estimateNames.at(estimate);
     return offers.join(", ");
 }
 
@@ -347,29 +253,11 @@ curveDetail(const MetricDetail &m)
         return QString("%1 %2 %3").arg(m.duration).arg(unitName(m.duration_units)).arg(seriesToken(m.series));
     if (m.type == METRIC_ESTIMATE) {
         if (!m.uname.isEmpty()) return m.uname;
-        return estimateLabel(m.estimate, m.estimateDuration, m.estimateDuration_units) + " (" + m.model + ")";
+        return MetricDetail::estimateName(m.estimate, m.model, m.estimateDuration, m.estimateDuration_units);
     }
     if (!m.uname.isEmpty()) return m.uname;
     if (!m.name.isEmpty()) return m.name;
     return m.symbol;
-}
-
-static QwtPlotCurve::CurveStyle
-curveStyle(RideMetric::MetricType type)
-{
-    if (type == RideMetric::Total) return QwtPlotCurve::Steps;
-    return QwtPlotCurve::Lines;
-}
-
-static QwtSymbol::Style
-symbolStyle(RideMetric::MetricType type)
-{
-    switch (type) {
-    case RideMetric::Average:
-    case RideMetric::Total: return QwtSymbol::Ellipse;
-    case RideMetric::Peak: return QwtSymbol::Rect;
-    default: return QwtSymbol::XCross;
-    }
 }
 
 static QColor
@@ -497,22 +385,12 @@ nameTaken(const QList<LTMSettings> &charts, const QString &name, int except)
     return false;
 }
 
-// the same fields LTMTool fills in when a metric is picked from its catalogue
+// as LTMTool's catalogue has it, with our palette
 static MetricDetail
 metricCurve(const RideMetric *metric, int index)
 {
-    MetricDetail detail;
+    MetricDetail detail = MetricDetail::forMetric(metric, GlobalContext::context()->useMetricUnits);
     detail.type = METRIC_DB;
-    detail.symbol = metric->symbol();
-    detail.metric = metric;
-    detail.name = Utils::unprotect(metric->name());
-    detail.uname = detail.name;
-    bool metricUnits = GlobalContext::context()->useMetricUnits;
-    detail.units = metric->units(metricUnits);
-    detail.uunits = detail.units.isEmpty() ? detail.name : detail.units;
-    detail.topN = 1;
-    detail.curveStyle = curveStyle(metric->type());
-    detail.symbolStyle = symbolStyle(metric->type());
     detail.penColor = penColor(index);
     detail.brushColor = detail.penColor;
     detail.showOnPlot = true;
@@ -766,7 +644,7 @@ buildBest(const QJsonObject &args, int index, MetricDetail &detail, QString &err
     detail.duration = duration;
     detail.duration_units = units;
     detail.series = series;
-    QString uname = QString("Peak %1 %2 %3").arg(duration).arg(unitWord(units)).arg(RideFile::seriesName(series));
+    QString uname = MetricDetail::bestName(duration, units, series);
     detail.uname = uname;
     detail.name = uname;
     detail.bestSymbol = QString(uname).replace(" ", "_");
@@ -774,13 +652,16 @@ buildBest(const QJsonObject &args, int index, MetricDetail &detail, QString &err
 }
 
 static bool
-buildEstimate(const QJsonObject &args, int index, MetricDetail &detail, QString &error)
+buildEstimate(Context *context, const QJsonObject &args, int index, MetricDetail &detail, QString &error)
 {
     if (!args.contains("model")) {
         error = "estimate needs --model cp2, cp3 or ext";
         return false;
     }
-    const ModelChoice *model = modelChoice(args.value("model").toString());
+    QList<PDModel *> models = MetricDetail::estimateModels(context);
+    auto cleanup = qScopeGuard([&models]() { qDeleteAll(models); });
+    PDModel *model = nullptr;
+    for (PDModel *m : models) if (m->code() == args.value("model").toString()) model = m;
     if (!model) {
         error = "model must be cp2, cp3 or ext";
         return false;
@@ -790,9 +671,9 @@ buildEstimate(const QJsonObject &args, int index, MetricDetail &detail, QString 
         error = QString("estimate must be one of: %1").arg(estimateNames.join(", "));
         return false;
     }
-    if (!modelOffers(*model, estimate)) {
+    if (!modelOffers(model, estimate)) {
         error = QString("the %1 model does not offer %2; it offers %3")
-            .arg(model->code, estimateToken(estimate), offersText(*model));
+            .arg(model->code(), estimateToken(estimate), offersText(model));
         return false;
     }
 
@@ -818,11 +699,11 @@ buildEstimate(const QJsonObject &args, int index, MetricDetail &detail, QString 
 
     prepareCurve(detail, index);
     detail.type = METRIC_ESTIMATE;
-    detail.model = model->code;
+    detail.model = model->code();
     detail.estimate = estimate;
     detail.estimateDuration = duration;
     detail.estimateDuration_units = units;
-    QString uname = estimateLabel(estimate, duration, units) + " (" + model->code + ")";
+    QString uname = MetricDetail::estimateName(estimate, model->code(), duration, units);
     detail.uname = uname;
     detail.name = uname;
     detail.symbol = QString(uname).replace(" ", "_");
@@ -848,7 +729,7 @@ buildCurve(Context *context, const QJsonObject &args, int index, MetricDetail &d
     } else if (args.contains("best")) {
         if (!buildBest(args, index, detail, error)) return false;
     } else if (args.contains("estimate")) {
-        if (!buildEstimate(args, index, detail, error)) return false;
+        if (!buildEstimate(context, args, index, detail, error)) return false;
     } else {
         error = "give a curve with --metric, --best or --estimate";
         return false;

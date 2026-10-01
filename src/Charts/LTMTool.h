@@ -126,8 +126,6 @@ class LTMTool : public QWidget
     private:
 
         // Helper function for default charts translation
-        QwtPlotCurve::CurveStyle curveStyle(RideMetric::MetricType);
-        QwtSymbol::Style symbolStyle(RideMetric::MetricType);
 
         Context *context;
         bool active; // ignore season changed signals since we triggered them

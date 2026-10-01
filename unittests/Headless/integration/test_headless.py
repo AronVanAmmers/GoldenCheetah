@@ -1619,6 +1619,19 @@ class TestChartLibrary(Headless):
         shown = self.gcj("chart", "library", "show", "Kept")["data"]["metrics"]
         self.assertEqual([m["symbol"] for m in shown], ["average_power"])
 
+    def test_library_names_curves_as_curve_settings(self):
+        path = self.charts_file()
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        shown = self.gcj("chart", "library", "add", "--name", "Names", "--best", "20", "--unit", "min",
+                         "--series", "heartrate")["data"]["metrics"]
+        self.assertEqual(shown[0]["detail"], "20 min heartrate")
+        self.assertEqual(shown[0]["name"], "Peak 20 minute Heartrate")
+        shown = self.gcj("chart", "library", "curve", "add", "Names", "--estimate", "best", "--duration", "5",
+                         "--unit", "min", "--model", "cp3")["data"]["metrics"]
+        self.assertEqual(shown[1]["detail"], "Estimate 5 minutes Power (cp3)")
+        refused = self.gcj("chart", "library", "curve", "add", "Names", "--estimate", "pmax", "--model", "cp2", expect=2)
+        self.assertIn("it offers wprime, cp, best, ei, vo2max", refused["error"])
+
     def test_library_round_trip_is_checked(self):
         path = self.charts_file()
         self.assertFalse(os.path.exists(path))
