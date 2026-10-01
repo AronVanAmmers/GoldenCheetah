@@ -39,6 +39,7 @@
 #include <QJsonArray>
 #include <QJsonValue>
 #include <QByteArray>
+#include <QMap>
 #include <functional>
 
 namespace Headless {
@@ -64,6 +65,7 @@ struct ParamSpec {
     QJsonValue defaultValue;    // used when not supplied
     QStringList choices;        // allowed values, empty means any
     bool commandLine = false;   // reads a file where the command runs: refused over REST
+    bool uploads = false;       // over REST, uploaded files arrive here (as their paths)
 
     ParamSpec() {}
     ParamSpec(const QString &name, ParamType type, const QString &description)
@@ -76,6 +78,7 @@ struct ParamSpec {
     ParamSpec &def(const QJsonValue &v) { defaultValue = v; return *this; }
     ParamSpec &oneOf(const QStringList &c) { choices = c; return *this; }
     ParamSpec &cliOnly() { commandLine = true; return *this; }
+    ParamSpec &upload() { uploads = true; return *this; }
 };
 
 // does a command need an athlete opened before it runs?
@@ -124,6 +127,10 @@ struct CommandRequest {
     // where to find the athlete, resolved by the entry point
     QString home;               // athletes root folder
     QString athlete;            // athlete folder name within home
+
+    // uploaded files are temporary copies: path -> the name the client sent,
+    // for reports
+    QMap<QString, QString> displayNames;
 };
 
 struct CommandResult {

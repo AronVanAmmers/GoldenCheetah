@@ -311,8 +311,23 @@ RestRouter::openApi(const QString &serverUrl) const
             schema.insert("type", "object");
             schema.insert("properties", bodyProps);
             if (!bodyRequired.isEmpty()) schema.insert("required", bodyRequired);
-            op.insert("requestBody", QJsonObject{
-                { "content", QJsonObject{ { "application/json", QJsonObject{ { "schema", schema } } } } } });
+            QJsonObject content{ { "application/json", QJsonObject{ { "schema", schema } } } };
+
+            // files can be uploaded to these: multipart, or the raw file with ?filename=
+            QJsonObject uploads;
+            for (const ParamSpec &ps : spec.params) {
+                if (!ps.uploads) continue;
+                QJsonObject file{ { "type", "string" }, { "format", "binary" } };
+                uploads.insert(ps.name, QJsonObject{ { "type", "array" }, { "items", file }, { "description", ps.description } });
+            }
+            if (!uploads.isEmpty()) {
+                content.insert("multipart/form-data", QJsonObject{ { "schema", QJsonObject{
+                    { "type", "object" }, { "properties", uploads } } } });
+                content.insert("application/octet-stream", QJsonObject{ { "schema", QJsonObject{
+                    { "type", "string" }, { "format", "binary" },
+                    { "description", "one file; give its name with ?filename= or an X-Filename header" } } } });
+            }
+            op.insert("requestBody", QJsonObject{ { "content", content } });
         }
         QJsonObject responses;
         responses.insert("200", QJsonObject{ { "description", "ok: {ok, status, command, data}, or the file for charts and exports" } });

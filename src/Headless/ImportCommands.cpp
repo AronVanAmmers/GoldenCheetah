@@ -78,8 +78,9 @@ class Importer
 {
     public:
 
-        Importer(AthleteSession &session, const ImportOptions &options, const CommandEnvironment &env)
-            : session(session), options(options), env(env), context(session.context()) {}
+        Importer(AthleteSession &session, const ImportOptions &options, const CommandEnvironment &env,
+                 const QMap<QString, QString> &displayNames)
+            : session(session), options(options), env(env), context(session.context()), displayNames(displayNames) {}
 
         ~Importer() {
             for (const QString &f : deleteMe) QFile::remove(f);
@@ -116,7 +117,8 @@ class Importer
                     continue;
                 }
 
-                expandFile(input, info.absoluteFilePath(), files);
+                // an upload is reported by the name the client gave it
+                expandFile(displayNames.value(input, input), info.absoluteFilePath(), files);
             }
             return files;
         }
@@ -301,6 +303,7 @@ class Importer
         ImportOptions options;
         const CommandEnvironment &env;
         Context *context;
+        QMap<QString, QString> displayNames;
         QStringList deleteMe;
         QList<QPair<QString,QString>> pending;
 };
@@ -315,7 +318,7 @@ importCommand(CommandEnvironment &env, const CommandRequest &request)
     options.dryRun = request.args.value("dry-run").toBool(false);
     options.recursive = request.args.value("recursive").toBool(false);
 
-    Importer importer(*env.session, options, env);
+    Importer importer(*env.session, options, env, request.displayNames);
     QList<ImportItem> items = importer.run(files);
 
     QJsonArray list;
@@ -392,7 +395,7 @@ registerImportCommands(CommandRegistry &registry)
         "data processors set to run automatically on import are run.";
     import.spec.scope = Scope::Athlete;
     import.spec.modifies = true;
-    import.spec.params << ParamSpec("file", ParamType::Path, "activity file, archive or folder").req().pos().many();
+    import.spec.params << ParamSpec("file", ParamType::Path, "activity file, archive or folder").req().pos().many().upload();
     import.spec.params << ParamSpec("recursive", ParamType::Bool, "scan folders recursively");
     import.spec.params << ParamSpec("dry-run", ParamType::Bool, "check what would be imported, change nothing");
     import.spec.httpMethod = "POST";

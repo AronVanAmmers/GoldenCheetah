@@ -134,6 +134,12 @@ private slots:
         QJsonObject post = paths.value("/v1/athletes/{athlete}/imports").toObject().value("post").toObject();
         QVERIFY(post.contains("requestBody"));
         QCOMPARE(post.value("operationId").toString(), QString("import"));
+        QJsonObject content = post.value("requestBody").toObject().value("content").toObject();
+        QVERIFY(content.contains("application/json"));
+        QJsonObject upload = content.value("multipart/form-data").toObject().value("schema").toObject()
+                                 .value("properties").toObject().value("file").toObject();
+        QCOMPARE(upload.value("items").toObject().value("format").toString(), QString("binary"));
+        QVERIFY(content.contains("application/octet-stream"));
     }
 };
 
