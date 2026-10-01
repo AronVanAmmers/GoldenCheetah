@@ -51,14 +51,25 @@ namespace Headless {
 
 static const char *program = "GoldenCheetah --cli";
 
+// the first --cli before any --, or -1: one later on (a value, or after
+// --) is an argument like any other
+static int
+cliFlag(int argc, char **argv)
+{
+    for (int i = 1; i < argc; i++) {
+        if (qstrcmp(argv[i], "--") == 0) return -1;
+        if (qstrcmp(argv[i], "--cli") == 0) return i;
+    }
+    return -1;
+}
+
 bool
 isCliInvocation(int argc, char **argv)
 {
     if (argc < 1) return false;
     QString name = QFileInfo(QString::fromLocal8Bit(argv[0])).completeBaseName().toLower();
     if (name == "gc-cli" || name == "goldencheetah-cli" || name == "gccli") return true;
-    for (int i = 1; i < argc; i++) if (qstrcmp(argv[i], "--cli") == 0) return true;
-    return false;
+    return cliFlag(argc, argv) > 0;
 }
 
 static void
@@ -112,9 +123,10 @@ finish(int code)
 int
 cliMain(int argc, char **argv)
 {
+    int flag = cliFlag(argc, argv);
     QStringList args;
     for (int i = 1; i < argc; i++) {
-        if (qstrcmp(argv[i], "--cli") == 0) continue;
+        if (i == flag) continue;
         args << QString::fromLocal8Bit(argv[i]);
     }
 

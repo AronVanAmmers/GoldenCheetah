@@ -107,7 +107,7 @@ All given criteria must match. `processor run` and `activity set` change nothing
 
 - Tables have the same columns, units and rows, formatted as shown (`05:30`, `160`, `51:51`), in the tile's saved sort order.
 - Metric, field, RPE and KPI tiles give the value as displayed.
-- Zone tiles give each zone's time and %.
+- Zone tiles give each zone's time and %. As on the overview tile, % is the share of the time in all zones; in `activity show` it is the share of the recording time, as the GUI's zone tables have it, so the two can differ when part of the recording is in no zone.
 - PMC tiles give form, fitness, fatigue and risk.
 
 `--tile "Intervals Data"` picks tiles by their title, and `--layout NAME` uses another layout. A table with more than one row of values comes back as a grid (`style: grid`, one entry in `columns` per column). With a single row the GUI shows a list of name, value and units, and so do the text report and JSON (`style: list`). CSV is always the grid: the tile's column names, units in the header, one record per row. Route and chart tiles are named but not reproduced as data.

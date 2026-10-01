@@ -516,9 +516,17 @@ resolveLayout(const QList<OverviewLayout> &layouts, const QString &wanted, int &
         index = 0;
         return CommandResult::success();
     }
-    index = -1;
-    for (int i = 0; i < layouts.count(); i++)
-        if (layouts.at(i).name.compare(wanted, Qt::CaseInsensitive) == 0) index = i;
+    // the exact name first, else one that differs only by case
+    index = names.indexOf(wanted);
+    if (index < 0) {
+        QList<int> matches;
+        for (int i = 0; i < layouts.count(); i++)
+            if (layouts.at(i).name.compare(wanted, Qt::CaseInsensitive) == 0) matches << i;
+        if (matches.count() > 1)
+            return CommandResult::failure(Status::Usage,
+                QString("more than one layout is called '%1' apart from case, give the exact name").arg(wanted));
+        if (matches.count() == 1) index = matches.first();
+    }
     if (index < 0)
         return CommandResult::failure(Status::NotFound,
             QString("no layout '%1', the layouts are: %2").arg(wanted).arg(names.join(", ")));
@@ -873,7 +881,8 @@ writeTileProgram(const QString &path, const QString &layoutName, const TileHit &
             out.writeStartElement(xml.qualifiedName().toString());
             QXmlStreamAttributes attrs = xml.attributes();
             if (xml.name() == QLatin1String("layout")) {
-                inLayout = Utils::unprotect(attrs.value("name").toString()).compare(layoutName, Qt::CaseInsensitive) == 0;
+                // the exact name resolveLayout found
+                inLayout = Utils::unprotect(attrs.value("name").toString()) == layoutName;
                 window = -1;
                 overviewCharts = -1;
             } else if (xml.name() == QLatin1String("chart")) {
