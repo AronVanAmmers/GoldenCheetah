@@ -32,6 +32,7 @@ class LTMChartParser : public QXmlDefaultHandler
 
 public:
     static bool serialize(QString, QList<LTMSettings>, QString *error = nullptr); // false: not saved
+    static bool save(QString filename, const QString &text, QString *error = nullptr); // text from serializeToQString
     static void serializeToQString(QString*, QList<LTMSettings>);
 
     // unmarshall

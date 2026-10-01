@@ -87,7 +87,12 @@ LTMChartParser::serialize(QString filename, QList<LTMSettings> charts, QString *
 {
     QString text;
     serializeToQString(&text, charts);
+    return save(filename, text, error);
+}
 
+bool
+LTMChartParser::save(QString filename, const QString &text, QString *error)
+{
     if (!Utils::saveFile(filename, text.toUtf8(), error)) {
         GcNotify::message(QMessageBox::Critical, tr("Problem Saving Charts Configuration"),
                           tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));

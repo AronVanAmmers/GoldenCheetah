@@ -83,7 +83,7 @@ static const QStringList modelNames = { "cp2", "cp3", "ext" };
 static const QStringList estimateNames = { "wprime", "cp", "ftp", "pmax", "best", "ei", "vo2max" };
 
 static const char *oneCurveDrawing =
-    "style, symbol, color, fill and filter apply to one curve; add each curve with 'chart library curve add'";
+    "style, marker, color, fill, filter and units apply to one curve; add each curve with 'chart library curve add'";
 
 static QString
 curveTypeName(int type)
@@ -246,6 +246,30 @@ durationOk(int duration, QString &error)
     return true;
 }
 
+// the units a curve is drawn against, as the built-in charts have them:
+// curves with the same units share an axis, so every kind of power is
+// "Watts" (CP Analysis puts bests and CP on one axis)
+static QString
+bestUnits(RideFile::SeriesType series, Context *context)
+{
+    switch (series) {
+    case RideFile::watts: case RideFile::xPower: case RideFile::aPower: case RideFile::IsoPower: return "Watts";
+    case RideFile::wattsKg: return "Watts/kg";
+    default: return RideFile::unitName(series, context);
+    }
+}
+
+static QString
+estimateUnits(int estimate, bool wpk)
+{
+    switch (estimate) {
+    case ESTIMATE_WPRIME: return wpk ? "Joules/kg" : "Joules";
+    case ESTIMATE_CP: case ESTIMATE_FTP: case ESTIMATE_PMAX: case ESTIMATE_BEST: return wpk ? "Watts/kg" : "Watts";
+    case ESTIMATE_VO2MAX: return "ml/min/kg";
+    default: return QString();      // the endurance index has none
+    }
+}
+
 static QString
 curveDetail(const MetricDetail &m)
 {
@@ -318,11 +342,14 @@ curveJson(const MetricDetail &m, int index)
     if (m.type == METRIC_ESTIMATE) {
         o.insert("model", m.model);
         o.insert("estimate", estimateToken(m.estimate));
+        o.insert("wpk", m.wpk);
         if (m.estimate == ESTIMATE_BEST) {
             o.insert("duration", m.estimateDuration);
             o.insert("unit", unitName(m.estimateDuration_units));
         }
     }
+    // the axis a curve goes on is chosen by these
+    o.insert("units", m.uunits);
     o.insert("style", styleName(m.curveStyle));
     o.insert("marker", markerName(m.symbolStyle));
     o.insert("color", colorText(m.penColor));
@@ -487,8 +514,8 @@ supportedTypes(const QJsonObject &args, QString &error)
 static bool
 hasDrawing(const QJsonObject &args)
 {
-    return args.contains("style") || args.contains("symbol") || args.contains("color")
-        || args.contains("fill") || args.contains("filter");
+    return args.contains("style") || args.contains("marker") || args.contains("color")
+        || args.contains("fill") || args.contains("filter") || args.contains("units");
 }
 
 static int
@@ -513,15 +540,17 @@ checkFilter(Context *context, const QString &expr, QString &error)
 
 struct Drawing {
     bool style = false;
-    bool symbol = false;
+    bool marker = false;
     bool color = false;
     bool fill = false;
     bool filter = false;
+    bool units = false;
     QwtPlotCurve::CurveStyle curveStyle = QwtPlotCurve::Lines;
     QwtSymbol::Style symbolStyle = QwtSymbol::NoSymbol;
     QColor pen;
     bool fillCurve = false;
     QString datafilter;
+    QString uunits;
 };
 
 static bool
@@ -531,9 +560,9 @@ readDrawing(Context *context, const QJsonObject &args, Drawing &drawing, QString
         drawing.style = true;
         drawing.curveStyle = styleFromName(args.value("style").toString());
     }
-    if (args.contains("symbol")) {
-        drawing.symbol = true;
-        drawing.symbolStyle = markerFromName(args.value("symbol").toString());
+    if (args.contains("marker")) {
+        drawing.marker = true;
+        drawing.symbolStyle = markerFromName(args.value("marker").toString());
     }
     if (args.contains("color")) {
         drawing.color = true;
@@ -549,6 +578,10 @@ readDrawing(Context *context, const QJsonObject &args, Drawing &drawing, QString
         if (!checkFilter(context, expression, error)) return false;
         drawing.datafilter = storedFilter(expression);
     }
+    if (args.contains("units")) {
+        drawing.units = true;
+        drawing.uunits = args.value("units").toString();
+    }
     return true;
 }
 
@@ -556,13 +589,17 @@ static void
 applyDrawing(MetricDetail &detail, const Drawing &drawing)
 {
     if (drawing.style) detail.curveStyle = drawing.curveStyle;
-    if (drawing.symbol) detail.symbolStyle = drawing.symbolStyle;
+    if (drawing.marker) detail.symbolStyle = drawing.symbolStyle;
     if (drawing.color) {
         detail.penColor = drawing.pen;
         detail.brushColor = drawing.pen;
     }
     if (drawing.fill) detail.fillCurve = drawing.fillCurve;
     if (drawing.filter) detail.datafilter = drawing.datafilter;
+    if (drawing.units) {
+        detail.uunits = drawing.uunits;
+        detail.units = drawing.uunits;
+    }
 }
 
 static void
@@ -601,6 +638,10 @@ strayCurveArgs(const QJsonObject &args, QString &error)
         error = "--model is part of an estimate curve";
         return false;
     }
+    if (args.contains("wpk") && !args.contains("estimate")) {
+        error = "--wpk is for an estimate curve; a best of watts per kilogram is --series wpk";
+        return false;
+    }
     if (args.contains("duration") && !estimateBest) {
         error = "--duration is the length of an estimate of best power";
         return false;
@@ -617,7 +658,7 @@ strayCurveArgs(const QJsonObject &args, QString &error)
 }
 
 static bool
-buildBest(const QJsonObject &args, int index, MetricDetail &detail, QString &error)
+buildBest(Context *context, const QJsonObject &args, int index, MetricDetail &detail, QString &error)
 {
     int duration = args.value("best").toInt();
     if (!durationOk(duration, error)) return false;
@@ -649,6 +690,7 @@ buildBest(const QJsonObject &args, int index, MetricDetail &detail, QString &err
     detail.uname = uname;
     detail.name = uname;
     detail.bestSymbol = QString(uname).replace(" ", "_");
+    detail.uunits = detail.units = bestUnits(series, context);
     return true;
 }
 
@@ -704,10 +746,13 @@ buildEstimate(Context *context, const QJsonObject &args, int index, MetricDetail
     detail.estimate = estimate;
     detail.estimateDuration = duration;
     detail.estimateDuration_units = units;
+    // per kilogram, as Curve Settings' Absolute / Per Kilogram
+    detail.wpk = args.value("wpk").toBool(false);
     QString uname = MetricDetail::estimateName(estimate, model->code(), duration, units);
     detail.uname = uname;
     detail.name = uname;
     detail.symbol = QString(uname).replace(" ", "_");
+    detail.uunits = detail.units = estimateUnits(estimate, detail.wpk);
     return true;
 }
 
@@ -728,7 +773,7 @@ buildCurve(Context *context, const QJsonObject &args, int index, MetricDetail &d
         }
         if (!metricFromSymbol(symbols.first(), index, detail, error)) return false;
     } else if (args.contains("best")) {
-        if (!buildBest(args, index, detail, error)) return false;
+        if (!buildBest(context, args, index, detail, error)) return false;
     } else if (args.contains("estimate")) {
         if (!buildEstimate(context, args, index, detail, error)) return false;
     } else {
@@ -746,6 +791,7 @@ sameCurve(const MetricDetail &want, const MetricDetail &got)
     if (want.curveStyle != got.curveStyle || want.symbolStyle != got.symbolStyle) return false;
     if ((want.penColor.rgb() & 0x00ffffff) != (got.penColor.rgb() & 0x00ffffff)) return false;
     if (want.fillCurve != got.fillCurve || want.datafilter != got.datafilter) return false;
+    if (want.uunits != got.uunits || want.uname != got.uname || want.wpk != got.wpk) return false;
     if (want.type == METRIC_BEST) {
         if (want.duration != got.duration || want.duration_units != got.duration_units) return false;
         if (want.series != got.series || want.bestSymbol != got.bestSymbol) return false;
@@ -759,11 +805,12 @@ sameCurve(const MetricDetail &want, const MetricDetail &got)
     return true;
 }
 
-// operator>> drops a METRIC_DB curve it does not recognise, without saying so
+// the charts as XML, read back to check nothing is lost in the file: an
+// internal check (curves are built from what reading accepts, the unknown
+// metrics are caught before), the XML is what gets saved
 static bool
-roundTrip(const QList<LTMSettings> &charts, QString &error)
+roundTrip(const QList<LTMSettings> &charts, QString &xml, QString &error)
 {
-    QString xml;
     LTMChartParser::serializeToQString(&xml, charts);
 
     QXmlInputSource source;
@@ -814,9 +861,9 @@ writeCharts(Athlete *athlete, QList<LTMSettings> charts, const QJsonObject &args
                     QString("saving the charts would drop curves whose metric is not defined: %1. "
                             "Define the metrics again, or pass --drop-unknown").arg(lost.join("; ")));
 
-    QString error;
-    if (!roundTrip(charts, error)) return CommandResult::failure(Status::Usage, error);
-    if (!athlete->saveCharts(charts, &error)) return CommandResult::failure(Status::Failed, error);
+    QString error, xml;
+    if (!roundTrip(charts, xml, error)) return CommandResult::failure(Status::Failed, error);
+    if (!athlete->saveCharts(charts, &error, &xml)) return CommandResult::failure(Status::Failed, error);
     return CommandResult::success();
 }
 
@@ -928,6 +975,8 @@ editChart(CommandEnvironment &env, const CommandRequest &request)
         return CommandResult::failure(Status::Usage, "give --name, --by, or a curve with --metric, --best or --estimate");
     if (drawing && !replace)
         return CommandResult::failure(Status::Usage, "to change one curve, use 'chart library curve edit'");
+    // a curve's own flags without a curve would be dropped without a word
+    if (!replace && !strayCurveArgs(request.args, error)) return CommandResult::failure(Status::Usage, error);
 
     Athlete *athlete = env.session->athlete();
     int index = findChart(athlete->presets, request.args.value("chart").toString(), error);
@@ -1049,8 +1098,12 @@ editCurve(CommandEnvironment &env, const CommandRequest &request)
     if (sources > 1)
         return CommandResult::failure(Status::Usage, "give only one of --metric, --best and --estimate");
     if (sources == 1) {
+        // an estimate stays per kilogram, or not, unless --wpk says
+        QJsonObject args = request.args;
+        const MetricDetail &old = chart.metrics.at(index);
+        if (args.contains("estimate") && !args.contains("wpk") && old.type == METRIC_ESTIMATE) args.insert("wpk", old.wpk);
         MetricDetail detail;
-        if (!buildCurve(env.session->context(), request.args, index, detail, error))
+        if (!buildCurve(env.session->context(), args, index, detail, error))
             return CommandResult::failure(Status::Usage, error);
         chart.metrics[index] = detail;
     } else if (hasDrawing(request.args)) {
@@ -1112,10 +1165,11 @@ static void
 drawingParams(CommandSpec &spec)
 {
     spec.params << ParamSpec("style", ParamType::String, "how the curve is drawn").oneOf(styleNames);
-    spec.params << ParamSpec("symbol", ParamType::String, "marker drawn on the curve").oneOf(markerNames);
+    spec.params << ParamSpec("marker", ParamType::String, "marker drawn on the curve").oneOf(markerNames);
     spec.params << ParamSpec("color", ParamType::String, "pen color as RRGGBB");
     spec.params << ParamSpec("fill", ParamType::Bool, "fill under the curve");
     spec.params << ParamSpec("filter", ParamType::String, "curve data filter, such as isRun; \"\" for none");
+    spec.params << ParamSpec("units", ParamType::String, "units of the curve's axis; curves with the same units share one");
 }
 
 // every command that writes the file
@@ -1148,6 +1202,7 @@ typedCurveParams(CommandSpec &spec, bool metricRepeated)
     spec.params << ParamSpec("estimate", ParamType::String, "wprime, cp, ftp, pmax, best, ei or vo2max").oneOf(estimateNames);
     spec.params << ParamSpec("model", ParamType::String, "cp2, cp3 or ext").oneOf(modelNames);
     spec.params << ParamSpec("duration", ParamType::Int, "length of an estimate of best power");
+    spec.params << ParamSpec("wpk", ParamType::Bool, "an estimate per kilogram instead of absolute");
     drawingParams(spec);
     refusedParams(spec);
 }
@@ -1184,8 +1239,8 @@ registerChartLibraryCommands(CommandRegistry &registry)
     add.spec.description =
         "A curve is a metric from 'metric list', a best (a duration of one series)\n"
         "or an estimate from a CP model (cp2, cp3 or ext). Several --metric flags\n"
-        "and no drawing flags keep today's metric curves. A style, symbol, color,\n"
-        "fill or filter applies to one curve; add further curves with\n"
+        "and no drawing flags keep today's metric curves. A style, marker, color,\n"
+        "fill, filter or units applies to one curve; add further curves with\n"
         "'chart library curve add'. --by defaults to week. PMC, Banister,\n"
         "performance, formula and measure curves are refused. A chart that cannot\n"
         "be read back is refused and the file is left unchanged.";

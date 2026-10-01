@@ -127,7 +127,9 @@ class Athlete : public QObject
         QList<LTMSettings> presets;
         bool presetsDirty = false; // set when the sidebar charts change, so close can save them
         void loadCharts(); // load charts.xml
-        bool saveCharts(const QList<LTMSettings> &charts, QString *error = nullptr); // write charts.xml, they become the presets
+        // write charts.xml, they become the presets; serialized is their
+        // XML when the caller has it already
+        bool saveCharts(const QList<LTMSettings> &charts, QString *error = nullptr, const QString *serialized = nullptr);
         void translateDefaultCharts(QList<LTMSettings>&charts);
 
         // DataFilter global storage/cache

@@ -1390,6 +1390,23 @@ class TestRest(Headless):
         self.assertEqual(status, 200, data)
         self.assertEqual(json.loads(data)["data"]["files"][0]["status"], "imported")
 
+    def test_chart_library_routes(self):
+        a = "/athletes/%s/charts" % self.athlete
+        charts = os.path.join(self.folder, "config", "charts.xml")
+        self.addCleanup(lambda: os.path.exists(charts) and os.remove(charts))
+        self.jcall("POST", a, body={"name": "Rest", "metric": ["average_power"]})
+        env = self.jcall("POST", a + "/Rest/curves", body={"estimate": "cp", "model": "cp2", "wpk": True})
+        self.assertEqual([m["type"] for m in env["data"]["metrics"]], ["metric", "estimate"])
+        env = self.jcall("PUT", a + "/Rest/curves/2", body={"color": "123456"})
+        self.assertEqual(env["data"]["metrics"][1]["color"], "123456")
+        self.assertTrue(env["data"]["metrics"][1]["wpk"])
+        env = self.jcall("DELETE", a + "/Rest/curves/1")
+        self.assertEqual([m["type"] for m in env["data"]["metrics"]], ["estimate"])
+        self.jcall("PUT", a + "/Rest/curves/5", body={"color": "123456"}, expect=400)
+        self.assertEqual(self.jcall("GET", a + "/Rest")["data"]["name"], "Rest")
+        self.jcall("DELETE", a + "/Rest")
+        self.jcall("GET", a + "/Rest", expect=400)
+
     def test_serve_options_are_range_checked(self):
         for args in (("--port", "0"), ("--port", "70000"), ("--max-upload", "4096")):
             r = self.gc("serve", *args, timeout=60)
@@ -1712,6 +1729,16 @@ class TestLayoutTiles(Headless):
 
 class TestChartLibrary(Headless):
 
+    def setUp(self):
+        # every test starts from the built-in charts and no user metrics
+        self.drop_charts()
+        self.addCleanup(self.drop_charts)
+        self.keep(os.path.join(self.home, "usermetrics.xml"))
+
+    def drop_charts(self):
+        if os.path.exists(self.charts_file()):
+            os.remove(self.charts_file())
+
     def charts_file(self):
         return os.path.join(self.folder, "config", "charts.xml")
 
@@ -1726,7 +1753,6 @@ class TestChartLibrary(Headless):
 
     def test_library_filters_are_stored_as_the_gui_stores_them(self):
         path = self.charts_file()
-        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
         charts = self.gcj("chart", "library", "list")["data"]["charts"]
         chart = next(c for c in charts if c["metrics"] and c["metrics"][0]["type"] == "metric")
         first = chart["metrics"][0]
@@ -1747,7 +1773,6 @@ class TestChartLibrary(Headless):
 
     def test_library_file_is_only_written_by_a_change(self):
         path = self.charts_file()
-        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
         self.gcj("chart", "library", "add", "--name", "Speed", "--metric", "average_speed")
         # a write on close would change the time stamp
         t = os.stat(path).st_mtime - 100
@@ -1762,9 +1787,7 @@ class TestChartLibrary(Headless):
 
     def test_library_keeps_the_curves_of_a_removed_metric(self):
         path = self.charts_file()
-        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
         self.gcj("metric", "user", "add", "--symbol", "keep_me", "--name", "Keep me", "--program", ONES)
-        self.addCleanup(lambda: self.gca("metric", "user", "remove", "keep_me"))
         self.gcj("chart", "library", "add", "--name", "Kept", "--metric", "keep_me", "--metric", "average_power")
         with open(path, "rb") as f:
             saved = f.read()
@@ -1786,7 +1809,6 @@ class TestChartLibrary(Headless):
 
     def test_library_names_curves_as_curve_settings(self):
         path = self.charts_file()
-        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
         shown = self.gcj("chart", "library", "add", "--name", "Names", "--best", "20", "--unit", "min",
                          "--series", "heartrate")["data"]["metrics"]
         self.assertEqual(shown[0]["detail"], "20 min heartrate")
@@ -1824,6 +1846,7 @@ class TestChartLibrary(Headless):
             "index": 1,
             "type": "metric", "symbol": "p_v", "formula": "P_v", "name": "P v", "detail": "p_v",
             "style": "line", "marker": "circle", "color": "0078d4", "fill": False, "filter": None,
+            "units": "W/kph",
         }])
         self.assertTrue(os.path.exists(path))
         shown = self.gcj("chart", "library", "show", "P v")["data"]
@@ -1864,7 +1887,7 @@ class TestChartLibrary(Headless):
 
     def test_library_curves_keep_their_own_drawing(self):
         self.gcj("chart", "library", "add", "--name", "Estimated VO2max", "--by", "day",
-                 "--metric", "vo2max", "--style", "dots", "--symbol", "none")
+                 "--metric", "vo2max", "--style", "dots", "--marker", "none")
         text = self.gca("chart", "library", "show", "Estimated VO2max")
         self.assertEqual(text.code, 0, text)
         self.assertIn(b"metric  vo2max  dots  none", text.out)
@@ -1879,7 +1902,7 @@ class TestChartLibrary(Headless):
 
         best = self.gcj("chart", "library", "add", "--name", "Peak power", "--by", "day",
                         "--best", "45", "--unit", "min", "--series", "power",
-                        "--style", "dots", "--symbol", "circle")["data"]["metrics"]
+                        "--style", "dots", "--marker", "circle")["data"]["metrics"]
         self.assertEqual(best[0]["type"], "best")
         self.assertEqual(best[0]["detail"], "45 min power")
         self.assertEqual(best[0]["series"], "power")
@@ -1903,7 +1926,7 @@ class TestChartLibrary(Headless):
         self.assertEqual(shown[2]["style"], "line")
         self.assertEqual(shown[2]["marker"], "circle")
 
-        self.gcj("chart", "library", "curve", "edit", "Peak power", "1", "--style", "line", "--symbol", "square")
+        self.gcj("chart", "library", "curve", "edit", "Peak power", "1", "--style", "line", "--marker", "square")
         shown = self.gcj("chart", "library", "show", "Peak power")["data"]["metrics"]
         self.assertEqual(shown[0]["style"], "line")
         self.assertEqual(shown[0]["marker"], "square")
@@ -1928,9 +1951,61 @@ class TestChartLibrary(Headless):
         self.assertEqual([m["type"] for m in shown], ["best", "estimate"])
         self.gcj("chart", "library", "remove", "Estimated VO2max")
         self.gcj("chart", "library", "remove", "Peak power")
-        os.remove(self.charts_file())
-        self.assertFalse(os.path.exists(self.charts_file()))
         self.assertClosed()
+
+    def test_library_built_in_charts_are_the_ground_truth(self):
+        curves = {m["detail"]: m for m in self.gcj("chart", "library", "show", "CP History")["data"]["metrics"]}
+        self.assertEqual({d: curves[d]["units"] for d in ("CP (ext)", "W' (ext)", "p-Max (ext)")},
+                         {"CP (ext)": "Watts", "W' (ext)": "Joules", "p-Max (ext)": "Watts"})
+        self.assertFalse(curves["CP (ext)"]["wpk"])
+        best = next(m for m in self.gcj("chart", "library", "show", "CP Analysis")["data"]["metrics"] if m["type"] == "best")
+        self.assertEqual((best["detail"], best["units"]), ("30 min power", "Watts"))
+        self.assertFalse(os.path.exists(self.charts_file()))
+
+        # made here, they are as the built-in ones
+        shown = self.gcj("chart", "library", "add", "--name", "Mine", "--best", "30", "--unit", "min",
+                         "--series", "power")["data"]["metrics"]
+        self.assertEqual(shown[0]["units"], "Watts")
+        for estimate, units in (("cp", "Watts"), ("wprime", "Joules"), ("pmax", "Watts"), ("vo2max", "ml/min/kg")):
+            shown = self.gcj("chart", "library", "curve", "add", "Mine", "--estimate", estimate, "--model", "ext")["data"]["metrics"]
+            self.assertEqual(shown[-1]["units"], units, estimate)
+
+    def test_library_estimates_per_kilogram(self):
+        shown = self.gcj("chart", "library", "add", "--name", "Per kg", "--estimate", "cp", "--model", "cp2",
+                         "--wpk")["data"]["metrics"]
+        self.assertTrue(shown[0]["wpk"])
+        self.assertEqual(shown[0]["units"], "Watts/kg")
+        # a drawing, or another estimate, keeps it per kilogram
+        shown = self.gcj("chart", "library", "curve", "edit", "Per kg", "1", "--color", "aabbcc")["data"]["metrics"]
+        self.assertTrue(shown[0]["wpk"])
+        shown = self.gcj("chart", "library", "curve", "edit", "Per kg", "1", "--estimate", "cp", "--model", "cp3")["data"]["metrics"]
+        self.assertTrue(shown[0]["wpk"])
+        self.assertEqual(shown[0]["model"], "cp3")
+        shown = self.gcj("chart", "library", "curve", "edit", "Per kg", "1", "--estimate", "cp", "--model", "cp3",
+                         "--wpk=false")["data"]["metrics"]
+        self.assertFalse(shown[0]["wpk"])
+        shown = self.gcj("chart", "library", "curve", "edit", "Per kg", "1", "--units", "W")["data"]["metrics"]
+        self.assertEqual(shown[0]["units"], "W")
+
+    def test_library_refuses_what_it_would_drop(self):
+        self.gcj("chart", "library", "add", "--name", "Refusals", "--metric", "average_power")
+        with open(self.charts_file(), "rb") as f:
+            saved = f.read()
+        for args in (("chart", "library", "edit", "Refusals", "--name", "X", "--series", "power"),
+                     ("chart", "library", "edit", "Refusals", "--by", "day", "--model", "cp2"),
+                     ("chart", "library", "edit", "Refusals", "--name", "X", "--wpk"),
+                     ("chart", "library", "curve", "add", "Refusals", "--metric", "average_speed", "--wpk"),
+                     ("chart", "library", "curve", "add", "Refusals", "--metric", "average_speed", "--series", "power"),
+                     ("chart", "library", "curve", "edit", "Refusals", "9", "--color", "112233"),
+                     ("chart", "library", "curve", "remove", "Refusals", "0")):
+            self.gcj(*args, expect=2)
+        with open(self.charts_file(), "rb") as f:
+            self.assertEqual(f.read(), saved)
+
+        # a curve can become another kind
+        shown = self.gcj("chart", "library", "curve", "edit", "Refusals", "1", "--best", "5", "--unit", "min",
+                         "--series", "heartrate")["data"]["metrics"]
+        self.assertEqual((shown[0]["type"], shown[0]["detail"]), ("best", "5 min heartrate"))
 
 
 if __name__ == "__main__":
