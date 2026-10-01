@@ -71,18 +71,20 @@ ResultFormat::scalar(const QJsonValue &v)
 // identifying columns come first in tables, in this order
 static const QStringList preferred = { "number", "id", "name", "type", "activity", "start", "stop", "duration", "date", "status", "sport", "symbol" };
 
-// flatten one level of nesting so metrics.x become columns
+// one level of nesting flattened, so metrics.x become columns: named by
+// their keys, prefixed with the object's name where that would clash (text
+// tables and CSV alike)
 static QJsonObject
 flatten(const QJsonObject &row)
 {
     QJsonObject out;
+    for (const QString &k : row.keys()) if (!row.value(k).isObject()) out.insert(k, row.value(k));
     for (const QString &k : row.keys()) {
-        QJsonValue v = row.value(k);
-        if (v.isObject()) {
-            QJsonObject inner = v.toObject();
-            for (const QString &ik : inner.keys()) out.insert(ik, inner.value(ik));
-        } else {
-            out.insert(k, v);
+        if (!row.value(k).isObject()) continue;
+        QJsonObject inner = row.value(k).toObject();
+        for (const QString &ik : inner.keys()) {
+            QString name = out.contains(ik) ? k + "." + ik : ik;
+            out.insert(name, inner.value(ik));
         }
     }
     return out;
@@ -249,24 +251,6 @@ ResultFormat::csvLine(const QStringList &fields)
     return out.join(",") + "\n";
 }
 
-// nested objects become columns named by their keys, as in the text table,
-// prefixed with the object's name where that would clash
-static QJsonObject
-csvFlatten(const QJsonObject &row)
-{
-    QJsonObject out;
-    for (const QString &k : row.keys()) if (!row.value(k).isObject()) out.insert(k, row.value(k));
-    for (const QString &k : row.keys()) {
-        if (!row.value(k).isObject()) continue;
-        QJsonObject inner = row.value(k).toObject();
-        for (const QString &ik : inner.keys()) {
-            QString name = out.contains(ik) ? k + "." + ik : ik;
-            out.insert(name, inner.value(ik));
-        }
-    }
-    return out;
-}
-
 // key,value lines for everything, arrays of objects by index
 static void
 csvPaths(QStringList &lines, const QString &path, const QJsonValue &v)
@@ -297,7 +281,7 @@ ResultFormat::csv(const QJsonObject &data, const QStringList &then)
 
     if (lists == 1 && structured == 1) {
         QList<QJsonObject> flat;
-        for (const QJsonValue &r : data.value(listKey).toArray()) flat << csvFlatten(r.toObject());
+        for (const QJsonValue &r : data.value(listKey).toArray()) flat << flatten(r.toObject());
 
         QStringList columns = tableColumns(flat, then);
 

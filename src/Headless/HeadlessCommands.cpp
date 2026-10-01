@@ -87,7 +87,7 @@ CommandRunner::run(const CommandRegistry &registry, CommandRequest request, cons
 
         // athlete commands need an initialised core and an athlete
         if (!HeadlessApp::isInitialised())
-            return CommandResult::failure(Status::NotFound, QString("athletes folder '%1' does not exist").arg(request.home));
+            return CommandResult::failure(Status::NotFound, HeadlessApp::missingHome(request.home));
 
         QString athlete = resolveAthlete(request.home, request.athlete, error);
         if (athlete.isEmpty()) return CommandResult::failure(Status::NotFound, error);

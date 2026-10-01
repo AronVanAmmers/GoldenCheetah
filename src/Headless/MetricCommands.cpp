@@ -34,6 +34,8 @@
 #include "RideMetric.h"
 #include "Specification.h"
 #include "PMCData.h"
+
+#include <functional>
 #include "PDModel.h"
 #include "RideFileCache.h"
 #include "Estimator.h"
@@ -99,15 +101,25 @@ meanMax(AthleteSession &session, const QJsonObject &args, RideFile::SeriesType s
     return meanMaxOf(session.context(), items, allRides, s.from, s.to, series);
 }
 
+// the models cp fits, by the names --model takes
+static const QList<QPair<QString, std::function<PDModel *(Context *)>>> &
+modelTable()
+{
+    static const QList<QPair<QString, std::function<PDModel *(Context *)>>> models = {
+        { "cp2", [](Context *c) -> PDModel * { return new CP2Model(c); } },
+        { "cp3", [](Context *c) -> PDModel * { return new CP3Model(c); } },
+        { "extended", [](Context *c) -> PDModel * { return new ExtendedModel(c); } },
+        { "multi", [](Context *c) -> PDModel * { return new MultiModel(c); } },
+        { "ws", [](Context *c) -> PDModel * { return new WSModel(c); } },
+    };
+    return models;
+}
+
 PDModel *
 fitModel(Context *context, const QString &name, const QVector<double> &data)
 {
     PDModel *model = nullptr;
-    if (name == "cp2") model = new CP2Model(context);
-    else if (name == "cp3") model = new CP3Model(context);
-    else if (name == "extended") model = new ExtendedModel(context);
-    else if (name == "multi") model = new MultiModel(context);
-    else if (name == "ws") model = new WSModel(context);
+    for (const auto &m : modelTable()) if (m.first == name) model = m.second(context);
     if (!model) return nullptr;
 
     // the critical power chart's default search intervals
@@ -118,23 +130,44 @@ fitModel(Context *context, const QString &name, const QVector<double> &data)
     return model;
 }
 
-QStringList modelNames() { return { "cp2", "cp3", "extended", "multi", "ws" }; }
+QStringList
+modelNames()
+{
+    QStringList names;
+    for (const auto &m : modelTable()) names << m.first;
+    return names;
+}
+
+// the series by the names --series takes; "power" is also watts, unlisted
+struct SeriesName {
+    const char *name;
+    RideFile::SeriesType series;
+    bool listed;
+};
+
+static const SeriesName seriesTable[] = {
+    { "watts", RideFile::watts, true }, { "power", RideFile::watts, false }, { "hr", RideFile::hr, true },
+    { "cad", RideFile::cad, true }, { "speed", RideFile::kph, true }, { "nm", RideFile::nm, true },
+    { "vam", RideFile::vam, true }, { "wpk", RideFile::wattsKg, true }, { "xpower", RideFile::xPower, true },
+    { "isopower", RideFile::IsoPower, true }, { "apower", RideFile::aPower, true },
+};
 
 RideFile::SeriesType
 seriesFromName(const QString &name, bool &ok)
 {
     ok = true;
-    static const QMap<QString, RideFile::SeriesType> map = {
-        { "watts", RideFile::watts }, { "power", RideFile::watts }, { "hr", RideFile::hr },
-        { "cad", RideFile::cad }, { "speed", RideFile::kph }, { "nm", RideFile::nm },
-        { "vam", RideFile::vam }, { "wpk", RideFile::wattsKg }, { "xpower", RideFile::xPower },
-        { "isopower", RideFile::IsoPower }, { "apower", RideFile::aPower }
-    };
-    if (!map.contains(name.toLower())) { ok = false; return RideFile::watts; }
-    return map.value(name.toLower());
+    for (const SeriesName &s : seriesTable) if (name.toLower() == s.name) return s.series;
+    ok = false;
+    return RideFile::watts;
 }
 
-QStringList seriesNames() { return { "watts", "hr", "cad", "speed", "nm", "vam", "wpk", "xpower", "isopower", "apower" }; }
+QStringList
+seriesNames()
+{
+    QStringList names;
+    for (const SeriesName &s : seriesTable) if (s.listed) names << s.name;
+    return names;
+}
 
 PMCData *
 pmcFor(AthleteSession &session, const QString &metric)

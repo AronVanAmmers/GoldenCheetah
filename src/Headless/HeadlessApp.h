@@ -55,6 +55,9 @@ class HeadlessApp
 
         static bool isInitialised();
 
+        // the error for an athletes folder that isn't there
+        static QString missingHome(const QString &home);
+
         // without an athletes folder: just the metrics, for the commands
         // that list or describe them
         static void initialiseMetrics();

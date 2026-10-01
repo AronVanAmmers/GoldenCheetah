@@ -146,13 +146,28 @@ RestHandler::sendJson(HttpResponse &response, int status, const QJsonObject &bod
     response.write(QJsonDocument(body).toJson(QJsonDocument::Compact), true);
 }
 
+// a command's status by its name, else what the HTTP layer refused
+static QString
+errorName(int http)
+{
+    for (Status s : { Status::Usage, Status::NotFound, Status::Locked, Status::Failed, Status::Internal })
+        if (httpStatusFor(s) == http) return statusName(s);
+    switch (http) {
+    case 401: return "unauthorized";
+    case 403: return "forbidden";
+    case 405: return "method_not_allowed";
+    case 413: return "too_large";
+    case 503: return "unavailable";
+    default: return "usage";
+    }
+}
+
 void
 RestHandler::sendError(HttpResponse &response, int status, const QString &message)
 {
     QJsonObject o;
     o.insert("ok", false);
-    o.insert("status", status == 404 ? "not_found" : status == 401 ? "unauthorized" : status == 403 ? "forbidden"
-                       : status == 500 ? "internal" : status == 503 ? "unavailable" : "usage");
+    o.insert("status", errorName(status));
     o.insert("error", message);
     sendJson(response, status, o);
 }

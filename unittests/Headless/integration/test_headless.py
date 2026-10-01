@@ -1151,8 +1151,8 @@ class TestRest(Headless):
         self.assertEqual(env["status"], "not_found")
         self.jcall("GET", "/athletes/%s/activities?colour=red" % self.athlete, expect=400)
         self.jcall("GET", "/nothing/here", expect=404)
-        status, _, _ = self.call("PUT", "/athletes")
-        self.assertEqual(status, 405)
+        env = self.jcall("PUT", "/athletes", expect=405)
+        self.assertEqual(env["status"], "method_not_allowed")
         self.jcall("POST", "/athletes/%s/imports" % self.athlete, raw=b"xx",
                    headers={"Content-Type": "application/octet-stream"}, expect=400)
 

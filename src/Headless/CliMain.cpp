@@ -184,7 +184,7 @@ cliMain(int argc, char **argv)
             return finish(int(Status::Usage));
         }
         if (!HeadlessApp::isInitialised()) {
-            writeErr(QString("error: athletes folder '%1' does not exist\n").arg(home));
+            writeErr(QString("error: %1\n").arg(HeadlessApp::missingHome(home)));
             return finish(int(Status::NotFound));
         }
         RestServer::Options options;

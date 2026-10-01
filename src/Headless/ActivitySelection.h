@@ -45,8 +45,13 @@ struct ActivitySelection {
     QString sport;              // Bike, Run, Swim ... as in the Sport field
     bool planned = false;       // planned instead of actual activities
     int limit = 0;              // most recent n (0 = all)
+    bool all = false;           // --all, for the commands that change activities
 
     bool isEmpty() const;       // nothing chosen, i.e. everything
+
+    // commands that change activities change none until some are chosen
+    // or --all is given: the usage error, or empty when that is the case
+    QString requireExplicit() const;
 
     // the parameters every selecting command accepts
     static QList<ParamSpec> params(bool positionalActivities = true);
@@ -61,6 +66,10 @@ struct ActivitySelection {
 
 // values of a repeated parameter, each of which may be comma separated
 QStringList splitList(const QJsonValue &v);
+
+// NAME=VALUE pairs, as --set takes them; false with bad set to the first
+// one that has no name
+bool parseAssignments(const QJsonValue &list, QList<QPair<QString, QString>> &pairs, QString &bad);
 
 } // namespace Headless
 

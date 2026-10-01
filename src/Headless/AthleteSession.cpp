@@ -282,7 +282,7 @@ CommandResult
 requireHome(const CommandEnvironment &env)
 {
     if (!HeadlessApp::isInitialised())
-        return CommandResult::failure(Status::NotFound, QString("athletes folder '%1' does not exist").arg(env.home));
+        return CommandResult::failure(Status::NotFound, HeadlessApp::missingHome(env.home));
     return CommandResult::success();
 }
 

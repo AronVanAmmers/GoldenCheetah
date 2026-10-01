@@ -77,6 +77,7 @@ ActivitySelection::fromArgs(const QJsonObject &args)
     s.sport = args.value("sport").toString();
     s.planned = args.value("planned").toBool(false);
     s.limit = args.value("limit").toInt(0);
+    s.all = args.value("all").toBool(false);
     return s;
 }
 
@@ -177,6 +178,29 @@ ActivitySelection::resolve(AthleteSession &session, QList<RideItem *> &result, Q
     if (limit > 0 && list.count() > limit) list = list.mid(list.count() - limit);
 
     result = list;
+    return true;
+}
+
+QString
+ActivitySelection::requireExplicit() const
+{
+    if (isEmpty() && !all) return "choose activities (by name, --filter, --from ...) or pass --all";
+    return QString();
+}
+
+bool
+parseAssignments(const QJsonValue &list, QList<QPair<QString, QString>> &pairs, QString &bad)
+{
+    pairs.clear();
+    for (const QJsonValue &v : list.toArray()) {
+        QString text = v.toString();
+        int eq = text.indexOf('=');
+        if (eq <= 0) {
+            bad = text;
+            return false;
+        }
+        pairs << qMakePair(text.left(eq).trimmed(), text.mid(eq + 1));
+    }
     return true;
 }
 

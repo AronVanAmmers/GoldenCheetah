@@ -313,12 +313,11 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
 #endif
 
     ActivitySelection selection = ActivitySelection::fromArgs(request.args);
-    bool all = request.args.value("all").toBool(false);
     bool dryRun = request.args.value("dry-run").toBool(false);
 
     // don't rewrite every activity by accident
-    if (selection.isEmpty() && !all)
-        return CommandResult::failure(Status::Usage, "choose activities (by name, --filter, --from ...) or pass --all");
+    QString why = selection.requireExplicit();
+    if (!why.isEmpty()) return CommandResult::failure(Status::Usage, why);
 
     QList<RideItem *> items;
     QString error;
