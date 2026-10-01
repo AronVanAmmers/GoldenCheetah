@@ -18,6 +18,7 @@
 
 #include "ZoneData.h"
 #include "ActivitySelection.h"
+#include "ActivityJson.h"
 
 #include "Athlete.h"
 #include "RideItem.h"

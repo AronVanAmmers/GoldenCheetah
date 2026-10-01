@@ -24,6 +24,9 @@
 
 #include "HeadlessCommands.h"
 #include "ActivitySelection.h"
+#include "MetricNames.h"
+#include "ActivityJson.h"
+#include "IntervalData.h"
 #include "ResultFormat.h"
 
 #include "Settings.h"
@@ -37,72 +40,6 @@
 
 namespace Headless {
 
-// stable names for the interval types, the GUI's group titles are translated
-static const QList<QPair<QString, RideFileInterval::IntervalType>> &
-intervalTypes()
-{
-    static const QList<QPair<QString, RideFileInterval::IntervalType>> types = {
-        { "user", RideFileInterval::USER }, { "all", RideFileInterval::ALL },
-        { "device", RideFileInterval::DEVICE }, { "peakpower", RideFileInterval::PEAKPOWER },
-        { "peakpace", RideFileInterval::PEAKPACE }, { "effort", RideFileInterval::EFFORT },
-        { "route", RideFileInterval::ROUTE }, { "climb", RideFileInterval::CLIMB }
-    };
-    return types;
-}
-
-QString
-intervalTypeKey(int type)
-{
-    for (const auto &t : intervalTypes()) if (t.second == type) return t.first;
-    return QString();
-}
-
-IntervalCensus
-intervalCensus(RideItem *item)
-{
-    IntervalCensus census;
-    if (!item) return census;
-    for (IntervalItem *interval : item->intervals()) {
-        switch (interval->type) {
-        case RideFileInterval::DEVICE: census.recordedLaps++; break;
-        case RideFileInterval::USER: census.userIntervals++; break;
-        case RideFileInterval::EFFORT:
-        case RideFileInterval::PEAKPOWER:
-        case RideFileInterval::PEAKPACE:
-        case RideFileInterval::CLIMB:
-        case RideFileInterval::ROUTE: census.discoveredEfforts++; break;
-        default: break; // the entire activity
-        }
-    }
-    return census;
-}
-
-QString
-intervalCensusLine(const IntervalCensus &census)
-{
-    return QString("recorded laps: %1, user intervals: %2, discovered efforts: %3")
-        .arg(census.recordedLaps).arg(census.userIntervals).arg(census.discoveredEfforts);
-}
-
-// a type by its key or by the group title the GUI shows (EFFORTS, PEAK POWER)
-static bool
-intervalTypeFromName(const QString &name, RideFileInterval::IntervalType &type)
-{
-    QString n = QString(name).remove(' ').toLower();
-    for (const auto &t : intervalTypes()) {
-        QString title = RideFileInterval::typeDescription(t.second).remove(' ').toLower();
-        if (n == t.first || n == title || n + "s" == title) { type = t.second; return true; }
-    }
-    return false;
-}
-
-static QStringList
-intervalTypeNames()
-{
-    QStringList names;
-    for (const auto &t : intervalTypes()) names << t.first;
-    return names;
-}
 
 // the metrics the intervals sidebar shows, as set in the GUI's preferences
 static QStringList

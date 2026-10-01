@@ -25,6 +25,8 @@
 #include "HeadlessCommands.h"
 #include "ProgramArgs.h"
 #include "ActivitySelection.h"
+#include "ActivityJson.h"
+#include "IntervalData.h"
 #include "MetricData.h"
 #include "ZoneData.h"
 #include "ResultFormat.h"

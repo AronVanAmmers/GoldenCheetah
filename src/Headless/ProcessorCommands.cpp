@@ -25,6 +25,7 @@
 #include "HeadlessCommands.h"
 #include "HeadlessApp.h"
 #include "ActivitySelection.h"
+#include "ActivityJson.h"
 
 #include "Context.h"
 #include "Athlete.h"

@@ -20,6 +20,7 @@
 #include "HeadlessApp.h"
 #include "AthleteLock.h"
 #include "ActivitySelection.h"
+#include "ActivityJson.h"
 
 #include "Context.h"
 #include "Athlete.h"
