@@ -41,6 +41,7 @@
 #include "IntervalItem.h"
 #include "IntervalTreeView.h"
 #include "LTMSettings.h"
+#include "LTMChartParser.h"
 #include "RideImportWizard.h"
 #include "RideAutoImportConfig.h"
 #include "AthleteBackup.h"
@@ -247,10 +248,14 @@ Athlete::presetsEdited()
 }
 
 bool
-Athlete::saveCharts(const QList<LTMSettings> &charts, QString *error)
+Athlete::saveCharts(const QList<LTMSettings> &charts, QString *error, const QString *serialized)
 {
-    LTMSettings writer;
-    if (!writer.writeChartXML(home->config(), charts, error)) return false;
+    if (serialized) {
+        if (!LTMChartParser::save(LTMSettings::chartsFile(home->config()), *serialized, error)) return false;
+    } else {
+        LTMSettings writer;
+        if (!writer.writeChartXML(home->config(), charts, error)) return false;
+    }
     presets = charts;
     presetsDirty = false;
     return true;
