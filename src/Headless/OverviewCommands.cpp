@@ -41,6 +41,7 @@
 #include "TimeUtils.h"
 #include "Utils.h"
 #include "Overview.h"
+#include "GcWindowRegistry.h"
 #include "PerspectiveConfigParser.h"
 
 #include <QFile>
@@ -55,10 +56,8 @@
 
 namespace Headless {
 
-// window and tile ids as the GUI stores them (GcWindowRegistry.h, OverviewItems.h)
-static const int overviewWindow = 42, blankOverviewWindow = 49;
-enum TileType { RPE = 100, METRIC, META, ZONE, INTERVAL, PMC, ROUTE, KPI,
-                TOPN, DONUT, ACTIVITIES, ATHLETE, DATATABLE, USERCHART };
+// the overview windows as the GUI stores them; the tiles are OverviewItemType
+static const int overviewWindow = GcWindowTypes::Overview, blankOverviewWindow = GcWindowTypes::OverviewAnalysisBlank;
 
 struct OverviewChart {
     QString title;
