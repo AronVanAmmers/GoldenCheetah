@@ -325,6 +325,54 @@ OverviewWindow::getConfiguration() const
     return config;
 }
 
+// the configuration an overview starts with, the "config" property of the
+// built-in .gchart for its scope; "" when that can't be read
+QString
+OverviewWindow::defaultConfig(OverviewScope scope)
+{
+    // to make life simpler we place a .gchart export into the resources
+    // this is so we can design them and export rather than doing anything
+    // special with the contents.
+    //
+    // so we open the json doc and extract the config element
+    //
+    QString source;
+    switch (scope) {
+    case OverviewScope::ANALYSIS: source = ":charts/overview-analysis.gchart"; break;
+    case OverviewScope::TRENDS: source = ":charts/overview-trends.gchart"; break;
+    case OverviewScope::PLAN: source = ":charts/overview-plan.gchart"; break;
+    default: break;
+    }
+
+    QString config;
+    QFile file(source);
+    if (file.open(QIODevice::ReadOnly)) {
+        config = file.readAll();
+        file.close();
+    }
+
+    QJsonDocument chart = QJsonDocument::fromJson(config.toUtf8());
+    if (chart.isEmpty() || chart.isNull()) {
+
+badconfig:
+        fprintf(stderr, "bad config: %s\n", source.toStdString().c_str());
+        return QString();
+    }
+
+    // root is "CHART"
+    QJsonObject gchartroot = chart.object();
+    if (!gchartroot.contains("CHART")) goto badconfig;
+    QJsonObject ochart = gchartroot["CHART"].toObject();
+
+    // CHART PROPERTIES
+    if (!ochart.contains("PROPERTIES")) goto badconfig;
+    QJsonObject properties = ochart["PROPERTIES"].toObject();
+
+    // set from the config property
+    if (!properties.contains("config")) goto badconfig;
+    return properties["config"].toString();
+}
+
 void
 OverviewWindow::setConfiguration(QString config)
 {
@@ -344,47 +392,8 @@ OverviewWindow::setConfiguration(QString config)
 defaultsetup:
 
     if (config == "") {
-
-        // to make life simpler we place a .gchart export into the resources
-        // this is so we can design them and export rather than doing anything
-        // special with the contents.
-        //
-        // so we open the json doc and extract the config element
-        //
-        QString source;
-        switch (scope) {
-        case OverviewScope::ANALYSIS: source = ":charts/overview-analysis.gchart"; break;
-        case OverviewScope::TRENDS: source = ":charts/overview-trends.gchart"; break;
-        case OverviewScope::PLAN: source = ":charts/overview-plan.gchart"; break;
-        default: break;
-        }
-
-        QFile file(source);
-        if (file.open(QIODevice::ReadOnly)) {
-            config = file.readAll();
-            file.close();
-        }
-
-        QJsonDocument chart = QJsonDocument::fromJson(config.toUtf8());
-        if (chart.isEmpty() || chart.isNull()) {
-
-badconfig:
-            fprintf(stderr, "bad config: %s\n", source.toStdString().c_str());
-            return;
-        }
-
-        // root is "CHART"
-        QJsonObject gchartroot = chart.object();
-        if (!gchartroot.contains("CHART")) goto badconfig;
-        QJsonObject ochart = gchartroot["CHART"].toObject();
-
-        // CHART PROPERTIES
-        if (!ochart.contains("PROPERTIES")) goto badconfig;
-        QJsonObject properties = ochart["PROPERTIES"].toObject();
-
-        // set from the config property
-        if (!properties.contains("config")) goto badconfig;
-        config = properties["config"].toString();
+        config = defaultConfig(scope);
+        if (config == "") return;
     }
 
     //

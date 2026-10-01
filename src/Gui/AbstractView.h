@@ -20,6 +20,7 @@
 #define _GC_TabView_h 1
 
 #include <QWidget>
+#include "PerspectiveConfigParser.h"
 #include <QSplitter>
 #include <QFont>
 #include <QFontMetrics>
@@ -199,28 +200,20 @@ class AbstractView : public QWidget
 };
 
 // reads in perspectives
-class ViewParser : public QXmlDefaultHandler
+class ViewParser : public PerspectiveConfigParser
 {
 
 public:
-    ViewParser(Context *context, int type, bool useDefault) : style(2), context(context), type(type), useDefault(useDefault) {}
+    ViewParser(Context *context, int type, bool useDefault) : PerspectiveConfigParser(type), context(context), useDefault(useDefault) {}
 
     // the results!
     QList<Perspective*> perspectives;
-    int style;
 
-    // unmarshall
-    bool startDocument();
-    bool endDocument();
+    // a layout's windows are made once it has been read
     bool endElement( const QString&, const QString&, const QString &qName );
-    bool startElement( const QString&, const QString&, const QString &name, const QXmlAttributes &attrs );
-    bool characters( const QString& str );
 
 protected:
     Context *context;
-    GcChartWindow *chart;
-    Perspective *page; // current
-    int type; // what type of view is this VIEW_{HOME,ANALYSIS,PLAN,TRAIN}
     bool useDefault; // force a reset by using the default layouts
 
 };
