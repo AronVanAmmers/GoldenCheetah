@@ -275,7 +275,8 @@ pmcChart(CommandEnvironment &env, const CommandRequest &request)
         ctl.x << x; ctl.y << pmc->lts(d);
         atl.x << x; atl.y << pmc->sts(d);
         tsb.x << x; tsb.y << pmc->sb(d);
-        if (pmc->stress(d) > 0) { stress.x << x; stress.y << pmc->stress(d); }
+        double value = pmc->stress(d);
+        if (value > 0) { stress.x << x; stress.y << value; }
     }
 
     ChartPanel panel;

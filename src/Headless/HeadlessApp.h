@@ -71,6 +71,8 @@ class HeadlessApp
 
         // folders in home that look like athletes, sorted
         static QStringList athletes(const QString &home);
+        // a folder with a config or activities folder, not hidden
+        static bool looksLikeAthlete(const QString &folder);
 
         // is embedded python running?
         static bool pythonAvailable();

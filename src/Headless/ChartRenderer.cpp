@@ -267,7 +267,8 @@ buildPanel(const ChartPanel &panel, const ChartSpec &spec, bool last, const Them
         plot->insertLegend(legend, QwtPlot::TopLegend);
     }
 
-    plot->replot();
+    // scales for the renderer, which paints the plot itself
+    plot->updateAxes();
     return plot;
 }
 

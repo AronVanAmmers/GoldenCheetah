@@ -66,7 +66,7 @@ AthleteSession::open(const QString &home, const QString &name, const Options &op
         failure = CommandResult::failure(Status::NotFound, QString("athlete '%1' not found in %2").arg(name).arg(home));
         return nullptr;
     }
-    if (!HeadlessApp::athletes(home).contains(name)) {
+    if (!HeadlessApp::looksLikeAthlete(folder)) {
         failure = CommandResult::failure(Status::NotFound,
                     QString("%1 is not an athlete folder (it has no config or activities folder)").arg(info.absoluteFilePath()));
         return nullptr;

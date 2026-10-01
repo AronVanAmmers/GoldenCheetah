@@ -78,6 +78,15 @@ showActivity(CommandEnvironment &env, const CommandRequest &request)
     if (!item) return CommandResult::failure(Status::NotFound, error);
     bool metricUnits = !request.args.value("imperial").toBool(false);
 
+    // the PMC tile's metric, checked before any work is done
+    // the default overview tiles use GOVSS for runs and SwimScore for swims
+    QString pmcMetric = request.args.value("pmc-metric").toString();
+    if (pmcMetric.isEmpty()) pmcMetric = item->isRun ? "govss" : item->isSwim ? "swimscore" : "coggan_tss";
+    QString pmcSymbol = metricSymbol(pmcMetric);
+    if (!pmcSymbol.isEmpty()) pmcMetric = pmcSymbol;
+    if (!RideMetricFactory::instance().haveMetric(pmcMetric))
+        return CommandResult::failure(Status::Usage, QString("unknown metric '%1', see 'metric list'").arg(pmcMetric));
+
     QJsonObject o = activitySummary(item);
     addMetadata(o, item, QStringList());
 
@@ -105,12 +114,6 @@ showActivity(CommandEnvironment &env, const CommandRequest &request)
     o.insert("zones", zones);
 
     // form, fitness, fatigue and risk on the day, as the overview's PMC tile
-    // the default overview tiles use GOVSS for runs and SwimScore for swims
-    QString pmcMetric = request.args.value("pmc-metric").toString();
-    if (pmcMetric.isEmpty()) pmcMetric = item->isRun ? "govss" : item->isSwim ? "swimscore" : "coggan_tss";
-    if (!metricSymbol(pmcMetric).isEmpty()) pmcMetric = metricSymbol(pmcMetric);
-    if (!RideMetricFactory::instance().haveMetric(pmcMetric))
-        return CommandResult::failure(Status::Usage, QString("unknown metric '%1', see 'metric list'").arg(pmcMetric));
     PMCData *pmc = pmcFor(*env.session, pmcMetric);
     if (pmc) {
         QDate day = item->dateTime.date();
@@ -155,16 +158,17 @@ exportActivity(CommandEnvironment &env, const CommandRequest &request)
     RideItem *item = env.session->findActivity(request.args.value("activity").toString(), error);
     if (!item) return CommandResult::failure(Status::NotFound, error);
 
+    // the format first, before the whole file is read
     QString format = request.args.value("as").toString().toLower();
-    RideFile *ride = item->ride();
-    if (!ride) return CommandResult::failure(Status::Failed, "can't open the activity file");
-
     const RideFileFactory &factory = RideFileFactory::instance();
     bool special = format == "csv-gc" || format == "csv-wprime";
     if (!special && !factory.writeSuffixes().contains(format))
         return CommandResult::failure(Status::Usage,
                     QString("can't export as '%1', choose one of: %2, csv-gc, csv-wprime")
                     .arg(format).arg(factory.writeSuffixes().join(", ")));
+
+    RideFile *ride = item->ride();
+    if (!ride) return CommandResult::failure(Status::Failed, "can't open the activity file");
 
     QTemporaryDir tmp;
     QString suffix = special ? QString("csv") : format;

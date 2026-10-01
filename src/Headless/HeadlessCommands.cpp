@@ -30,27 +30,31 @@
 
 namespace Headless {
 
+static CommandRegistry
+buildRegistry()
+{
+    CommandRegistry registry;
+    registerSystemCommands(registry);
+    registerAthleteCommands(registry);
+    registerActivityCommands(registry);
+    registerIntervalCommands(registry);
+    registerOverviewCommands(registry);
+    registerImportCommands(registry);
+    registerFieldCommands(registry);
+    registerProcessorCommands(registry);
+    registerMetricCommands(registry);
+    registerUserMetricCommands(registry);
+    registerNavigatorCommands(registry);
+    registerChartCommands(registry);
+    registerChartLibraryCommands(registry);
+    return registry;
+}
+
 const CommandRegistry &
 commandRegistry()
 {
-    static CommandRegistry registry;
-    static bool populated = false;
-    if (!populated) {
-        populated = true;
-        registerSystemCommands(registry);
-        registerAthleteCommands(registry);
-        registerActivityCommands(registry);
-        registerIntervalCommands(registry);
-        registerOverviewCommands(registry);
-        registerImportCommands(registry);
-        registerFieldCommands(registry);
-        registerProcessorCommands(registry);
-        registerMetricCommands(registry);
-        registerUserMetricCommands(registry);
-        registerNavigatorCommands(registry);
-        registerChartCommands(registry);
-        registerChartLibraryCommands(registry);
-    }
+    // built once, thread-safe
+    static const CommandRegistry registry = buildRegistry();
     return registry;
 }
 
@@ -128,9 +132,7 @@ versionCommand(CommandEnvironment &, const CommandRequest &)
     data.insert("qt", QString(qVersion()));
     data.insert("python", HeadlessApp::pythonAvailable());
     data.insert("host", QSysInfo::machineHostName()); // as recorded in athlete locks
-    QJsonArray formats;
-    for (const QString &s : RideFileFactory::instance().suffixes()) formats.append(s);
-    data.insert("import_formats", formats.count());
+    data.insert("import_formats", RideFileFactory::instance().suffixes().count());
     return CommandResult::success(data);
 }
 

@@ -67,38 +67,31 @@ powerSelection(const QJsonObject &args)
     return out;
 }
 
-static QVector<double>
-meanMaxOf(Context *context, const QList<RideItem*> &items, bool allRides, QDate from, QDate to,
-          RideFile::SeriesType series)
-{
-    QStringList files;
-    for (RideItem *i : items) files << i->fileName;
-
-    if (items.count() == 1 && !allRides) {
-        RideFileCache *cache = items.first()->fileCache();
-        if (!cache) return QVector<double>();
-        return cache->meanMaxArray(series);
-    }
-    if (!from.isValid()) from = QDate(1900, 1, 1);
-    if (!to.isValid()) to = QDate(9999, 12, 31);
-    RideFileCache bests(context, from, to, !allRides, files, true, nullptr);
-    return bests.meanMaxArray(series);
-}
-
+// bests over the activities chosen, from the activity's own cache for one.
+// Always over the files chosen, never the cache of every activity: that
+// mixes sports, and powerSelection always picks one unless activities are
+// named.
 QVector<double>
 meanMax(AthleteSession &session, const QJsonObject &args, RideFile::SeriesType series,
         QString &error, Status &status, int &count)
 {
-    QList<RideItem*> items;
-    if (!selectedFiles(session, args, items, error, status)) return QVector<double>();
-
     ActivitySelection s = ActivitySelection::fromArgs(args);
-    // only an unfiltered date range may use the aggregate cache as is
-    bool allRides = s.activities.isEmpty() && s.filter.isEmpty() && s.search.isEmpty()
-                    && s.named.isEmpty() && s.sport.isEmpty() && s.limit == 0 && !s.planned;
+    QList<RideItem*> items;
+    if (!s.resolve(session, items, error, status)) return QVector<double>();
     count = items.count();
     if (items.isEmpty()) return QVector<double>();
-    return meanMaxOf(session.context(), items, allRides, s.from, s.to, series);
+
+    if (items.count() == 1) {
+        RideFileCache *cache = items.first()->fileCache();
+        if (!cache) return QVector<double>();
+        return cache->meanMaxArray(series);
+    }
+    QStringList files;
+    for (RideItem *i : items) files << i->fileName;
+    QDate from = s.from.isValid() ? s.from : QDate(1900, 1, 1);
+    QDate to = s.to.isValid() ? s.to : QDate(9999, 12, 31);
+    RideFileCache bests(session.context(), from, to, true, files, true, nullptr);
+    return bests.meanMaxArray(series);
 }
 
 // the models cp fits, by the names --model takes
