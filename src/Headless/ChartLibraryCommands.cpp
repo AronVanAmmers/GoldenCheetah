@@ -99,11 +99,11 @@ nameTaken(const QList<LTMSettings> &charts, const QString &name, int except)
 static LTMSettings
 blankChart(const QString &name, int groupBy)
 {
+    // the constructor leaves the flags unset (dates, fields and pointers
+    // start empty)
     LTMSettings chart;
     chart.name = name;
     chart.title = name;
-    chart.start = QDateTime();
-    chart.end = QDateTime();
     chart.groupBy = groupBy;
     chart.shadeZones = false;
     chart.showData = false;
@@ -111,10 +111,6 @@ blankChart(const QString &name, int groupBy)
     chart.events = false;
     chart.stack = false;
     chart.stackWidth = 3;
-    chart.field1.clear();
-    chart.field2.clear();
-    chart.bests = nullptr;
-    chart.ltmTool = nullptr;
     return chart;
 }
 
