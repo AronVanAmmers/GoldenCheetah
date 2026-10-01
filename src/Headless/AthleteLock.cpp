@@ -19,11 +19,20 @@
 #include "AthleteLock.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QSysInfo>
 #include <QHash>
 #include <QMutex>
 #include <QMutexLocker>
 #include <memory>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#else
+#include <cerrno>
+#include <signal.h>
+#endif
 
 // in-process holders, keyed by canonical athlete path. The QLockFile is
 // owned by the registry so it is released when the last holder unlocks,
@@ -59,6 +68,48 @@ AthleteLock::heldByThisProcess(const QString &athleteDir)
 {
     QMutexLocker locker(&registryMutex);
     return registry().value(canonicalKey(athleteDir)).count > 0;
+}
+
+// is there a process with this id on this machine (Qt has no public API)
+static bool
+processAlive(qint64 pid)
+{
+    if (pid <= 0) return false;
+#ifdef Q_OS_WIN
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, DWORD(pid));
+    if (!h) return GetLastError() == ERROR_ACCESS_DENIED;
+    DWORD code = 0;
+    bool alive = GetExitCodeProcess(h, &code) && code == STILL_ACTIVE;
+    CloseHandle(h);
+    return alive;
+#else
+    return kill(pid_t(pid), 0) == 0 || errno == EPERM;
+#endif
+}
+
+AthleteLock::State
+AthleteLock::peek(const QString &athleteDir, QString *holder)
+{
+    if (heldByThisProcess(athleteDir)) return State::Free;
+
+    QString path = lockFilePath(athleteDir);
+    if (!QFile::exists(path)) return State::Free;
+
+    qint64 pid = 0;
+    QString hostname, appname;
+    QLockFile file(path);
+    // being written this moment, or unreadable: assume it's held
+    if (!file.getLockInfo(&pid, &hostname, &appname)) {
+        if (holder) *holder = describe(0, QString(), QString());
+        return State::InUse;
+    }
+
+    // a dead local process's lock is stale, the next tryLock removes it.
+    // Another machine's can't be checked, so it counts, as QLockFile has it.
+    bool local = hostname.isEmpty() || hostname == QSysInfo::machineHostName();
+    if (local && !processAlive(pid)) return State::Free;
+    if (holder) *holder = describe(pid, hostname, appname);
+    return State::InUse;
 }
 
 AthleteLock::AthleteLock(const QString &athleteDir) : key(canonicalKey(athleteDir))
@@ -126,6 +177,12 @@ AthleteLock::unlock()
 
 QString
 AthleteLock::holder() const
+{
+    return describe(pid, hostname, appname);
+}
+
+QString
+AthleteLock::describe(qint64 pid, const QString &hostname, const QString &appname)
 {
     if (pid == 0) return QString("another process");
 

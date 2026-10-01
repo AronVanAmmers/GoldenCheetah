@@ -57,6 +57,7 @@ class AthleteLock
 
         // who holds the lock when tryLock() failed, human readable
         QString holder() const;
+        static QString describe(qint64 pid, const QString &hostname, const QString &appname);
         qint64 holderPid() const { return pid; }
 
         // the file used for locking
@@ -64,6 +65,12 @@ class AthleteLock
 
         // does this process already hold the lock for this athlete?
         static bool heldByThisProcess(const QString &athleteDir);
+
+        // is the athlete locked by another live process? Reads the lock
+        // file without taking the lock, so a GUI opening the athlete at
+        // the same moment isn't turned away. holder as holder() has it.
+        enum class State { Free, InUse };
+        static State peek(const QString &athleteDir, QString *holder = nullptr);
 
     private:
 
