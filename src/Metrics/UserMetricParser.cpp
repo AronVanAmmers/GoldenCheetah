@@ -97,6 +97,22 @@ bool UserMetricParser::endDocument()
 // << and >> operators. We just put them into the character
 // data for a chart.
 //
+QList<UserMetricSettings>
+UserMetricParser::load(const QString &filename)
+{
+    QFile metricfile(filename);
+    QXmlInputSource source(&metricfile);
+    QXmlSimpleReader xmlReader;
+    UserMetricParser handler;
+
+    xmlReader.setContentHandler(&handler);
+    xmlReader.setErrorHandler(&handler);
+
+    // parse and get return values
+    xmlReader.parse(source);
+    return handler.getSettings();
+}
+
 bool
 UserMetricParser::serialize(QString filename, QList<UserMetricSettings> metrics, QString *error)
 {

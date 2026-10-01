@@ -67,15 +67,7 @@ loadUserMetrics()
     QString filename = userMetricsFile();
     if (!QFile::exists(filename)) return metrics;
 
-    QFile file(filename);
-    QXmlInputSource source(&file);
-    QXmlSimpleReader reader;
-    UserMetricParser handler;
-    reader.setContentHandler(&handler);
-    reader.setErrorHandler(&handler);
-    reader.parse(source);
-
-    for (const UserMetricSettings &m : handler.getSettings())
+    for (const UserMetricSettings &m : UserMetricParser::load(filename))
         if (!m.symbol.startsWith("compatibility_")) metrics << m;
     return metrics;
 }
