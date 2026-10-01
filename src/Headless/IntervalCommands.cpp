@@ -54,24 +54,6 @@ summaryMetrics(RideItem *item)
     return symbols;
 }
 
-static QJsonObject
-intervalJson(IntervalItem *interval, int number)
-{
-    QJsonObject o;
-    o.insert("number", number);
-    o.insert("name", interval->name);
-    o.insert("type", intervalTypeKey(interval->type));
-    o.insert("group", RideFileInterval::typeDescription(interval->type));   // as the sidebar titles it
-    o.insert("start", jsonNumber(interval->start));
-    o.insert("stop", jsonNumber(interval->stop));
-    o.insert("duration", jsonNumber(interval->stop - interval->start));
-    o.insert("start_km", jsonNumber(interval->startKM));
-    o.insert("stop_km", jsonNumber(interval->stopKM));
-    o.insert("color", interval->color.name());
-    if (interval->test) o.insert("test", true);
-    return o;
-}
-
 // metric values, every one relevant for the activity with all; as
 // numbers, or with display as the GUI formats them ("51:51")
 static QJsonObject

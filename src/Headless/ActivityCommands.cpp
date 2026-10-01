@@ -129,14 +129,7 @@ showActivity(CommandEnvironment &env, const CommandRequest &request)
     QJsonArray intervals;
     int number = 0;
     for (IntervalItem *i : item->intervals()) {
-        QJsonObject io;
-        io.insert("number", ++number);
-        io.insert("name", i->name);
-        io.insert("type", intervalTypeKey(i->type));
-        io.insert("group", RideFileInterval::typeDescription(i->type));
-        io.insert("start", i->start);
-        io.insert("stop", i->stop);
-        io.insert("duration", jsonNumber(i->stop - i->start));
+        QJsonObject io = intervalJson(i, ++number);
         io.insert("distance", jsonNumber(i->getForSymbol("total_distance", metricUnits)));
         intervals.append(io);
     }
