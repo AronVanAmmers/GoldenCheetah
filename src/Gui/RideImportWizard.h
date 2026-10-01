@@ -68,7 +68,6 @@ private slots:
 
 private:
     void init(QList<QString> files, Context *context);
-    bool moveFile(const QString &source, const QString &target);
 
     QList <QString> filenames; // list of filenames passed
     int numberOfFiles; // number of files to be processed
