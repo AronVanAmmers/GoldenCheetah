@@ -394,9 +394,10 @@ deleteActivities(CommandEnvironment &env, const CommandRequest &request)
     for (const QJsonValue &v : request.args.value("activity").toArray()) ids << v.toString();
 
     QStringList files, paths;
+    ActivityLookup lookup(env.session->rideCache());
     for (const QString &id : ids) {
         QString error;
-        RideItem *item = env.session->findActivity(id, error);
+        RideItem *item = lookup.find(id, error);
         if (!item) return CommandResult::failure(Status::NotFound, error);
         if (files.contains(item->fileName)) continue;
         files << item->fileName;
