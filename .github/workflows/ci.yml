@@ -41,7 +41,20 @@ jobs:
           shasum -a 256 GoldenCheetah_v*_arm64.dmg | cut -f 1 -d ' ' >> GCversionMacOS_arm64.txt
           cat GCversionMacOS_arm64.txt
       - name: Headless tests
+        env:
+          GC_BINARY: src/GoldenCheetah.app/Contents/MacOS/GoldenCheetah
+          GC_REQUIRE_BINARY: "1"
+          GC_REQUIRE_PYTHON: "1"
         run: python3 unittests/Headless/integration/test_headless.py -v
+      - name: Headless unit tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          cp unittests/unittests.pri.in unittests/unittests.pri
+          for pro in unittests/Headless/*/*.pro; do
+            dir=$(dirname "$pro"); target=$(sed -n 's/^TARGET *= *//p' "$pro")
+            (cd "$dir" && qmake && make -j2 && "./$target") || exit 1
+          done
       - name: Upload dmg
         uses: actions/upload-artifact@v7
         with:

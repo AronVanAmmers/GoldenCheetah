@@ -10,6 +10,11 @@
 # The binary defaults to src/GoldenCheetah (src/GoldenCheetah.app/... on
 # macOS), override with GC_BINARY. Only the standard library is needed.
 #
+# Without the binary the tests are skipped, and those needing embedded
+# Python skip without it. CI sets GC_REQUIRE_BINARY=1 and
+# GC_REQUIRE_PYTHON=1 to make those failures instead, so a green run
+# means the tests ran.
+#
 
 import base64
 import csv
@@ -48,6 +53,8 @@ def default_binary():
 
 
 BINARY = os.environ.get("GC_BINARY", default_binary())
+REQUIRE_BINARY = os.environ.get("GC_REQUIRE_BINARY") == "1"
+REQUIRE_PYTHON = os.environ.get("GC_REQUIRE_PYTHON") == "1"
 
 # activity files used throughout, all from the repository's test data
 RIDE_POWER = os.path.join(TESTDATA, "rides", "Garmin830_with_Stages.fit")        # bike, power, hr, cadence
@@ -90,6 +97,8 @@ class Headless(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if not os.path.exists(BINARY):
+            if REQUIRE_BINARY:
+                raise AssertionError("GoldenCheetah binary not found at %s (GC_REQUIRE_BINARY is set)" % BINARY)
             raise unittest.SkipTest("GoldenCheetah binary not found at %s (set GC_BINARY)" % BINARY)
         cls.tmp = tempfile.mkdtemp(prefix="gc-headless-")
         cls.home = os.path.join(cls.tmp, "athletes")
@@ -131,6 +140,14 @@ class Headless(unittest.TestCase):
 
     def activity_files(self):
         return sorted(f for f in os.listdir(os.path.join(self.folder, "activities")) if f.endswith(".json"))
+
+    def requirePython(self, available):
+        """skip without embedded Python, or fail when CI requires it"""
+        if available:
+            return
+        if REQUIRE_PYTHON:
+            self.fail("embedded Python not available (GC_REQUIRE_PYTHON is set)")
+        self.skipTest("embedded Python not available")
 
     @property
     def lock_dir(self):
@@ -365,8 +382,7 @@ class TestEstimatePowerWorkflow(Headless):
             f.write(BAD_SCRIPT)
 
     def setUp(self):
-        if not self.python:
-            self.skipTest("embedded Python not available")
+        self.requirePython(self.python)
 
     def test_1_once_per_athlete(self):
         env = self.gcj("field", "add", *EP_FIELDS, "--type", "double", "--tab", "Estimate Power")
@@ -458,8 +474,7 @@ class TestEstimatePowerWorkflow(Headless):
 class TestProcessorFiles(Headless):
 
     def test_script_files_are_never_shared(self):
-        if not self.gcj("version")["data"]["python"]:
-            self.skipTest("embedded Python not available")
+        self.requirePython(self.gcj("version")["data"]["python"])
         # "a 1" is stored as a_1.py, then "a" as a.py, and "A" also wants a.py:
         # one pass over [a_1.py, a.py] gave it a_1.py, over the first script
         sources = {"a 1": "print('a 1')\n", "a": "print('a')\n", "A": "print('A')\n"}
@@ -1269,8 +1284,7 @@ class TestRestShutdown(Headless):
     """ctrl-c while requests wait their turn stops the server, and no client is told a dropped call succeeded"""
 
     def test_interrupt_with_requests_queued(self):
-        if not self.gcj("version")["data"]["python"]:
-            self.skipTest("embedded Python not available")
+        self.requirePython(self.gcj("version")["data"]["python"])
         # a slow request: a processor that takes its time
         r = self.gc("--athlete", self.athlete, "import", RIDE_POWER)
         self.assertEqual(r.code, 0, r)
