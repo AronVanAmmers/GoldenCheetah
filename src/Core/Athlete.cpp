@@ -412,6 +412,105 @@ Athlete::importFilesWhenOpeningAthlete() {
 }
 
 
+bool
+createAthleteFolder(const QDir &constHome, const QString &name, const NewAthleteDefaults &defaults,
+                    bool removeOnFailure, QString *error)
+{
+    auto fail = [&](const QString &why) {
+        if (error) *error = why;
+        return false;
+    };
+    QDir home(constHome);
+    if (home.exists(name)) return fail(QObject::tr("Athlete already exists ")  + name);
+    if (!home.mkdir(name)) return fail(QObject::tr("Can't create new directory ") + home.canonicalPath() + "/" + name);
+
+    // every step is done, as the wizard always did, the first problem is reported
+    QDir athleteDir = QDir(home.canonicalPath() + '/' + name);
+    QString why, first;
+    auto check = [&](bool fine) { if (!fine && first.isEmpty()) first = why.isEmpty() ? QObject::tr("can't write the athlete's settings") : why; };
+    AthleteDirectoryStructure athleteHome(athleteDir);
+
+    // create the sub-Dirs here
+    athleteHome.createAllSubdirs();
+
+    // Setup Power Zones
+    Zones zones;
+    zones.addZoneRange(defaults.dob, defaults.cp, 0, defaults.ftp, defaults.wprime, defaults.pmax);
+    check(zones.write(athleteHome.config().canonicalPath(), &why));
+
+    // HR Zones too!
+    HrZones hrzones;
+    hrzones.addHrZoneRange(defaults.dob, defaults.lthr, 0, defaults.resthr, defaults.maxhr);
+    check(hrzones.write(athleteHome.config().canonicalPath(), &why));
+
+    // Pace Zones for Run
+    PaceZones rnPaceZones(false);
+    rnPaceZones.addZoneRange(defaults.dob, defaults.cvRun, 0);
+    check(rnPaceZones.write(athleteHome.config().canonicalPath(), &why));
+
+    // Pace Zones for Swim
+    PaceZones swPaceZones(true);
+    swPaceZones.addZoneRange(defaults.dob, defaults.cvSwim, 0);
+    check(swPaceZones.write(athleteHome.config().canonicalPath(), &why));
+
+    // a failure here leaves no settings to write later on (they would make
+    // the folder again)
+    auto rollback = [&]() {
+        // ours, just made: make sure it can be listed to be removed
+        QFile::setPermissions(athleteDir.absolutePath(), QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+        athleteDir.removeRecursively();
+        return fail(first);
+    };
+    if (!first.isEmpty() && removeOnFailure) return rollback();
+
+    // new Athlete/new Directories - no Upgrade required
+    appsettings->initializeQSettingsNewAthlete(home.canonicalPath(), name);
+    appsettings->setCValue(name, GC_UPGRADE_FOLDER_SUCCESS, true);
+
+    // set the version under which the Athlete is created - to avoid unneccary upgrade execution
+    appsettings->setCValue(name, GC_VERSION_USED, QVariant(VERSION_LATEST));
+
+    // nice sidebars please!
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/LTM/hide"), true);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/LTM/hide/0"), false);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/LTM/hide/1"), false);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/LTM/hide/2"), false);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/LTM/hide/3"), true);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/analysis/hide"), true);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/analysis/hide/0"), false);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/analysis/hide/1"), true);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/analysis/hide/2"), false);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/analysis/hide/3"), true);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/train/hide"), true);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/train/hide/0"), false);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/train/hide/1"), false);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/train/hide/2"), false);
+    appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/train/hide/3"), false);
+
+    appsettings->setCValue(name, GC_DOB, defaults.dob);
+    appsettings->setCValue(name, GC_WEIGHT, defaults.weight);
+    appsettings->setCValue(name, GC_HEIGHT, defaults.height);
+    appsettings->setCValue(name, GC_WBALTAU, defaults.wbaltau);
+    appsettings->setCValue(name, GC_SEX, defaults.sex);
+    appsettings->setCValue(name, GC_BIO, defaults.bio);
+
+    appsettings->syncQSettingsAllAthletes();
+
+    // If template athlete was selected, copy xml files
+    if (!defaults.templateAthlete.isEmpty()) {
+        QDir templateDir = QDir(home.canonicalPath() + "/" + defaults.templateAthlete);
+        AthleteDirectoryStructure templateHome(templateDir);
+        foreach(QString fileName, templateHome.config().entryList(QStringList() << "*.xml", QDir::Files)) {
+            QFile::copy(templateHome.config().canonicalPath() + "/" + fileName,
+                        athleteHome.config().canonicalPath() + "/" + fileName);
+        }
+    }
+
+    if (first.isEmpty()) return true;
+    if (removeOnFailure) return rollback();
+    return fail(first);
+}
+
 AthleteDirectoryStructure::AthleteDirectoryStructure(const QDir home){
 
     myhome = home;

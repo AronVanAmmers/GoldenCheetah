@@ -75,36 +75,30 @@ NewAthleteWizard::done
         bool useMetricUnits = (field("user.unit") == 0);
         QString name = field("user.name").toString().trimmed();
         if (! home.exists(name)) {
-            if (home.mkdir(name)) {
+
+            // the folder, settings and zones, the same for the command line
+            NewAthleteDefaults defaults;
+            defaults.dob = field("user.dob").toDate();
+            defaults.weight = field("user.weight").toDouble() * (useMetricUnits ? 1.0 : KG_PER_LB);
+            defaults.height = field("user.height").toDouble() * (useMetricUnits ? 1.0 / 100.0 : CM_PER_INCH / 100.0);
+            defaults.wbaltau = field("perf.wbaltau").toInt();
+            defaults.sex = field("user.sex").toInt();
+            defaults.bio = field("user.bio").toString();
+            defaults.cp = field("perf.cp").toInt();
+            defaults.ftp = field("perf.cp").toInt();
+            defaults.wprime = field("perf.w").toInt();
+            defaults.pmax = field("perf.pmax").toInt();
+            defaults.lthr = field("perf.lthr").toInt();
+            defaults.resthr = field("perf.resthr").toInt();
+            defaults.maxhr = field("perf.maxhr").toInt();
+            defaults.cvRun = PaceZones(false).kphFromTime(field("perf.cvRn").toTime(), useMetricUnits);
+            defaults.cvSwim = PaceZones(true).kphFromTime(field("perf.cvSw").toTime(), useMetricUnits);
+            if (field("perf.template").toInt()) defaults.templateAthlete = field("perf.template").toString();
+            createAthleteFolder(home, name, defaults, false);
+
+            if (home.exists(name)) {
                 QDir athleteDir = QDir(home.canonicalPath() + '/' + name);
-                AthleteDirectoryStructure *athleteHome = new AthleteDirectoryStructure(athleteDir);
-
-                // create the sub-Dirs here
-                athleteHome->createAllSubdirs();
-
-                // new Athlete/new Directories - no Upgrade required
-                appsettings->initializeQSettingsNewAthlete(home.canonicalPath(), name);
-                appsettings->setCValue(name, GC_UPGRADE_FOLDER_SUCCESS, true);
-
-                // set the version under which the Athlete is created - to avoid unneccary upgrade execution
-                appsettings->setCValue(name, GC_VERSION_USED, QVariant(VERSION_LATEST));
-
-                // nice sidebars please!
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/LTM/hide"), true);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/LTM/hide/0"), false);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/LTM/hide/1"), false);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/LTM/hide/2"), false);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/LTM/hide/3"), true);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/analysis/hide"), true);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/analysis/hide/0"), false);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/analysis/hide/1"), true);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/analysis/hide/2"), false);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/analysis/hide/3"), true);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/train/hide"), true);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/train/hide/0"), false);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/train/hide/1"), false);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/train/hide/2"), false);
-                appsettings->setCValue(name, GC_QSETTINGS_ATHLETE_LAYOUT + QString("splitter/train/hide/3"), false);
+                AthleteDirectoryStructure athleteHome(athleteDir);
 
                 // lets setup!
                 if (useMetricUnits) {
@@ -114,64 +108,12 @@ NewAthleteWizard::done
                 }
                 GlobalContext::context()->notifyConfigChanged(CONFIG_UNITS);
 
-                appsettings->setCValue(name, GC_DOB, field("user.dob").toDate());
-                appsettings->setCValue(name, GC_WEIGHT, field("user.weight").toDouble() * (useMetricUnits ? 1.0 : KG_PER_LB));
-                appsettings->setCValue(name, GC_HEIGHT, field("user.height").toDouble() * (useMetricUnits ? 1.0 / 100.0 : CM_PER_INCH / 100.0));
-                appsettings->setCValue(name, GC_WBALTAU, field("perf.wbaltau").toInt());
-                appsettings->setCValue(name, GC_SEX, field("user.sex").toInt());
-                appsettings->setCValue(name, GC_BIO, field("user.bio").toString());
-
                 QString avatarFilename = field("user.avatar").toString();
                 if (! avatarFilename.isEmpty()) {
                     QPixmap avatar(avatarFilename);
                     int s = std::min(avatar.width(), avatar.height());
                     avatar = avatar.copy((avatar.width() - s) / 2, (avatar.height() - s) / 2, s, s);
-                    avatar.scaledToHeight(140, Qt::SmoothTransformation).save(athleteHome->config().canonicalPath() + "/" + "avatar.png", "PNG");
-                }
-
-                // Setup Power Zones
-                Zones zones;
-                zones.addZoneRange(field("user.dob").toDate(),
-                                   field("perf.cp").toInt(),
-                                   0,
-                                   field("perf.cp").toInt(),
-                                   field("perf.w").toInt(),
-                                   field("perf.pmax").toInt());
-                zones.write(athleteHome->config().canonicalPath());
-
-                // HR Zones too!
-                HrZones hrzones;
-                hrzones.addHrZoneRange(field("user.dob").toDate(),
-                                       field("perf.lthr").toInt(),
-                                       0,
-                                       field("perf.resthr").toInt(),
-                                       field("perf.maxhr").toInt());
-                hrzones.write(athleteHome->config().canonicalPath());
-
-                // Pace Zones for Run
-                PaceZones rnPaceZones(false);
-                rnPaceZones.addZoneRange(field("user.dob").toDate(),
-                                         rnPaceZones.kphFromTime(field("perf.cvRn").toTime(), useMetricUnits),
-                                         0);
-                rnPaceZones.write(athleteHome->config().canonicalPath());
-
-                // Pace Zones for Run
-                PaceZones swPaceZones(true);
-                swPaceZones.addZoneRange(field("user.dob").toDate(),
-                                         swPaceZones.kphFromTime(field("perf.cvSw").toTime(), useMetricUnits),
-                                         0);
-                swPaceZones.write(athleteHome->config().canonicalPath());
-
-                appsettings->syncQSettingsAllAthletes();
-
-                // If template athlete was selected, copy xml files
-                if (field("perf.template").toInt()) {
-                    QDir templateDir = QDir(home.canonicalPath() + "/" + field("perf.template").toString());
-                    AthleteDirectoryStructure *templateHome = new AthleteDirectoryStructure(templateDir);
-                    foreach(QString fileName, templateHome->config().entryList(QStringList() << "*.xml", QDir::Files)) {
-                        QFile::copy(templateHome->config().canonicalPath() + "/" + fileName,
-                                    athleteHome->config().canonicalPath() + "/" + fileName);
-                    }
+                    avatar.scaledToHeight(140, Qt::SmoothTransformation).save(athleteHome.config().canonicalPath() + "/" + "avatar.png", "PNG");
                 }
             } else {
                 QMessageBox::critical(this, tr("Fatal Error"), tr("Can't create new directory ") + home.canonicalPath() + "/" + name);
