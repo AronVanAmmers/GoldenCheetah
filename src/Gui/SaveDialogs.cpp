@@ -19,15 +19,12 @@
 #include "AthleteTab.h"
 #include "Athlete.h"
 #include "RideCache.h"
-#include "Estimator.h"
 #include "GcRideFile.h"
 #include "JsonRideFile.h"
 #include "RideItem.h"
 #include "RideFile.h"
-#include "RideFileCommand.h"
 #include "Settings.h"
 #include "SaveDialogs.h"
-#include "DataProcessor.h"
 
 //----------------------------------------------------------------------
 // Utility functions to get and set WARN on CONVERT application setting

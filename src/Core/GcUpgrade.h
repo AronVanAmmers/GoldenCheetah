@@ -153,6 +153,7 @@ class GcUpgradeLogDialog : public QDialog
         ~GcUpgradeLogDialog();
         void enableButtons();
         void append(QString, int level=0);
+        QString plainText() const;      // the report without markup
 
 
     public slots:

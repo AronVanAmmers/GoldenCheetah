@@ -40,6 +40,7 @@ The default output is text for people. With `--format json` every command prints
 
 With `--format csv` the result is CSV, for spreadsheets and data tools. Only data goes to stdout, and errors go to stderr.
 
+- Lines end with LF. Values are written as they are: one starting with `=`, `+`, `-` or `@` isn't escaped, so a spreadsheet may read text from an activity (a note, a name) as a formula. Escaping would change negative numbers; import into a spreadsheet as text where that matters.
 - A result that is a list (activities, intervals, metrics, fields ...) is one table: a row per item, with nested values such as `metrics` as columns. Numbers are in full precision, or as the GUI shows them with `--display` where a command has it.
 - Other results (`activity show`, `zones show`, `version` ...) are `key,value` lines. Nested values have dotted paths, such as `metrics.average_power` or `zones.hr.zones[0].percent`.
 - `activity overview` with a single table tile (`--tile "Intervals Data"`) gives that table: a header, then one row per record, and only the header when there are none. Units stay in the header, such as `Pace (min/km)`, for one row or many. With several tiles each value is a line: `tile,kind,row,column,units,value`.
