@@ -438,25 +438,26 @@ createAthleteFolder(const QDir &constHome, const QString &name, const NewAthlete
     // create the sub-Dirs here
     athleteHome.createAllSubdirs();
 
-    // Setup Power Zones
+    // Setup Power Zones (the absolute path: a folder that can't be searched
+    // has no canonical one, and QDir("") would be the working folder)
     Zones zones;
     zones.addZoneRange(defaults.dob, defaults.cp, 0, defaults.ftp, defaults.wprime, defaults.pmax);
-    check(zones.write(athleteHome.config().canonicalPath(), &why));
+    check(zones.write(athleteHome.config().absolutePath(), &why));
 
     // HR Zones too!
     HrZones hrzones;
     hrzones.addHrZoneRange(defaults.dob, defaults.lthr, 0, defaults.resthr, defaults.maxhr);
-    check(hrzones.write(athleteHome.config().canonicalPath(), &why));
+    check(hrzones.write(athleteHome.config().absolutePath(), &why));
 
     // Pace Zones for Run
     PaceZones rnPaceZones(false);
     rnPaceZones.addZoneRange(defaults.dob, defaults.cvRun, 0);
-    check(rnPaceZones.write(athleteHome.config().canonicalPath(), &why));
+    check(rnPaceZones.write(athleteHome.config().absolutePath(), &why));
 
     // Pace Zones for Swim
     PaceZones swPaceZones(true);
     swPaceZones.addZoneRange(defaults.dob, defaults.cvSwim, 0);
-    check(swPaceZones.write(athleteHome.config().canonicalPath(), &why));
+    check(swPaceZones.write(athleteHome.config().absolutePath(), &why));
 
     // a failure here leaves no settings to write later on (they would make
     // the folder again)
