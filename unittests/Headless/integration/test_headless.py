@@ -547,6 +547,37 @@ class TestLivesWithOtherTools(Headless):
         env = self.gcj("activity", "list", self.activity, "--field", "Notes")
         self.assertEqual(env["data"]["activities"][0]["metadata"]["Notes"], "edited by another tool")
 
+    def test_other_formats_are_converted_when_saved(self):
+        # a file another tool dropped in activities/ is saved as JSON, as the
+        # GUI does, and the original kept as a .bak
+        activities = os.path.join(self.folder, "activities")
+        self.keep(activities)
+        shutil.copy(TCX_RIDE, activities)
+        name = os.path.splitext(os.path.basename(TCX_RIDE))[0]
+        env = self.gcj("activity", "set", name, "--set", "Notes=converted")
+        self.assertEqual(env["data"]["updated"], 1)
+        files = os.listdir(activities)
+        self.assertIn(name + ".json", files)
+        self.assertIn(name + ".tcx.bak", files)
+        self.assertNotIn(name + ".tcx", files)
+        item = self.gcj("activity", "list", name, "--field", "Notes")["data"]["activities"][0]
+        self.assertEqual(item["file"], name + ".json")
+        self.assertEqual(item["metadata"]["Notes"], "converted")
+
+    def test_athlete_of_an_older_version_is_left_to_the_gui(self):
+        # before 3.6 the GUI asks before upgrading; without anyone to ask,
+        # the command fails at once rather than waiting for an answer
+        config = os.path.join(self.folder, "config")
+        self.keep(config)
+        ini = os.path.join(config, "athlete-general.ini")
+        text = open(ini).read()
+        self.assertRegex(text, r"versionused=\d+")
+        with open(ini, "w") as f:
+            f.write(re.sub(r"versionused=\d+", "versionused=4000", text))
+        r = self.gc("--athlete", self.athlete, "activity", "list", timeout=60)
+        self.assertEqual(r.code, 5, r)
+        self.assertIn(b"could not be upgraded", r.err)
+
     def test_edited_zones_recompute_metrics(self):
         before = self.gcj("activity", "list", self.activity, "--metric", "coggan_tss")["data"]["activities"][0]
         zones = os.path.join(self.folder, "config", "power.zones")
@@ -1568,6 +1599,9 @@ class TestReadOnlyFolders(Headless):
                                           mentions="could not be moved").out)
         self.assertEqual(env["data"]["deleted"], [])
         self.assertEqual(len(env["data"]["failed"]), 1)
+        self.assertEqual(sorted(os.listdir(activities)), sorted(before))
+
+        self.assertFails("import", RIDE_GPS, mentions="could not move")
         self.assertEqual(sorted(os.listdir(activities)), sorted(before))
 
     def test_read_only_charts(self):
