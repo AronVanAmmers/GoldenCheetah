@@ -271,9 +271,9 @@ athletesInUse(const QString &home)
 {
     for (const QString &name : HeadlessApp::athletes(home)) {
         QString folder = QDir(home).absoluteFilePath(name);
-        if (AthleteLock::heldByThisProcess(folder)) continue;
-        AthleteLock probe(folder);
-        if (!probe.tryLock(0)) return QString("athlete '%1' is open in %2").arg(name).arg(probe.holder());
+        QString holder;
+        if (AthleteLock::peek(folder, &holder) == AthleteLock::State::InUse)
+            return QString("athlete '%1' is open in %2").arg(name).arg(holder);
     }
     return QString();
 }

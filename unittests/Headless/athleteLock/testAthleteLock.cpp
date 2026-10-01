@@ -90,6 +90,31 @@ private slots:
         holder->waitForFinished();
     }
 
+    void peekLeavesTheLockAlone() {
+        QTemporaryDir dir;
+        QCOMPARE(AthleteLock::peek(dir.path()), AthleteLock::State::Free);
+
+        QProcess *holder = startHolder(dir.path());
+        QCOMPARE(QString(holder->readLine()).trimmed(), QString("locked"));
+        QString who;
+        QCOMPARE(AthleteLock::peek(dir.path(), &who), AthleteLock::State::InUse);
+        QVERIFY(who.contains(QString::number(holder->processId())));
+        QVERIFY(QFile::exists(AthleteLock::lockFilePath(dir.path())));
+        QVERIFY(!AthleteLock::heldByThisProcess(dir.path()));
+
+        // killed without unlocking: stale, so free, and the file is left
+        // for the next tryLock to remove
+        holder->kill();
+        holder->waitForFinished();
+        QCOMPARE(AthleteLock::peek(dir.path()), AthleteLock::State::Free);
+        QVERIFY(QFile::exists(AthleteLock::lockFilePath(dir.path())));
+
+        // this process's own lock is no obstacle
+        AthleteLock lock(dir.path());
+        QVERIFY(lock.tryLock());
+        QCOMPARE(AthleteLock::peek(dir.path()), AthleteLock::State::Free);
+    }
+
     void staleLockOfDeadProcessIsTakenOver() {
         QTemporaryDir dir;
         QProcess *holder = startHolder(dir.path());
