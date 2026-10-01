@@ -44,7 +44,7 @@ static CommandResult
 listAthletes(CommandEnvironment &env, const CommandRequest &)
 {
     if (!QFileInfo(env.home).isDir())
-        return CommandResult::failure(Status::NotFound, QString("athletes folder '%1' does not exist").arg(env.home));
+        return CommandResult::failure(Status::NotFound, HeadlessApp::missingHome(env.home));
 
     QJsonArray list;
     for (const QString &name : HeadlessApp::athletes(env.home)) {
@@ -505,16 +505,22 @@ addMeasure(CommandEnvironment &env, const CommandRequest &request)
     m.when = when;
     m.comment = request.args.value("comment").toString();
     QStringList symbols = g->getFieldSymbols();
-    for (const QJsonValue &v : request.args.value("set").toArray()) {
-        QString text = v.toString();
-        int eq = text.indexOf('=');
-        int field = eq > 0 ? symbols.indexOf(text.left(eq).trimmed()) : -1;
-        if (field < 0 || field >= MAX_MEASURES)
-            return CommandResult::failure(Status::Usage, QString("expected FIELD=VALUE with FIELD one of %1, got '%2'").arg(symbols.join(", ")).arg(text));
+    QList<QPair<QString, QString>> pairs;
+    QString bad;
+    bool parsed = parseAssignments(request.args.value("set"), pairs, bad);
+    for (const auto &pair : pairs) {
+        int field = symbols.indexOf(pair.first);
+        if (field < 0 || field >= MAX_MEASURES) {
+            bad = pair.first + "=" + pair.second;
+            parsed = false;
+            break;
+        }
         bool ok = false;
-        m.values[field] = text.mid(eq + 1).toDouble(&ok);
-        if (!ok) return CommandResult::failure(Status::Usage, QString("'%1' is not a number").arg(text.mid(eq + 1)));
+        m.values[field] = pair.second.toDouble(&ok);
+        if (!ok) return CommandResult::failure(Status::Usage, QString("'%1' is not a number").arg(pair.second));
     }
+    if (!parsed)
+        return CommandResult::failure(Status::Usage, QString("expected FIELD=VALUE with FIELD one of %1, got '%2'").arg(symbols.join(", ")).arg(bad));
 
     // replace a reading at the same time
     QList<Measure> before = g->measures();

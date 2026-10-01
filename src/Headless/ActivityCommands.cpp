@@ -171,12 +171,9 @@ exportActivity(CommandEnvironment &env, const CommandRequest &request)
     QString path = tmp.filePath("export." + suffix);
     QFile file(path);
     bool ok;
-    if (format == "csv-gc") {
+    if (special) {
         CsvFileReader writer;
-        ok = writer.writeRideFile(env.session->context(), ride, file, CsvFileReader::gc);
-    } else if (format == "csv-wprime") {
-        CsvFileReader writer;
-        ok = writer.writeRideFile(env.session->context(), ride, file, CsvFileReader::wprime);
+        ok = writer.writeRideFile(env.session->context(), ride, file, format == "csv-gc" ? CsvFileReader::gc : CsvFileReader::wprime);
     } else {
         ok = factory.writeRideFile(env.session->context(), ride, file, format);
     }
@@ -276,8 +273,8 @@ static CommandResult
 setFields(CommandEnvironment &env, const CommandRequest &request)
 {
     ActivitySelection selection = ActivitySelection::fromArgs(request.args);
-    if (selection.isEmpty() && !request.args.value("all").toBool(false))
-        return CommandResult::failure(Status::Usage, "choose activities (by name, --filter, --from ...) or pass --all");
+    QString why = selection.requireExplicit();
+    if (!why.isEmpty()) return CommandResult::failure(Status::Usage, why);
 
     // NAME=VALUE pairs, checked before any activity is touched
     struct Assignment { FieldDefinition field; QString text; };
@@ -286,11 +283,12 @@ setFields(CommandEnvironment &env, const CommandRequest &request)
     RideMetadata *metadata = GlobalContext::context()->rideMetadata;
     for (const FieldDefinition &f : metadata->getFields()) defs.insert(f.name, f);
 
-    for (const QJsonValue &v : request.args.value("set").toArray()) {
-        QString text = v.toString();
-        int eq = text.indexOf('=');
-        if (eq <= 0) return CommandResult::failure(Status::Usage, QString("expected NAME=VALUE, got '%1'").arg(text));
-        QString name = text.left(eq).trimmed(), value = text.mid(eq + 1);
+    QList<QPair<QString, QString>> pairs;
+    QString bad;
+    if (!parseAssignments(request.args.value("set"), pairs, bad))
+        return CommandResult::failure(Status::Usage, QString("expected NAME=VALUE, got '%1'").arg(bad));
+    for (const auto &pair : pairs) {
+        const QString &name = pair.first, &value = pair.second;
 
         if (!defs.contains(name) && !request.args.value("allow-undefined").toBool(false))
             return CommandResult::failure(Status::Usage,

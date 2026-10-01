@@ -505,6 +505,36 @@ tilesCsv(const QList<TileValue> &tiles)
 }
 
 static CommandResult
+resolveLayout(const QList<OverviewLayout> &layouts, const QString &wanted, int &index)
+{
+    QStringList names;
+    for (const OverviewLayout &l : layouts) names << l.name;
+    if (wanted.isEmpty()) {
+        if (layouts.count() != 1)
+            return CommandResult::failure(Status::Usage,
+                QString("more than one layout, choose one with --layout (%1)").arg(names.join(", ")));
+        index = 0;
+        return CommandResult::success();
+    }
+    index = -1;
+    for (int i = 0; i < layouts.count(); i++)
+        if (layouts.at(i).name.compare(wanted, Qt::CaseInsensitive) == 0) index = i;
+    if (index < 0)
+        return CommandResult::failure(Status::NotFound,
+            QString("no layout '%1', the layouts are: %2").arg(wanted).arg(names.join(", ")));
+    return CommandResult::success();
+}
+
+static CommandResult
+openLayouts(Athlete *athlete, QList<OverviewLayout> &layouts, QString &source)
+{
+    layouts = readLayouts(athlete, source);
+    if (layouts.isEmpty())
+        return CommandResult::failure(Status::Failed, QString("no analysis layouts in %1").arg(source));
+    return CommandResult::success();
+}
+
+static CommandResult
 overviewCommand(CommandEnvironment &env, const CommandRequest &request)
 {
     QString error;
@@ -512,20 +542,16 @@ overviewCommand(CommandEnvironment &env, const CommandRequest &request)
     if (!item) return CommandResult::failure(Status::NotFound, error);
 
     QString source;
-    QList<OverviewLayout> layouts = readLayouts(env.session->athlete(), source);
-    if (layouts.isEmpty()) return CommandResult::failure(Status::Failed, QString("no analysis layouts in %1").arg(source));
+    QList<OverviewLayout> layouts;
+    CommandResult opened = openLayouts(env.session->athlete(), layouts, source);
+    if (!opened.ok()) return opened;
 
+    // the layout the GUI would show for this activity, unless one is named
     int chosen = layoutFor(env.session->context(), layouts, item);
     QString wanted = request.args.value("layout").toString();
     if (!wanted.isEmpty()) {
-        QStringList names;
-        chosen = -1;
-        for (int i = 0; i < layouts.count(); i++) {
-            names << layouts[i].name;
-            if (layouts[i].name.compare(wanted, Qt::CaseInsensitive) == 0) chosen = i;
-        }
-        if (chosen < 0) return CommandResult::failure(Status::NotFound,
-                                QString("no layout '%1', the layouts are: %2").arg(wanted).arg(names.join(", ")));
+        CommandResult named = resolveLayout(layouts, wanted, chosen);
+        if (!named.ok()) return named;
     }
     const OverviewLayout &layout = layouts[chosen];
 
@@ -658,36 +684,6 @@ tileNames(const OverviewLayout &layout)
         }
     }
     return names;
-}
-
-static CommandResult
-resolveLayout(const QList<OverviewLayout> &layouts, const QString &wanted, int &index)
-{
-    QStringList names;
-    for (const OverviewLayout &l : layouts) names << l.name;
-    if (wanted.isEmpty()) {
-        if (layouts.count() != 1)
-            return CommandResult::failure(Status::Usage,
-                QString("more than one layout, choose one with --layout (%1)").arg(names.join(", ")));
-        index = 0;
-        return CommandResult::success();
-    }
-    index = -1;
-    for (int i = 0; i < layouts.count(); i++)
-        if (layouts.at(i).name.compare(wanted, Qt::CaseInsensitive) == 0) index = i;
-    if (index < 0)
-        return CommandResult::failure(Status::NotFound,
-            QString("no layout '%1', the layouts are: %2").arg(wanted).arg(names.join(", ")));
-    return CommandResult::success();
-}
-
-static CommandResult
-openLayouts(Athlete *athlete, QList<OverviewLayout> &layouts, QString &source)
-{
-    layouts = readLayouts(athlete, source);
-    if (layouts.isEmpty())
-        return CommandResult::failure(Status::Failed, QString("no analysis layouts in %1").arg(source));
-    return CommandResult::success();
 }
 
 static CommandResult

@@ -151,6 +151,12 @@ HeadlessApp::athletes(const QString &home)
     return list;
 }
 
+QString
+HeadlessApp::missingHome(const QString &home)
+{
+    return QString("athletes folder '%1' does not exist").arg(home);
+}
+
 bool
 HeadlessApp::isInitialised()
 {
@@ -183,7 +189,7 @@ HeadlessApp::initialise(const QString &home, const Options &options, QString &er
 
     QFileInfo info(home);
     if (!info.exists() || !info.isDir()) {
-        error = QString("athletes folder '%1' does not exist").arg(home);
+        error = missingHome(home);
         return false;
     }
     QString canonical = info.canonicalFilePath();
