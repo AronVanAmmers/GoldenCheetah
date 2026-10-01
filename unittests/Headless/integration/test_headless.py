@@ -93,6 +93,7 @@ class Headless(unittest.TestCase):
     """Base: a fresh athletes folder per test class"""
 
     athlete = "Tester"
+    imports = []        # activity files every test of the class starts with
 
     @classmethod
     def setUpClass(cls):
@@ -114,19 +115,35 @@ class Headless(unittest.TestCase):
         os.makedirs(cls.env["XDG_RUNTIME_DIR"], mode=0o700)
         r = cls.gc_class("athlete", "create", cls.athlete, "--cp", "250", "--weight", "70")
         assert r.code == 0, r
+        if cls.imports:
+            r = cls.gc_class("--athlete", cls.athlete, "import", *cls.imports)
+            assert r.code == 0, r
 
     @classmethod
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     @classmethod
-    def gc_class(cls, *args, timeout=180, input=None, extra=None):
-        cmd = [BINARY, "--cli", "--home", cls.home] + (extra or []) + [str(a) for a in args]
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout, env=cls.env, input=input)
+    def gc_class(cls, *args, timeout=180, input=None, extra=None, home="", cwd=None, preexec_fn=None):
+        """run the command line on the class's athletes folder, another
+        one with home, or with home=None on none (the default is found)"""
+        home = cls.home if home == "" else home
+        cmd = [BINARY, "--cli"] + (["--home", home] if home is not None else []) + (extra or []) + [str(a) for a in args]
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout, env=cls.env, input=input,
+                              cwd=cwd, preexec_fn=preexec_fn)
         return Result(proc)
 
     def gc(self, *args, **kw):
         return self.gc_class(*args, **kw)
+
+    def gca(self, *args, **kw):
+        """run on the class's athlete"""
+        return self.gc_class("--athlete", self.athlete, *args, **kw)
+
+    def csv_rows(self, *args, expect=0):
+        r = self.gca("--format", "csv", *args)
+        self.assertEqual(r.code, expect, r)
+        return list(csv.reader(io.StringIO(r.out.decode())))
 
     def gcj(self, *args, expect=0, **kw):
         """run with --format json, check the exit status, return the envelope"""
@@ -208,7 +225,7 @@ class TestBasics(Headless):
         self.assertEqual(self.gc("fly").code, 2)
         self.assertEqual(self.gc("activity").code, 2)
         self.assertEqual(self.gc("activity", "list", "--colour", "red").code, 2)
-        r = self.gc("--athlete", self.athlete, "activity", "list", "--from", "yesterday")
+        r = self.gca("activity", "list", "--from", "yesterday")
         self.assertEqual(r.code, 2, r)
         self.assertIn(b"yyyy-mm-dd", r.err)
 
@@ -233,21 +250,18 @@ class TestBasics(Headless):
         stick = os.path.join(self.tmp, "stick")
         library = os.path.join(stick, "Library", "GoldenCheetah")
         os.makedirs(library)
-        r = subprocess.run([BINARY, "--cli", "--home", library, "athlete", "create", "Usb"],
-                           capture_output=True, timeout=60, env=self.env)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        r = subprocess.run([BINARY, "--cli", "--format", "json", "athlete", "list"],
-                           capture_output=True, timeout=60, env=self.env, cwd=stick)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        data = json.loads(r.stdout)["data"]
+        r = self.gc("athlete", "create", "Usb", home=library, timeout=60)
+        self.assertEqual(r.code, 0, r)
+        r = self.gc("--format", "json", "athlete", "list", home=None, cwd=stick, timeout=60)
+        self.assertEqual(r.code, 0, r)
+        data = r.json()["data"]
         self.assertEqual(os.path.realpath(data["home"]), os.path.realpath(library))
         self.assertEqual([a["name"] for a in data["athletes"]], ["Usb"])
 
     def test_athlete_dir_with_a_trailing_slash(self):
-        r = subprocess.run([BINARY, "--cli", "--athlete-dir", self.folder + os.sep, "--format", "json", "athlete", "show"],
-                           capture_output=True, timeout=60, env=self.env)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(json.loads(r.stdout)["data"]["name"], self.athlete)
+        r = self.gc("--athlete-dir", self.folder + os.sep, "--format", "json", "athlete", "show", home=None, timeout=60)
+        self.assertEqual(r.code, 0, r)
+        self.assertEqual(r.json()["data"]["name"], self.athlete)
 
     def test_version(self):
         env = self.gcj("version")
@@ -295,11 +309,10 @@ class TestBasics(Headless):
 
     def test_shared_settings_need_an_athletes_folder(self):
         missing = os.path.join(self.tmp, "missing")
-        r = subprocess.run([BINARY, "--cli", "--home", missing, "field", "add", "Foo"], capture_output=True, env=self.env, timeout=60)
-        self.assertEqual(r.returncode, 3, r)
-        r = subprocess.run([BINARY, "--cli", "--home", missing, "processor", "install", "x", "--source", "1"],
-                           capture_output=True, env=self.env, timeout=60)
-        self.assertEqual(r.returncode, 3, r)
+        r = self.gc("field", "add", "Foo", home=missing, timeout=60)
+        self.assertEqual(r.code, 3, r)
+        r = self.gc("processor", "install", "x", "--source", "1", home=missing, timeout=60)
+        self.assertEqual(r.code, 3, r)
         self.assertFalse(os.path.exists(missing))
 
     def test_formats(self):
@@ -376,12 +389,12 @@ class TestImport(Headless):
         broken = os.path.join(self.tmp, "broken.fit")
         with open(broken, "wb") as f:
             f.write(b"\x00" * 100)
-        r = self.gc("--athlete", self.athlete, "import", broken, "/does/not/exist.fit")
+        r = self.gca("import", broken, "/does/not/exist.fit")
         self.assertEqual(r.code, 5, r)
         self.assertIn(b"file not found", r.out)
 
         # a mix of good and bad is a partial success
-        r = self.gc("--athlete", self.athlete, "import", broken, RUN_STRYD)
+        r = self.gca("import", broken, RUN_STRYD)
         self.assertEqual(r.code, 1, r)
         self.assertIn(b"1 imported", r.out)
         self.assertClosed()
@@ -450,7 +463,7 @@ class TestEstimatePowerWorkflow(Headless):
         self.gcj("activity", "set", run, "--set", "EP Wind Speed=3.5")
 
         # choose like the GUI filter: outdoor rides only (not runs)
-        r = self.gc("--athlete", self.athlete, "processor", "run", "estimate-power", "--filter", "isRun=0")
+        r = self.gca("processor", "run", "estimate-power", "--filter", "isRun=0")
         self.assertEqual(r.code, 0, r)
         self.assertIn(b"2 processed, 0 skipped, 0 failed", r.out)
         self.assertIn(b"estimated with wind 0.0", r.out)
@@ -471,17 +484,17 @@ class TestEstimatePowerWorkflow(Headless):
 
     def step_4_errors_are_reported(self):
         self.gcj("processor", "install", "broken", "--file", self.bad)
-        r = self.gc("--athlete", self.athlete, "processor", "run", "broken", "last")
+        r = self.gca("processor", "run", "broken", "last")
         self.assertEqual(r.code, 5, r)
         self.assertIn(b"failed", r.out)
         self.assertIn(b"ValueError: boom", r.out)
 
         # a run on everything needs to be asked for
-        r = self.gc("--athlete", self.athlete, "processor", "run", "estimate-power")
+        r = self.gca("processor", "run", "estimate-power")
         self.assertEqual(r.code, 2, r)
-        r = self.gc("--athlete", self.athlete, "processor", "run", "no-such-processor", "--all")
+        r = self.gca("processor", "run", "no-such-processor", "--all")
         self.assertEqual(r.code, 3, r)
-        r = self.gc("--athlete", self.athlete, "processor", "run", "estimate-power", "--filter", "isRun=(")
+        r = self.gca("processor", "run", "estimate-power", "--filter", "isRun=(")
         self.assertEqual(r.code, 2, r)
         self.assertIn(b"bad filter", r.err)
 
@@ -527,22 +540,24 @@ class TestProcessorFiles(Headless):
 class TestLivesWithOtherTools(Headless):
     """fill-wind and fill-cp edit the folder while GoldenCheetah isn't running"""
 
+    imports = [RIDE_POWER]
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        r = cls.gc_class("--athlete", cls.athlete, "import", RIDE_POWER)
-        assert r.code == 0, r
         cls.activity = "2020_01_26_13_00_38"
 
     def test_edited_activity_file_is_used(self):
         path = os.path.join(self.folder, "activities", self.activity + ".json")
         self.keep(path)
-        time.sleep(1.1)  # mtime resolution
+        saved = os.stat(path).st_mtime
         with open(path, encoding="utf-8-sig") as f:
             doc = json.load(f)
         doc["RIDE"]["TAGS"]["Notes"] = "edited by another tool"
         with open(path, "w", encoding="utf-8") as f:
             json.dump(doc, f)
+        # later than the cache's record, whatever the file system's mtime resolution
+        os.utime(path, (saved + 2, saved + 2))
 
         env = self.gcj("activity", "list", self.activity, "--field", "Notes")
         self.assertEqual(env["data"]["activities"][0]["metadata"]["Notes"], "edited by another tool")
@@ -574,7 +589,7 @@ class TestLivesWithOtherTools(Headless):
         self.assertRegex(text, r"versionused=\d+")
         with open(ini, "w") as f:
             f.write(re.sub(r"versionused=\d+", "versionused=4000", text))
-        r = self.gc("--athlete", self.athlete, "activity", "list", timeout=60)
+        r = self.gca("activity", "list", timeout=60)
         self.assertEqual(r.code, 5, r)
         self.assertIn(b"could not be upgraded", r.err)
 
@@ -611,12 +626,12 @@ class TestLivesWithOtherTools(Headless):
                 time.sleep(0.05)
             self.assertTrue(os.path.exists(lock), "serve never took the athlete")
 
-            r = self.gc("--athlete", self.athlete, "activity", "list")
+            r = self.gca("activity", "list")
             self.assertEqual(r.code, 4, r)
             self.assertIn(b"in use", r.err)
 
             # another process waits its turn with --lock-wait
-            r = self.gc("--athlete", self.athlete, "--lock-wait", "30", "activity", "list")
+            r = self.gca("--lock-wait", "30", "activity", "list")
             self.assertEqual(r.code, 0, r)
             slow.join(timeout=30)
             self.assertEqual(answer[0][0], 200, answer)
@@ -633,7 +648,7 @@ class TestLivesWithOtherTools(Headless):
         try:
             with open(old, "w") as f:
                 f.write("999999\nGoldenCheetah\nsome-other-machine\n")
-            r = self.gc("--athlete", self.athlete, "activity", "list")
+            r = self.gca("activity", "list")
             self.assertEqual(r.code, 0, r)
             self.assertTrue(os.path.exists(old))
 
@@ -641,7 +656,7 @@ class TestLivesWithOtherTools(Headless):
             gone.wait()
             with open(old, "w") as f:
                 f.write("%d\nGoldenCheetah\n%s\n" % (gone.pid, self.gcj("version")["data"]["host"]))
-            r = self.gc("--athlete", self.athlete, "activity", "list")
+            r = self.gca("activity", "list")
             self.assertEqual(r.code, 0, r)
             self.assertFalse(os.path.exists(old))
         finally:
@@ -654,10 +669,10 @@ class TestLivesWithOtherTools(Headless):
         with open(ini, "w") as f:
             f.write(text.replace("safeexit=true", "safeexit=false"))
         try:
-            r = self.gc("--athlete", self.athlete, "activity", "list")
+            r = self.gca("activity", "list")
             self.assertEqual(r.code, 4, r)
             self.assertIn(b"--force", r.err)
-            r = self.gc("--athlete", self.athlete, "--force", "activity", "list")
+            r = self.gca("--force", "activity", "list")
             self.assertEqual(r.code, 0, r)
         finally:
             with open(ini, "w") as f:
@@ -695,11 +710,7 @@ class TestLivesWithOtherTools(Headless):
 class TestActivityFields(Headless):
     """activity set edits a field as the Details tab does"""
 
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        r = cls.gc_class("--athlete", cls.athlete, "import", RIDE_POWER, RUN_STRYD)
-        assert r.code == 0, r
+    imports = [RIDE_POWER, RUN_STRYD]
 
     def saved(self, activity):
         with open(os.path.join(self.folder, "activities", activity + ".json"), encoding="utf-8-sig") as f:
@@ -765,11 +776,11 @@ class TestActivityFields(Headless):
 class TestTrends(Headless):
     """chart trend's periods have the values Trends and metric aggregate give"""
 
+    imports = [RIDE_POWER, RIDE_GPS]
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        r = cls.gc_class("--athlete", cls.athlete, "import", RIDE_POWER, RIDE_GPS)
-        assert r.code == 0, r
         # the GPS ride has no power: move it into the power ride's month
         r = cls.gc_class("--athlete", cls.athlete, "activity", "set", "2012_01_11_11_51_01",
                          "--set", "Start Date=2020-01-20")
@@ -798,11 +809,7 @@ class TestTrends(Headless):
 
 class TestActivitiesMetricsCharts(Headless):
 
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        r = cls.gc_class("--athlete", cls.athlete, "import", RIDE_POWER, RIDE_GPS, RUN_STRYD)
-        assert r.code == 0, r
+    imports = [RIDE_POWER, RIDE_GPS, RUN_STRYD]
 
     def test_selection(self):
         acts = self.gcj("activity", "list")["data"]["activities"]
@@ -853,21 +860,21 @@ class TestActivitiesMetricsCharts(Headless):
         env = self.gcj("--output", out, "activity", "export", "last", "--as", "tcx")
         self.assertEqual(env["data"]["output"], out)
         self.assertIn(b"TrainingCenterDatabase", open(out, "rb").read(2000))
-        r = self.gc("--athlete", self.athlete, "-o", "-", "activity", "export", "last", "--as", "csv")
+        r = self.gca("-o", "-", "activity", "export", "last", "--as", "csv")
         self.assertEqual(r.code, 0)
         self.assertTrue(r.out.startswith(b"Minutes"))
         self.gcj("activity", "export", "last", "--as", "doc", expect=2)
 
         # a table is not a chart: -o writes the csv, and a bad path is an error
         table = os.path.join(self.tmp, "intervals.csv")
-        r = self.gc("--athlete", self.athlete, "--format", "csv", "-o", table, "interval", "list", "last")
+        r = self.gca("--format", "csv", "-o", table, "interval", "list", "last")
         self.assertEqual(r.code, 0, r)
         self.assertEqual(r.out, b"")
         self.assertIn(b"wrote", r.err)
         saved = open(table, "rb").read()
         self.assertTrue(saved.startswith(b"number,name,type"), saved[:80])
         missing = os.path.join(self.tmp, "no-such-dir", "intervals.csv")
-        r = self.gc("--athlete", self.athlete, "--format", "csv", "-o", missing, "interval", "list", "last")
+        r = self.gca("--format", "csv", "-o", missing, "interval", "list", "last")
         self.assertNotEqual(r.code, 0)
         self.assertEqual(r.out, b"")
         self.assertIn(b"can't write", r.err)
@@ -917,7 +924,7 @@ class TestActivitiesMetricsCharts(Headless):
         self.assertEqual(len(filtered["intervals"]), env["user_intervals"])
         bike = self.gcj("interval", "list", "2020_01_26_13_00_38")["data"]
         self.assertEqual([bike["recorded_laps"], bike["user_intervals"], bike["discovered_efforts"]], [0, 0, 0])
-        text = self.gc("--athlete", self.athlete, "interval", "list", "2020_01_26_13_00_38")
+        text = self.gca("interval", "list", "2020_01_26_13_00_38")
         self.assertEqual(text.code, 0, text)
         self.assertTrue(text.out.startswith(b"recorded laps: 0, user intervals: 0, discovered efforts: 0\n"), text)
         # the intervals sidebar's metrics by default, relevant ones only
@@ -948,11 +955,6 @@ class TestActivitiesMetricsCharts(Headless):
         self.assertEqual(self.gcj("interval", "show", run, laps[1]["name"].upper())["data"]["number"], laps[1]["number"])
         self.gcj("interval", "show", run, "999", expect=3)
         self.gcj("interval", "show", run, "no such lap", expect=3)
-
-    def csv_rows(self, *args, expect=0):
-        r = self.gc("--athlete", self.athlete, "--format", "csv", *args)
-        self.assertEqual(r.code, expect, r)
-        return list(csv.reader(io.StringIO(r.out.decode())))
 
     def test_csv(self):
         run = "2024_07_09_15_12_48"
@@ -1003,7 +1005,7 @@ class TestActivitiesMetricsCharts(Headless):
         self.assertIn(("Sport", "field", "", "value", "", "Run"), [tuple(r) for r in rows])
 
         # errors go to stderr only
-        r = self.gc("--athlete", self.athlete, "--format", "csv", "activity", "show", "1999-01-01")
+        r = self.gca("--format", "csv", "activity", "show", "1999-01-01")
         self.assertEqual(r.code, 3)
         self.assertEqual(r.out, b"")
         self.assertIn(b"error:", r.err)
@@ -1041,11 +1043,11 @@ class TestActivitiesMetricsCharts(Headless):
         self.gcj("activity", "overview", "last", "--tile", "nothing", expect=3)
         self.assertEqual(self.gcj("activity", "overview", "last", "--layout", "general")["data"]["layout"], "General")
         self.gcj("activity", "overview", "last", "--layout", "nothing", expect=3)
-        text = self.gc("--athlete", self.athlete, "activity", "overview", "last", "--tile", "Intervals Data")
+        text = self.gca("activity", "overview", "last", "--tile", "Intervals Data")
         self.assertEqual(text.code, 0, text)
         self.assertIn(b"min/km", text.out)
         self.assertIn(b"recorded laps:", text.out)
-        bike = self.gc("--athlete", self.athlete, "activity", "overview", "2020_01_26_13_00_38", "--tile", "Intervals")
+        bike = self.gca("activity", "overview", "2020_01_26_13_00_38", "--tile", "Intervals")
         self.assertEqual(bike.code, 0, bike)
         self.assertIn(b"recorded laps: 0, user intervals: 0, discovered efforts: 0\n", bike.out)
 
@@ -1095,20 +1097,20 @@ class TestActivitiesMetricsCharts(Headless):
         for i, chart in enumerate(charts):
             for fmt in ("png", "svg", "pdf"):
                 out = os.path.join(self.tmp, "chart-%d.%s" % (i, fmt))
-                r = self.gc("--athlete", self.athlete, "-o", out, "chart", *chart, "--as", fmt, "--width", "800", "--height", "400")
+                r = self.gca("-o", out, "chart", *chart, "--as", fmt, "--width", "800", "--height", "400")
                 self.assertEqual(r.code, 0, (chart, r))
                 data = open(out, "rb").read()
                 self.assertTrue(data.startswith(magic[fmt]), (chart, fmt, data[:20]))
         env = self.gcj("-o", os.path.join(self.tmp, "t.png"), "chart", "trend", "workout_time", "--by", "activity")
         self.assertEqual(env["data"]["periods"], env["data"]["activities"])
-        r = self.gc("--athlete", self.athlete, "chart", "activity", "last", "--series", "nothing")
+        r = self.gca("chart", "activity", "last", "--series", "nothing")
         self.assertEqual(r.code, 5, r)
 
     def test_delete(self):
         env = self.gcj("import", MULTI_TCX)
         others = [f["activity"] for f in env["data"]["files"][1:]]
         # the others go too, the activity count is as before for other tests
-        self.addCleanup(lambda: self.gc("--athlete", self.athlete, "activity", "delete", *others))
+        self.addCleanup(lambda: self.gca("activity", "delete", *others))
         victim = env["data"]["files"][0]["activity"]
         self.gcj("activity", "delete", victim)
         self.assertNotIn(victim + ".json", self.activity_files())
@@ -1120,11 +1122,7 @@ class TestActivitiesMetricsCharts(Headless):
 
 class TestDelete(Headless):
 
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        r = cls.gc_class("--athlete", cls.athlete, "import", RIDE_POWER, RIDE_GPS, RUN_STRYD)
-        assert r.code == 0, r
+    imports = [RIDE_POWER, RIDE_GPS, RUN_STRYD]
 
     def test_several_in_one_call(self):
         ids = [a["id"] for a in self.gcj("activity", "list")["data"]["activities"]]
@@ -1379,10 +1377,9 @@ class TestRest(Headless):
         self.assertEqual(json.loads(data)["data"]["files"][0]["status"], "imported")
 
     def test_network_listening_needs_a_token(self):
-        r = subprocess.run([BINARY, "--cli", "--home", self.home, "serve", "--host", "0.0.0.0", "--port", str(free_port())],
-                           capture_output=True, timeout=60, env=self.env)
-        self.assertEqual(r.returncode, 2)
-        self.assertIn(b"needs a token", r.stderr)
+        r = self.gc("serve", "--host", "0.0.0.0", "--port", free_port(), timeout=60)
+        self.assertEqual(r.code, 2, r)
+        self.assertIn(b"needs a token", r.err)
 
     def test_athlete_is_closed_between_requests(self):
         self.jcall("GET", "/athletes/%s" % self.athlete)
@@ -1397,7 +1394,7 @@ class TestRestShutdown(Headless):
     def test_interrupt_with_requests_queued(self):
         self.requirePython(self.gcj("version")["data"]["python"])
         # a slow request: a processor that takes its time
-        r = self.gc("--athlete", self.athlete, "import", RIDE_POWER)
+        r = self.gca("import", RIDE_POWER)
         self.assertEqual(r.code, 0, r)
         r = self.gc("processor", "install", "slow", "--source", "import time\ntime.sleep(4)\n")
         self.assertEqual(r.code, 0, r)
@@ -1436,11 +1433,7 @@ TWOS = "{\n    value { 2; }\n}\n"
 
 class TestUserMetricsAndZones(Headless):
 
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        r = cls.gc_class("--athlete", cls.athlete, "import", RIDE_POWER)
-        assert r.code == 0, r
+    imports = [RIDE_POWER]
 
     def metrics_file(self):
         return os.path.join(self.home, "usermetrics.xml")
@@ -1491,7 +1484,7 @@ class TestUserMetricsAndZones(Headless):
         listed = self.gcj("metric", "favourite", "list")["data"]["metrics"]
         self.assertEqual(listed[:2], ["workout_time", "average_hr"])
 
-        r = self.gc("--athlete", self.athlete, "interval", "list", "last")
+        r = self.gca("interval", "list", "last")
         self.assertEqual(r.code, 0, r)
         header = next(line for line in r.out.decode().splitlines() if "workout_time" in line and "average_hr" in line)
         self.assertLess(header.index("workout_time"), header.index("average_hr"))
@@ -1548,11 +1541,7 @@ def running_as_root():
 class TestReadOnlyFolders(Headless):
     """a folder that can't be written: a command fails promptly and says why, and changes nothing"""
 
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        r = cls.gc_class("--athlete", cls.athlete, "import", RIDE_POWER)
-        assert r.code == 0, r
+    imports = [RIDE_POWER]
 
     def read_only(self, *paths):
         """chmod a-w, undone when the test ends"""
@@ -1568,7 +1557,7 @@ class TestReadOnlyFolders(Headless):
             self.addCleanup(os.chmod, path, mode)
 
     def assertFails(self, *args, mentions):
-        r = self.gc("--athlete", self.athlete, *args, timeout=60)
+        r = self.gca(*args, timeout=60)
         self.assertEqual(r.code, 5, r)
         self.assertIn(mentions.encode(), r.err + r.out, r)   # the envelope carries it with --format json
         return r
@@ -1607,21 +1596,20 @@ class TestReadOnlyFolders(Headless):
     def test_read_only_charts(self):
         charts = os.path.join(self.folder, "config", "charts.xml")
         self.addCleanup(lambda: os.path.exists(charts) and os.remove(charts))
-        r = self.gc("--athlete", self.athlete, "chart", "library", "add", "--name", "Speed", "--metric", "average_speed")
+        r = self.gca("chart", "library", "add", "--name", "Speed", "--metric", "average_speed")
         self.assertEqual(r.code, 0, r)
         self.read_only(charts)
         started = time.time()
-        r = self.gc("--athlete", self.athlete, "activity", "list", timeout=60)
+        r = self.gca("activity", "list", timeout=60)
         self.assertEqual(r.code, 0, r)
         self.assertLess(time.time() - started, 30)
         self.assertFails("chart", "library", "add", "--name", "Cadence", "--metric", "average_cad", mentions="charts.xml")
 
     def test_athlete_create_leaves_nothing_behind(self):
         # with this umask a new folder can't take sub folders, so the zones can't be written
-        r = subprocess.run([BINARY, "--cli", "--home", self.home, "athlete", "create", "Half"],
-                           capture_output=True, timeout=60, env=self.env, preexec_fn=lambda: os.umask(0o577))
-        self.assertEqual(r.returncode, 5, r.stderr)
-        self.assertIn(b"power.zones", r.stderr)
+        r = self.gc("athlete", "create", "Half", timeout=60, preexec_fn=lambda: os.umask(0o577))
+        self.assertEqual(r.code, 5, r)
+        self.assertIn(b"power.zones", r.err)
         self.assertFalse(os.path.exists(os.path.join(self.home, "Half")))
 
     def test_settings_shared_by_all_athletes(self):
@@ -1655,11 +1643,7 @@ i {
 
 class TestLayoutTiles(Headless):
 
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        r = cls.gc_class("--athlete", cls.athlete, "import", RUN_STRYD)
-        assert r.code == 0, r
+    imports = [RUN_STRYD]
 
     def perspectives_file(self):
         return os.path.join(self.folder, "config", "analysis-perspectives.xml")
@@ -1760,7 +1744,7 @@ class TestChartLibrary(Headless):
         path = self.charts_file()
         self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
         self.gcj("metric", "user", "add", "--symbol", "keep_me", "--name", "Keep me", "--program", ONES)
-        self.addCleanup(lambda: self.gc("--athlete", self.athlete, "metric", "user", "remove", "keep_me"))
+        self.addCleanup(lambda: self.gca("metric", "user", "remove", "keep_me"))
         self.gcj("chart", "library", "add", "--name", "Kept", "--metric", "keep_me", "--metric", "average_power")
         with open(path, "rb") as f:
             saved = f.read()
@@ -1770,7 +1754,7 @@ class TestChartLibrary(Headless):
         with open(path, "rb") as f:
             self.assertEqual(f.read(), saved)
 
-        r = self.gc("--athlete", self.athlete, "chart", "library", "add", "--name", "Other", "--metric", "average_speed")
+        r = self.gca("chart", "library", "add", "--name", "Other", "--metric", "average_speed")
         self.assertEqual(r.code, 5, r)
         self.assertIn(b"'Kept' (keep_me)", r.err)
         with open(path, "rb") as f:
@@ -1861,7 +1845,7 @@ class TestChartLibrary(Headless):
     def test_library_curves_keep_their_own_drawing(self):
         self.gcj("chart", "library", "add", "--name", "Estimated VO2max", "--by", "day",
                  "--metric", "vo2max", "--style", "dots", "--symbol", "none")
-        text = self.gc("--athlete", self.athlete, "chart", "library", "show", "Estimated VO2max")
+        text = self.gca("chart", "library", "show", "Estimated VO2max")
         self.assertEqual(text.code, 0, text)
         self.assertIn(b"metric  vo2max  dots  none", text.out)
 
