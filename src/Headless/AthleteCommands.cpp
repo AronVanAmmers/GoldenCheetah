@@ -87,46 +87,28 @@ createAthlete(CommandEnvironment &env, const CommandRequest &request)
     }
 
     if (root.exists(name)) return CommandResult::failure(Status::Failed, QString("athlete '%1' already exists").arg(name));
-    if (!root.mkdir(name)) return CommandResult::failure(Status::Failed, QString("can't create %1").arg(root.absoluteFilePath(name)));
 
-    // what the new athlete wizard does
-    QDir athleteDir(root.canonicalPath() + "/" + name);
-    AthleteDirectoryStructure dirs(athleteDir);
-    dirs.createAllSubdirs();
-
-    appsettings->initializeQSettingsNewAthlete(root.canonicalPath(), name);
-    appsettings->setCValue(name, GC_UPGRADE_FOLDER_SUCCESS, true);
-    appsettings->setCValue(name, GC_VERSION_USED, QVariant(VERSION_LATEST));
-
-    QDate dob = QDate::fromString(request.args.value("dob").toString(), Qt::ISODate);
-    appsettings->setCValue(name, GC_DOB, dob);
-    appsettings->setCValue(name, GC_WEIGHT, request.args.value("weight").toDouble());
-    appsettings->setCValue(name, GC_HEIGHT, request.args.value("height").toDouble() / 100.0);
-    appsettings->setCValue(name, GC_WBALTAU, 300);
-    appsettings->setCValue(name, GC_SEX, request.args.value("sex").toString() == "female" ? 1 : 0);
-    appsettings->setCValue(name, GC_BIO, request.args.value("bio").toString());
-
-    int cp = request.args.value("cp").toInt();
-    int ftp = request.args.contains("ftp") ? request.args.value("ftp").toInt() : cp;
-    QString error;
-    Zones zones;
-    zones.addZoneRange(dob, cp, 0, ftp, request.args.value("w").toInt(), request.args.value("pmax").toInt());
-    if (!zones.write(dirs.config(), &error)) return CommandResult::failure(Status::Failed, error);
-
-    HrZones hrzones;
-    hrzones.addHrZoneRange(dob, request.args.value("lthr").toInt(), 0,
-                           request.args.value("resthr").toInt(), request.args.value("maxhr").toInt());
-    if (!hrzones.write(dirs.config(), &error)) return CommandResult::failure(Status::Failed, error);
-
+    // what the new athlete wizard does; a half made athlete is removed again
+    NewAthleteDefaults defaults;
+    defaults.dob = QDate::fromString(request.args.value("dob").toString(), Qt::ISODate);
+    defaults.weight = request.args.value("weight").toDouble();
+    defaults.height = request.args.value("height").toDouble() / 100.0;
+    defaults.wbaltau = 300;
+    defaults.sex = request.args.value("sex").toString() == "female" ? 1 : 0;
+    defaults.bio = request.args.value("bio").toString();
+    defaults.cp = request.args.value("cp").toInt();
+    defaults.ftp = request.args.contains("ftp") ? request.args.value("ftp").toInt() : defaults.cp;
+    defaults.wprime = request.args.value("w").toInt();
+    defaults.pmax = request.args.value("pmax").toInt();
+    defaults.lthr = request.args.value("lthr").toInt();
+    defaults.resthr = request.args.value("resthr").toInt();
+    defaults.maxhr = request.args.value("maxhr").toInt();
     // pace zones from critical velocity in km/h, as the wizard's defaults
-    PaceZones runPace(false);
-    runPace.addZoneRange(dob, request.args.value("cv-run").toDouble(), 0);
-    if (!runPace.write(dirs.config(), &error)) return CommandResult::failure(Status::Failed, error);
-    PaceZones swimPace(true);
-    swimPace.addZoneRange(dob, request.args.value("cv-swim").toDouble(), 0);
-    if (!swimPace.write(dirs.config(), &error)) return CommandResult::failure(Status::Failed, error);
-
-    appsettings->syncQSettingsAllAthletes();
+    defaults.cvRun = request.args.value("cv-run").toDouble();
+    defaults.cvSwim = request.args.value("cv-swim").toDouble();
+    QString error;
+    if (!createAthleteFolder(root, name, defaults, true, &error)) return CommandResult::failure(Status::Failed, error);
+    QDir athleteDir(root.canonicalPath() + "/" + name);
 
     QJsonObject data;
     data.insert("name", name);

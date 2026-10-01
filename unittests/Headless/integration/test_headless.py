@@ -1431,6 +1431,14 @@ class TestReadOnlyFolders(Headless):
         self.assertLess(time.time() - started, 30)
         self.assertFails("chart", "library", "add", "--name", "Cadence", "--metric", "average_cad", mentions="charts.xml")
 
+    def test_athlete_create_leaves_nothing_behind(self):
+        # with this umask a new folder can't take sub folders, so the zones can't be written
+        r = subprocess.run([BINARY, "--cli", "--home", self.home, "athlete", "create", "Half"],
+                           capture_output=True, timeout=60, env=self.env, preexec_fn=lambda: os.umask(0o577))
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn(b"power.zones", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.home, "Half")))
+
     def test_settings_shared_by_all_athletes(self):
         # the files the athletes folder holds, and the folder itself
         shared = [os.path.join(self.home, f) for f in os.listdir(self.home) if os.path.isfile(os.path.join(self.home, f))]

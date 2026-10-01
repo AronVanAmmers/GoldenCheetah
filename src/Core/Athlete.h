@@ -214,4 +214,25 @@ class AthleteDirectoryStructure : public QObject {
 
 };
 
+// what the new athlete wizard asks for, in metric units
+struct NewAthleteDefaults {
+    QDate dob;
+    double weight = 0;          // kg
+    double height = 0;          // m
+    int wbaltau = 300;
+    int sex = 0;                // 0 male, 1 female
+    QString bio;
+    int cp = 0, ftp = 0, wprime = 0, pmax = 0;
+    int lthr = 0, resthr = 0, maxhr = 0;
+    double cvRun = 0, cvSwim = 0;   // critical velocity, km/h
+    QString templateAthlete;        // copy its config/*.xml files, if given
+};
+
+// create a new athlete's folder and settings in home, as the new athlete
+// wizard does: the sub folders, settings, power, HR and pace zones. False
+// with error when that fails; with removeOnFailure a half made folder goes
+// again (one that existed already is never touched).
+bool createAthleteFolder(const QDir &home, const QString &name, const NewAthleteDefaults &defaults,
+                         bool removeOnFailure, QString *error = nullptr);
+
 #endif
