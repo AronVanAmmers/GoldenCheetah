@@ -685,6 +685,16 @@ class TestActivitiesMetricsCharts(Headless):
         filtered = self.gcj("activity", "list", "--filter", "Average_Power > 100")["data"]["activities"]
         self.assertEqual(len(filtered), 2)
 
+    def test_show_gives_intervals_as_interval_list(self):
+        for activity in ("first", "last"):
+            shown = self.gcj("activity", "show", activity)["data"]["intervals"]
+            listed = self.gcj("interval", "list", activity)["data"]["intervals"]
+            self.assertTrue(shown)
+            self.assertEqual(len(shown), len(listed))
+            for s, l in zip(shown, listed):
+                self.assertEqual({k: v for k, v in s.items() if k != "distance"},
+                                 {k: v for k, v in l.items() if k != "metrics"})
+
     def test_eval(self):
         env = self.gcj("activity", "eval", "--expression", "Duration / 60", "--sport", "Bike")
         self.assertEqual(len(env["data"]["activities"]), 2)

@@ -25,6 +25,7 @@
 #include <QJsonValue>
 
 class RideItem;
+class IntervalItem;
 
 namespace Headless {
 
@@ -41,6 +42,9 @@ void addMetadata(QJsonObject &o, RideItem *item, const QStringList &fields);
 
 // a metric value for json: no NaN/inf, no 12.300000000001 noise
 QJsonValue jsonNumber(double v);
+
+// an interval: number, name, type, group, start, stop, duration, km and color
+QJsonObject intervalJson(IntervalItem *interval, int number);
 
 // local time, as the GUI shows it
 QString activityStart(RideItem *item);

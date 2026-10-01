@@ -18,7 +18,10 @@
 
 #include "ActivityJson.h"
 
+#include "IntervalData.h"
+
 #include "RideItem.h"
+#include "IntervalItem.h"
 #include "RideMetric.h"
 
 #include <QFileInfo>
@@ -78,6 +81,25 @@ addMetadata(QJsonObject &o, RideItem *item, const QStringList &fields)
         for (const QString &f : fields) if (meta.contains(f)) m.insert(f, meta.value(f));
     }
     o.insert("metadata", m);
+}
+
+// as interval list and activity show give an interval
+QJsonObject
+intervalJson(IntervalItem *interval, int number)
+{
+    QJsonObject o;
+    o.insert("number", number);
+    o.insert("name", interval->name);
+    o.insert("type", intervalTypeKey(interval->type));
+    o.insert("group", RideFileInterval::typeDescription(interval->type));   // as the sidebar titles it
+    o.insert("start", jsonNumber(interval->start));
+    o.insert("stop", jsonNumber(interval->stop));
+    o.insert("duration", jsonNumber(interval->stop - interval->start));
+    o.insert("start_km", jsonNumber(interval->startKM));
+    o.insert("stop_km", jsonNumber(interval->stopKM));
+    o.insert("color", interval->color.name());
+    if (interval->test) o.insert("test", true);
+    return o;
 }
 
 } // namespace Headless
