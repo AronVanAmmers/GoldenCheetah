@@ -18,7 +18,6 @@
 
 import base64
 import csv
-import hashlib
 import html
 import io
 import json
@@ -52,7 +51,8 @@ def default_binary():
     return os.path.join(ROOT, "src", "GoldenCheetah")
 
 
-BINARY = os.environ.get("GC_BINARY", default_binary())
+# absolute: some tests run it from another working folder
+BINARY = os.path.abspath(os.environ.get("GC_BINARY", default_binary()))
 REQUIRE_BINARY = os.environ.get("GC_REQUIRE_BINARY") == "1"
 REQUIRE_PYTHON = os.environ.get("GC_REQUIRE_PYTHON") == "1"
 
@@ -190,13 +190,6 @@ class Headless(unittest.TestCase):
     @property
     def lock_dir(self):
         return os.path.join(self.env["XDG_RUNTIME_DIR"], "GoldenCheetah", "locks")
-
-    def lock_file(self, folder):
-        """the athlete's lock, named by a hash of its canonical path"""
-        key = os.path.realpath(folder).replace(os.sep, "/")
-        if os.name == "nt":
-            key = key.lower()
-        return os.path.join(self.lock_dir, hashlib.sha1(key.encode("utf-8")).hexdigest()[:16] + ".lock")
 
     def assertClosed(self):
         """a command must never leave the athlete open"""
@@ -626,11 +619,13 @@ class TestLivesWithOtherTools(Headless):
             slow = threading.Thread(target=lambda: answer.append(call_server(
                 port, "POST", "/athletes/%s/processors/hold/runs" % self.athlete, {"activity": [self.activity]})))
             slow.start()
-            lock = self.lock_file(self.folder)
+            # the only athlete, so the only lock in this test's lock folder
+            def held():
+                return os.path.isdir(self.lock_dir) and any(f.endswith(".lock") for f in os.listdir(self.lock_dir))
             deadline = time.time() + 20
-            while time.time() < deadline and not os.path.exists(lock):
+            while time.time() < deadline and not held():
                 time.sleep(0.05)
-            self.assertTrue(os.path.exists(lock), "serve never took the athlete")
+            self.assertTrue(held(), "serve never took the athlete")
 
             r = self.gca("activity", "list")
             self.assertEqual(r.code, 4, r)
