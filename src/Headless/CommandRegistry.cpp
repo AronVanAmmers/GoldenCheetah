@@ -18,6 +18,8 @@
 
 #include "CommandRegistry.h"
 
+#include <cmath>
+
 #include <QDate>
 #include <QDir>
 #include <QFileInfo>
@@ -116,6 +118,18 @@ CommandResult::batch(const QJsonObject &data, int failed, int total, const QStri
 void
 CommandRegistry::add(const Command &command)
 {
+    // mistakes in a command's spec, said on every run so they are noticed
+    for (const ParamSpec &p : command.spec.params) {
+        QString problem;
+        // the REST server takes these for itself
+        if (p.name == "format" || p.name == "envelope") problem = "the name is reserved";
+        // a default must be a value the parameter accepts
+        else if (!p.defaultValue.isUndefined() && !p.defaultValue.isNull()) coerce(p, p.defaultValue, problem);
+        if (!problem.isEmpty()) {
+            qWarning("%s: parameter '%s': %s", qPrintable(command.spec.name), qPrintable(p.name), qPrintable(problem));
+            Q_ASSERT_X(false, "CommandRegistry::add", "bad parameter spec");
+        }
+    }
     table.insert(command.spec.name, command);
 }
 
@@ -192,8 +206,9 @@ CommandRegistry::coerce(const ParamSpec &param, const QJsonValue &value, QString
 
     case ParamType::Int:
         if (value.isDouble()) {
+            // in range before the cast, which is undefined otherwise
             double d = value.toDouble();
-            if (d != qint64(d)) error = QString("expected a whole number");
+            if (!std::isfinite(d) || std::fabs(d) >= 9.2e18 || d != std::floor(d)) error = QString("expected a whole number");
             else result = qint64(d);
         } else if (isString) {
             bool ok = false;

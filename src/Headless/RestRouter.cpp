@@ -211,9 +211,16 @@ RestRouter::match(const QString &method, const QString &fullPath,
             if (p && p->repeated) args.insert(it.key(), QJsonArray{ it.value() });
             else args.insert(it.key(), it.value());
         }
-        // athlete may also be given as a query parameter on global routes
-        if (m.athlete.isEmpty() && args.contains("athlete") && !r.command->spec.param("athlete")) {
-            m.athlete = args.value("athlete").toString();
+        // athlete may also be given as a query parameter on global routes,
+        // and again on an athlete's route if it's the same one
+        if (args.contains("athlete") && !r.command->spec.param("athlete")) {
+            QString given = args.value("athlete").toString();
+            if (!m.athlete.isEmpty() && given != m.athlete) {
+                m.httpStatus = 400;
+                m.error = QString("the path is for athlete '%1', the request names '%2'").arg(m.athlete, given);
+                return m;
+            }
+            m.athlete = given;
             args.remove("athlete");
         }
         if (commandLineOnly(r.command->spec, args, m)) return m;
@@ -299,6 +306,14 @@ RestRouter::openApi(const QString &serverUrl) const
                 parameters.append(p);
             }
         }
+
+        // read by the server for every command, never a command's own
+        parameters.append(QJsonObject{ { "name", "format" }, { "in", "query" }, { "required", false },
+            { "description", "csv for the result as CSV, laid out as --format csv (errors stay JSON)" },
+            { "schema", QJsonObject{ { "type", "string" }, { "enum", QJsonArray{ "json", "csv" } } } } });
+        parameters.append(QJsonObject{ { "name", "envelope" }, { "in", "query" }, { "required", false },
+            { "description", "for charts and exports: the JSON envelope instead of the file" },
+            { "schema", QJsonObject{ { "type", "boolean" } } } });
 
         QJsonObject op;
         op.insert("operationId", spec.name);

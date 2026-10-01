@@ -1319,6 +1319,10 @@ class TestRest(Headless):
         self.jcall("GET", "/nothing/here", expect=404)
         env = self.jcall("PUT", "/athletes", expect=405)
         self.assertEqual(env["status"], "method_not_allowed")
+        # the athlete again in the query: fine if it's the same one
+        self.jcall("GET", "/athletes/%s/activities?athlete=%s" % (self.athlete, self.athlete))
+        env = self.jcall("GET", "/athletes/%s/activities?athlete=Other" % self.athlete, expect=400)
+        self.assertIn("Other", env["error"])
         self.jcall("POST", "/athletes/%s/imports" % self.athlete, raw=b"xx",
                    headers={"Content-Type": "application/octet-stream"}, expect=400)
 
@@ -1375,6 +1379,12 @@ class TestRest(Headless):
                                         headers={"Content-Type": "application/octet-stream"})
         self.assertEqual(status, 200, data)
         self.assertEqual(json.loads(data)["data"]["files"][0]["status"], "imported")
+
+    def test_serve_options_are_range_checked(self):
+        for args in (("--port", "0"), ("--port", "70000"), ("--max-upload", "4096")):
+            r = self.gc("serve", *args, timeout=60)
+            self.assertEqual(r.code, 2, (args, r))
+            self.assertIn(args[0].encode(), r.err)
 
     def test_network_listening_needs_a_token(self):
         r = self.gc("serve", "--host", "0.0.0.0", "--port", free_port(), timeout=60)

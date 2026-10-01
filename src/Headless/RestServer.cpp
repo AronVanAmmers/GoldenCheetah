@@ -121,7 +121,6 @@ reason(int status)
     case 404: return "Not Found";
     case 405: return "Method Not Allowed";
     case 409: return "Conflict";
-    case 413: return "Payload Too Large";
     case 422: return "Unprocessable Entity";
     case 503: return "Service Unavailable";
     default: return "Internal Server Error";
@@ -146,6 +145,36 @@ RestHandler::sendJson(HttpResponse &response, int status, const QJsonObject &bod
     response.write(QJsonDocument(body).toJson(QJsonDocument::Compact), true);
 }
 
+// compared in time that doesn't depend on where they differ
+static bool
+sameSecret(const QByteArray &given, const QByteArray &expected)
+{
+    unsigned char diff = given.size() == expected.size() ? 0 : 1;
+    for (int i = 0; i < expected.size(); i++)
+        diff |= (unsigned char)(i < given.size() ? given[i] : 0) ^ (unsigned char)expected[i];
+    return diff == 0;
+}
+
+// host:port as an Origin or Host header has it, the port always given
+static QString
+authorityOf(const QUrl &url)
+{
+    int port = url.port(url.scheme() == "https" ? 443 : 80);
+    QString host = url.host().toLower();
+    if (host.contains(':')) host = "[" + host + "]";
+    return QString("%1:%2").arg(host).arg(port);
+}
+
+// the file name both ways: quoted ASCII for old clients, UTF-8 (RFC 6266)
+static QByteArray
+contentDisposition(const QString &name)
+{
+    QString ascii;
+    for (QChar c : name) ascii += (c.unicode() < 0x20 || c.unicode() > 0x7e) ? QChar('_') : c;
+    ascii.replace("\\", "\\\\").replace("\"", "\\\"");
+    return "inline; filename=\"" + ascii.toLatin1() + "\"; filename*=UTF-8''" + QUrl::toPercentEncoding(name);
+}
+
 // a command's status by its name, else what the HTTP layer refused
 static QString
 errorName(int http)
@@ -156,7 +185,6 @@ errorName(int http)
     case 401: return "unauthorized";
     case 403: return "forbidden";
     case 405: return "method_not_allowed";
-    case 413: return "too_large";
     case 503: return "unavailable";
     default: return "usage";
     }
@@ -190,7 +218,7 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
     for (const QString &name : { QString("127.0.0.1"), QString("localhost"), QString("[::1]"), options.host.toLower() })
         selves << QString("%1:%2").arg(name).arg(options.port);
     bool anyHost = options.host == "0.0.0.0" || options.host == "::";
-    if (!origin.isEmpty() && !selves.contains(QUrl(origin).authority().toLower())) {
+    if (!origin.isEmpty() && !selves.contains(authorityOf(QUrl(origin)))) {
         sendError(response, 403, "requests from web pages on other sites are not allowed");
         log(method, path, 403, timer.elapsed());
         return;
@@ -204,15 +232,19 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
     // authentication
     if (!options.token.isEmpty()) {
         QByteArray auth = request.getHeader("Authorization");
-        if (auth != ("Bearer " + options.token).toUtf8()) {
+        if (!sameSecret(auth, ("Bearer " + options.token).toUtf8())) {
             sendError(response, 401, "missing or wrong bearer token");
             log(method, path, 401, timer.elapsed());
             return;
         }
     }
 
-    // the API describes itself
-    QString base = QString("http://%1:%2%3").arg(options.host).arg(options.port).arg(RestRouter::prefix);
+    // the API describes itself, at the address the client used when
+    // listening on every address
+    QString authority = options.host.contains(':') ? "[" + options.host + "]" : options.host;
+    authority = QString("%1:%2").arg(authority).arg(options.port);
+    if (anyHost && !host.isEmpty()) authority = host;
+    QString base = QString("http://%1%2").arg(authority).arg(RestRouter::prefix);
     if (method == "GET" && (path == "/v1" || path == "/v1/openapi.json" || path == "/")) {
         if (path == "/") {
             QJsonObject o;
@@ -430,8 +462,9 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
     int status = httpStatusFor(result.status);
     if (!result.payload.isEmpty() && !wantEnvelope && result.ok()) {
         response.setStatus(200, "OK");
-        response.setHeader("Content-Type", result.payloadType.toLatin1());
-        response.setHeader("Content-Disposition", QString("inline; filename=\"%1\"").arg(result.payloadName).toUtf8());
+        response.setHeader("Content-Type", result.payloadType.isEmpty() ? QByteArray("application/octet-stream")
+                                                                         : result.payloadType.toLatin1());
+        response.setHeader("Content-Disposition", contentDisposition(result.payloadName));
         response.write(result.payload, true);
     } else if (format == "csv" && (result.ok() || result.status == Status::Partial)) {
         if (!result.payload.isEmpty()) result.data.insert("payload_bytes", result.payload.size());
