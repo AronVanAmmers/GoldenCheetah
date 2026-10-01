@@ -141,6 +141,27 @@ class Headless(unittest.TestCase):
     def activity_files(self):
         return sorted(f for f in os.listdir(os.path.join(self.folder, "activities")) if f.endswith(".json"))
 
+    def keep(self, path):
+        """put a file or folder back as it is now when the test ends, pass or fail"""
+        backup = os.path.join(tempfile.mkdtemp(dir=self.tmp), "kept")
+        if os.path.isdir(path):
+            shutil.copytree(path, backup)
+        elif os.path.exists(path):
+            shutil.copy2(path, backup)
+        else:
+            backup = None
+
+        def restore():
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            elif os.path.exists(path):
+                os.remove(path)
+            if backup and os.path.isdir(backup):
+                shutil.copytree(backup, path)
+            elif backup:
+                shutil.copy2(backup, path)
+        self.addCleanup(restore)
+
     def requirePython(self, available):
         """skip without embedded Python, or fail when CI requires it"""
         if available:
@@ -384,7 +405,21 @@ class TestEstimatePowerWorkflow(Headless):
     def setUp(self):
         self.requirePython(self.python)
 
-    def test_1_once_per_athlete(self):
+    def test_workflow(self):
+        # each step builds on the ones before, so they run as one test
+        for name, step in [
+            ("1_once_per_athlete", self.step_1_once_per_athlete),
+            ("2_each_new_ride", self.step_2_each_new_ride),
+            ("3_rerun_the_estimate", self.step_3_rerun_the_estimate),
+            ("4_errors_are_reported", self.step_4_errors_are_reported),
+            ("4b_script_that_changes_nothing_is_skipped", self.step_4b_script_that_changes_nothing_is_skipped),
+            ("5_dry_run_saves_nothing", self.step_5_dry_run_saves_nothing),
+            ("6_builtin_processor", self.step_6_builtin_processor),
+        ]:
+            with self.subTest(step=name):
+                step()
+
+    def step_1_once_per_athlete(self):
         env = self.gcj("field", "add", *EP_FIELDS, "--type", "double", "--tab", "Estimate Power")
         self.assertEqual(env["data"]["added"], len(EP_FIELDS))
         # again: nothing to do
@@ -404,13 +439,13 @@ class TestEstimatePowerWorkflow(Headless):
         self.assertIn("estimate-power", names)
         self.assertEqual(self.gcj("processor", "show", "estimate-power")["data"]["source"].strip(), EP_SCRIPT.strip())
 
-    def test_2_each_new_ride(self):
+    def step_2_each_new_ride(self):
         env = self.gcj("import", RIDE_POWER, RIDE_GPS, RUN_STRYD)
         self.assertEqual(env["data"]["imported"], 3)
         sports = sorted(f["sport"] for f in env["data"]["files"])
         self.assertEqual(sports, ["Bike", "Bike", "Run"])
 
-    def test_3_rerun_the_estimate(self):
+    def step_3_rerun_the_estimate(self):
         run = [a["id"] for a in self.gcj("activity", "list", "--filter", "isRun=1")["data"]["activities"]][0]
         self.gcj("activity", "set", run, "--set", "EP Wind Speed=3.5")
 
@@ -434,7 +469,7 @@ class TestEstimatePowerWorkflow(Headless):
         self.assertEqual(item["metadata"]["EP Anchor W"].strip(), "203.5")
         self.assertClosed()
 
-    def test_4_errors_are_reported(self):
+    def step_4_errors_are_reported(self):
         self.gcj("processor", "install", "broken", "--file", self.bad)
         r = self.gc("--athlete", self.athlete, "processor", "run", "broken", "last")
         self.assertEqual(r.code, 5, r)
@@ -450,21 +485,21 @@ class TestEstimatePowerWorkflow(Headless):
         self.assertEqual(r.code, 2, r)
         self.assertIn(b"bad filter", r.err)
 
-    def test_4b_script_that_changes_nothing_is_skipped(self):
+    def step_4b_script_that_changes_nothing_is_skipped(self):
         self.gcj("processor", "install", "noop", "--source", 'print("looked")\n')
         env = self.gcj("processor", "run", "noop", "--all")
         self.assertEqual(env["data"]["processed"], 0)
         self.assertEqual(env["data"]["skipped"], 3)
         self.assertEqual(env["data"]["activities"][0]["output"], "looked")
 
-    def test_5_dry_run_saves_nothing(self):
+    def step_5_dry_run_saves_nothing(self):
         path = os.path.join(self.folder, "activities", self.activity_files()[0])
         before = open(path, "rb").read()
         env = self.gcj("processor", "run", "estimate-power", "--all", "--dry-run")
         self.assertFalse(env["data"]["saved"])
         self.assertEqual(open(path, "rb").read(), before)
 
-    def test_6_builtin_processor(self):
+    def step_6_builtin_processor(self):
         env = self.gcj("processor", "run", "fixspikes", "--sport", "Bike")
         self.assertEqual(env["data"]["failed"], 0)
         self.assertEqual(len(env["data"]["activities"]), 2)
@@ -501,6 +536,7 @@ class TestLivesWithOtherTools(Headless):
 
     def test_edited_activity_file_is_used(self):
         path = os.path.join(self.folder, "activities", self.activity + ".json")
+        self.keep(path)
         time.sleep(1.1)  # mtime resolution
         with open(path, encoding="utf-8-sig") as f:
             doc = json.load(f)
@@ -514,6 +550,7 @@ class TestLivesWithOtherTools(Headless):
     def test_edited_zones_recompute_metrics(self):
         before = self.gcj("activity", "list", self.activity, "--metric", "coggan_tss")["data"]["activities"][0]
         zones = os.path.join(self.folder, "config", "power.zones")
+        self.keep(zones)
         text = open(zones).read()
         self.assertIn("CP=250", text)
         with open(zones, "w") as f:
@@ -524,10 +561,6 @@ class TestLivesWithOtherTools(Headless):
         after = self.gcj("activity", "list", self.activity, "--metric", "coggan_tss")["data"]["activities"][0]
         self.assertGreater(after["metrics"]["coggan_tss"], before["metrics"]["coggan_tss"])
         self.assertEqual(self.gcj("zones", "show")["data"]["power"]["ranges"][0]["cp"], 200)
-
-        # put it back for the other tests
-        with open(zones, "w") as f:
-            f.write(text)
 
     @unittest.skipIf(os.name == "nt", "fakes a lock held by a POSIX 'sleep'; the AthleteLock unit test covers Windows")
     def test_refuses_while_another_process_holds_the_athlete(self):
@@ -590,6 +623,7 @@ class TestLivesWithOtherTools(Headless):
                 f.write(text)
 
     def test_zones_and_measures_commands(self):
+        self.keep(os.path.join(self.folder, "config"))
         before = self.gcj("activity", "list", self.activity, "--metric", "coggan_tss")["data"]["activities"][0]["metrics"]["coggan_tss"]
         env = self.gcj("zones", "set", "--from", "2019-06-01", "--cp", "300", "--w", "25000")
         self.assertEqual(env["data"]["status"], "added")
@@ -1029,8 +1063,11 @@ class TestActivitiesMetricsCharts(Headless):
         r = self.gc("--athlete", self.athlete, "chart", "activity", "last", "--series", "nothing")
         self.assertEqual(r.code, 5, r)
 
-    def test_zz_delete(self):  # last: changes the activity count
+    def test_delete(self):
         env = self.gcj("import", MULTI_TCX)
+        others = [f["activity"] for f in env["data"]["files"][1:]]
+        # the others go too, the activity count is as before for other tests
+        self.addCleanup(lambda: self.gc("--athlete", self.athlete, "activity", "delete", *others))
         victim = env["data"]["files"][0]["activity"]
         self.gcj("activity", "delete", victim)
         self.assertNotIn(victim + ".json", self.activity_files())
