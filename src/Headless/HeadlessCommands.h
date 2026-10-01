@@ -35,6 +35,7 @@ void registerFieldCommands(CommandRegistry &registry);
 void registerProcessorCommands(CommandRegistry &registry);
 void registerMetricCommands(CommandRegistry &registry);
 void registerUserMetricCommands(CommandRegistry &registry);
+void registerNavigatorCommands(CommandRegistry &registry);
 void registerChartCommands(CommandRegistry &registry);
 void registerChartLibraryCommands(CommandRegistry &registry);
 

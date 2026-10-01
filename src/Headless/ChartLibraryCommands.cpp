@@ -27,6 +27,7 @@
 
 #include "HeadlessCommands.h"
 #include "ActivitySelection.h"
+#include "MetricNames.h"
 
 #include "Athlete.h"
 #include "Context.h"

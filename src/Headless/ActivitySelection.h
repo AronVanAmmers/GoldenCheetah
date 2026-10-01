@@ -59,49 +59,8 @@ struct ActivitySelection {
     bool resolve(AthleteSession &session, QList<RideItem *> &result, QString &error, Status &status) const;
 };
 
-// json for an activity: file, start, sport and the headline numbers
-QJsonObject activitySummary(RideItem *item);
-
-// add metric values (by symbol) and metadata fields to an activity object
-void addMetrics(QJsonObject &o, RideItem *item, const QStringList &symbols, bool metricUnits = true);
-void addMetadata(QJsonObject &o, RideItem *item, const QStringList &fields);
-
-// a metric value for json: no NaN/inf, no 12.300000000001 noise
-QJsonValue jsonNumber(double v);
-
 // values of a repeated parameter, each of which may be comma separated
 QStringList splitList(const QJsonValue &v);
-
-// local time, as the GUI shows it
-QString activityStart(RideItem *item);
-
-// a metric by symbol (average_power) or by the name formulas and the GUI's
-// tables use (Average_Power, W'_Work), any case; empty when unknown
-QString metricSymbol(const QString &name);
-
-// the lookup behind metricSymbol is rebuilt when the metric count or the
-// user metrics change; this forces it, for when a user metric is replaced
-void invalidateMetricLookup();
-QString metricFormulaName(const QString &symbol);
-
-// an interval type as interval list --type takes it (user, effort ...)
-QString intervalTypeKey(int type);
-
-// how many intervals of each kind an activity has, including zeros.
-// recorded laps are from the device, user intervals were marked in
-// GoldenCheetah, discovered efforts are the ones it found (efforts,
-// peaks, climbs, segments). The entire activity is none of these.
-struct IntervalCensus {
-    int recordedLaps = 0;
-    int userIntervals = 0;
-    int discoveredEfforts = 0;
-};
-
-IntervalCensus intervalCensus(RideItem *item);
-QString intervalCensusLine(const IntervalCensus &census);
-
-// symbols for names, false and error for the first unknown one
-bool resolveMetrics(const QStringList &names, QStringList &symbols, QString &error);
 
 } // namespace Headless
 

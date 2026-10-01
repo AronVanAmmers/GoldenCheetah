@@ -17,6 +17,8 @@
  */
 
 #include "ActivitySelection.h"
+#include "MetricNames.h"
+#include "ActivityJson.h"
 #include "AthleteSession.h"
 
 #include "Context.h"
@@ -178,19 +180,6 @@ ActivitySelection::resolve(AthleteSession &session, QList<RideItem *> &result, Q
     return true;
 }
 
-QString
-activityStart(RideItem *item)
-{
-    return item->dateTime.toLocalTime().toString("yyyy-MM-ddTHH:mm:ss");
-}
-
-QJsonValue
-jsonNumber(double v)
-{
-    if (std::isnan(v) || std::isinf(v)) return QJsonValue();
-    return QJsonValue(QString::number(v, 'g', 12).toDouble());
-}
-
 QStringList
 splitList(const QJsonValue &v)
 {
@@ -199,109 +188,6 @@ splitList(const QJsonValue &v)
     for (const QJsonValue &x : values)
         for (const QString &part : x.toString().split(",", Qt::SkipEmptyParts)) list << part.trimmed();
     return list;
-}
-
-QString
-metricFormulaName(const QString &symbol)
-{
-    const RideMetric *m = RideMetricFactory::instance().rideMetric(symbol);
-    return m ? m->internalName().replace(" ", "_") : QString();
-}
-
-// symbols, formula names (as DataFilter looks them up) and display names,
-// built again when the metrics change (user metrics added, renamed, removed)
-static QHash<QString, QString> metricLookup;
-static int lookupCount = -1;
-static quint16 lookupSchema = 0;
-
-void
-invalidateMetricLookup()
-{
-    metricLookup.clear();
-    lookupCount = -1;
-}
-
-QString
-metricSymbol(const QString &name)
-{
-    const RideMetricFactory &factory = RideMetricFactory::instance();
-    if (lookupCount != factory.metricCount() || lookupSchema != UserMetricSchemaVersion) {
-        metricLookup.clear();
-        lookupCount = factory.metricCount();
-        lookupSchema = UserMetricSchemaVersion;
-
-        // a compatibility_ metric only stands in for a user metric that went
-        // away: when a name is taken by both, the real one wins
-        for (int pass = 0; pass < 2; pass++) {
-            for (int i = 0; i < factory.metricCount(); i++) {
-                QString symbol = factory.metricName(i);
-                if (symbol.startsWith("compatibility_") != (pass == 0)) continue;
-                const RideMetric *m = factory.rideMetric(symbol);
-                if (!m) continue;
-                metricLookup.insert(m->name().replace(" ", "_").toLower(), symbol);
-                metricLookup.insert(metricFormulaName(symbol).toLower(), symbol);
-            }
-        }
-        for (int i = 0; i < factory.metricCount(); i++) metricLookup.insert(factory.metricName(i).toLower(), factory.metricName(i));
-    }
-    if (factory.haveMetric(name)) return name;
-    return metricLookup.value(QString(name).trimmed().replace(" ", "_").toLower());
-}
-
-bool
-resolveMetrics(const QStringList &names, QStringList &symbols, QString &error)
-{
-    symbols.clear();
-    for (const QString &n : names) {
-        QString symbol = metricSymbol(n);
-        if (symbol.isEmpty()) {
-            error = QString("unknown metric '%1', see 'metric list'").arg(n);
-            return false;
-        }
-        symbols << symbol;
-    }
-    return true;
-}
-
-QJsonObject
-activitySummary(RideItem *item)
-{
-    QJsonObject o;
-    o.insert("id", QFileInfo(item->fileName).completeBaseName());
-    o.insert("file", item->fileName);
-    o.insert("start", activityStart(item));
-    o.insert("sport", item->sport);
-    if (item->planned) o.insert("planned", true);
-    o.insert("duration", jsonNumber(item->getForSymbol("workout_time")));
-    o.insert("distance", jsonNumber(item->getForSymbol("total_distance")));
-    o.insert("data", item->present);
-    return o;
-}
-
-void
-addMetrics(QJsonObject &o, RideItem *item, const QStringList &symbols, bool metricUnits)
-{
-    if (symbols.isEmpty()) return;
-    QJsonObject m;
-    const RideMetricFactory &factory = RideMetricFactory::instance();
-    for (const QString &symbol : symbols) {
-        if (!factory.haveMetric(symbol)) continue;
-        m.insert(symbol, jsonNumber(item->getForSymbol(symbol, metricUnits)));
-    }
-    o.insert("metrics", m);
-}
-
-void
-addMetadata(QJsonObject &o, RideItem *item, const QStringList &fields)
-{
-    QJsonObject m;
-    const QMap<QString,QString> &meta = item->metadata();
-    if (fields.isEmpty()) {
-        for (auto it = meta.constBegin(); it != meta.constEnd(); ++it) m.insert(it.key(), it.value());
-    } else {
-        for (const QString &f : fields) if (meta.contains(f)) m.insert(f, meta.value(f));
-    }
-    o.insert("metadata", m);
 }
 
 } // namespace Headless
