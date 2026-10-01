@@ -23,6 +23,7 @@
 #include "AthleteLock.h"
 
 #include <QString>
+#include <QHash>
 #include <QStringList>
 #include <memory>
 
@@ -89,6 +90,20 @@ class AthleteSession
         Athlete *athlete_ = nullptr;
         std::unique_ptr<AthleteLock> lock_;
         int refreshedOnOpen_ = 0;
+};
+
+// finds activities by id as findActivity does, with the rides indexed
+// once, for looking up many. Valid while the rides don't change.
+class ActivityLookup
+{
+    public:
+        explicit ActivityLookup(RideCache *cache);
+        RideItem *find(const QString &id, QString &error) const;
+
+    private:
+        bool open = false;
+        QList<RideItem *> actual;               // not planned, in date order
+        QHash<QString, RideItem *> byFile;      // file name, and without its suffix
 };
 
 // a plain folder name, no path separators and not hidden

@@ -122,9 +122,10 @@ ActivitySelection::resolve(AthleteSession &session, QList<RideItem *> &result, Q
     if (!activities.isEmpty()) {
         // named one by one, in the order given, no duplicates
         QSet<RideItem *> seen;
+        ActivityLookup lookup(cache);
         for (const QString &id : activities) {
             QString why;
-            RideItem *item = session.findActivity(id, why);
+            RideItem *item = lookup.find(id, why);
             if (!item) {
                 error = why;
                 status = Status::NotFound;

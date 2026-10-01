@@ -273,10 +273,11 @@ class Importer
             if (!options.dryRun) session.refresh();
 
             // report the sport as computed by the refresh
+            ActivityLookup lookup(session.rideCache());
             for (ImportItem &r : results) {
                 if (r.status != "imported" || !r.sport.isEmpty()) continue;
                 QString why;
-                RideItem *item = session.findActivity(r.activity, why);
+                RideItem *item = lookup.find(r.activity, why);
                 if (item) r.sport = item->sport;
             }
             return results;

@@ -208,16 +208,32 @@ AthleteSession::waitForEstimates()
 RideItem *
 AthleteSession::findActivity(const QString &id, QString &error) const
 {
+    return ActivityLookup(rideCache()).find(id, error);
+}
+
+ActivityLookup::ActivityLookup(RideCache *cache)
+{
+    if (!cache) return;
+    open = true;
+    for (RideItem *item : cache->rides()) {
+        if (!item->planned) actual << item;
+        // the first one wins, as the scan it replaces had it
+        QString base = QFileInfo(item->fileName).completeBaseName();
+        if (!byFile.contains(item->fileName)) byFile.insert(item->fileName, item);
+        if (!byFile.contains(base)) byFile.insert(base, item);
+    }
+}
+
+RideItem *
+ActivityLookup::find(const QString &id, QString &error) const
+{
     error.clear();
-    RideCache *cache = rideCache();
-    if (!cache) {
+    if (!open) {
         error = "athlete not open";
         return nullptr;
     }
 
     QString key = id.trimmed();
-    QList<RideItem *> actual;
-    for (RideItem *item : cache->rides()) if (!item->planned) actual << item;
 
     if (key.isEmpty()) {
         error = "no activity given";
@@ -235,9 +251,7 @@ AthleteSession::findActivity(const QString &id, QString &error) const
     }
 
     // file name, with or without the suffix, planned included
-    for (RideItem *item : cache->rides()) {
-        if (item->fileName == key || QFileInfo(item->fileName).completeBaseName() == key) return item;
-    }
+    if (RideItem *item = byFile.value(key)) return item;
 
     // start date and time, in local time as shown by the GUI
     // (a bare date parses as midnight, it is handled below)
