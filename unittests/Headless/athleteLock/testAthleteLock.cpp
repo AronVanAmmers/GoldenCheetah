@@ -4,6 +4,7 @@
 #include <QCoreApplication>
 #include <QProcess>
 #include <QTemporaryDir>
+#include <QElapsedTimer>
 #include <QDir>
 #include <QFile>
 #include <QThread>
