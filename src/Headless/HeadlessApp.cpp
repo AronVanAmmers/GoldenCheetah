@@ -138,16 +138,20 @@ HeadlessApp::defaultHome()
     return GcStartup::libraryPath(false);
 }
 
+bool
+HeadlessApp::looksLikeAthlete(const QString &folder)
+{
+    QDir athlete(folder);
+    return !athlete.dirName().startsWith(".") && (athlete.exists("config") || athlete.exists("activities"));
+}
+
 QStringList
 HeadlessApp::athletes(const QString &home)
 {
     QStringList list;
     QDir dir(home);
-    for (const QString &name : dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
-        if (name.startsWith(".")) continue;
-        QDir athlete(dir.absoluteFilePath(name));
-        if (athlete.exists("config") || athlete.exists("activities")) list << name;
-    }
+    for (const QString &name : dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name))
+        if (looksLikeAthlete(dir.absoluteFilePath(name))) list << name;
     return list;
 }
 

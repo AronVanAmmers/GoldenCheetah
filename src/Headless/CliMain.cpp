@@ -118,8 +118,10 @@ cliMain(int argc, char **argv)
         args << QString::fromLocal8Bit(argv[i]);
     }
 
+    // the core's commands and serve, for parsing and help
     CommandRegistry registry = commandRegistry();
     registry.add(serveCommand());
+    const CommandSpec &serveSpec = registry.find("serve")->spec;
 
     CliParse parsed = CliParser::parse(args, registry);
     const GlobalOptions &g = parsed.global;
@@ -178,7 +180,7 @@ cliMain(int argc, char **argv)
 
     if (parsed.command == "serve") {
         QJsonObject serveArgs = parsed.args;
-        QString error = CommandRegistry::validate(serveCommand().spec, serveArgs);
+        QString error = CommandRegistry::validate(serveSpec, serveArgs);
         if (!error.isEmpty()) {
             writeErr(QString("error: %1\n").arg(error));
             return finish(int(Status::Usage));

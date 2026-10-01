@@ -136,8 +136,7 @@ checkName(const QString &name)
 static void
 stamp(UserMetricSettings &m)
 {
-    QString program = m.program;
-    m.fingerprint = m.symbol + DataFilter::fingerprint(program);
+    m.fingerprint = m.symbol + DataFilter::fingerprint(m.program);
 }
 
 static CommandResult

@@ -21,6 +21,7 @@
 #include <QTextStream>
 #include <QJsonDocument>
 #include <QRegularExpression>
+#include <QSet>
 #include <cmath>
 
 namespace Headless {
@@ -95,12 +96,14 @@ static QStringList
 tableColumns(const QList<QJsonObject> &flat, const QStringList &then)
 {
     QStringList columns;
+    QSet<QString> seen;
+    auto add = [&](const QString &c) { if (!seen.contains(c)) { seen.insert(c); columns << c; } };
     for (const QString &p : preferred)
-        for (const QJsonObject &o : flat) if (o.contains(p) && !columns.contains(p)) { columns << p; break; }
+        for (const QJsonObject &o : flat) if (o.contains(p)) { add(p); break; }
     for (const QString &c : then)
-        for (const QJsonObject &o : flat) if (o.contains(c) && !columns.contains(c)) { columns << c; break; }
+        for (const QJsonObject &o : flat) if (o.contains(c)) { add(c); break; }
     for (const QJsonObject &o : flat)
-        for (const QString &k : o.keys()) if (!columns.contains(k)) columns << k;
+        for (auto it = o.constBegin(); it != o.constEnd(); ++it) add(it.key());
     return columns;
 }
 

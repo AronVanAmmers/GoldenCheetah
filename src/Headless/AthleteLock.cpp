@@ -19,6 +19,8 @@
 #include "AthleteLock.h"
 
 #include <QCryptographicHash>
+#include <QElapsedTimer>
+#include <QThread>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -27,6 +29,7 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QStandardPaths>
+#include <algorithm>
 #include <memory>
 
 #ifdef Q_OS_WIN
@@ -171,16 +174,6 @@ AthleteLock::tryLock(int timeoutMs)
 {
     if (locked) return true;
 
-    QMutexLocker locker(&registryMutex);
-
-    // already held by this process, share it
-    LockEntry &entry = registry()[key];
-    if (entry.count > 0) {
-        entry.count++;
-        locked = true;
-        return true;
-    }
-
     std::shared_ptr<QLockFile> file = std::make_shared<QLockFile>(lockFilePath(key));
 
     // never consider a lock stale just because it is old, a long running
@@ -188,17 +181,38 @@ AthleteLock::tryLock(int timeoutMs)
     // process has died.
     file->setStaleLockTime(0);
 
-    if (file->tryLock(timeoutMs)) {
-        removeOldLock(key);
-        entry.count = 1;
-        entry.file = file;
-        locked = true;
-        pid = 0;
-        return true;
+    // in steps, the registry free in between: another thread of this
+    // process may take the lock meanwhile, and then it's shared
+    QElapsedTimer waited;
+    waited.start();
+    for (;;) {
+        {
+            QMutexLocker locker(&registryMutex);
+
+            // already held by this process, share it
+            auto it = registry().find(key);
+            if (it != registry().end() && it->count > 0) {
+                it->count++;
+                locked = true;
+                return true;
+            }
+
+            if (file->tryLock(0)) {
+                removeOldLock(key);
+                LockEntry &entry = registry()[key];
+                entry.count = 1;
+                entry.file = file;
+                locked = true;
+                pid = 0;
+                return true;
+            }
+        }
+        qint64 left = timeoutMs - waited.elapsed();
+        if (left <= 0) break;
+        QThread::msleep(ulong(std::min<qint64>(left, 100)));
     }
 
     // remember who has it for diagnostics
-    registry().remove(key);
     pid = 0;
     hostname.clear();
     appname.clear();
