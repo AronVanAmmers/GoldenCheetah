@@ -40,6 +40,7 @@
 class LTMTool;
 class LTMSettings;
 class Context;
+class PDModel;
 class RideMetric;
 class RideBest;
 
@@ -127,6 +128,29 @@ class MetricDetail {
                      ignoreZeros(false), curve(NULL) {}
 
     bool operator< (MetricDetail right) const { return name.localeAwareCompare(right.name) < 0; }
+
+    // shared by the curve catalogue (LTMTool), Curve Settings
+    // (EditMetricDetailDialog) and the command line, so curves made in
+    // either look and are named the same
+
+    // the default drawing for a metric of this type
+    static QwtPlotCurve::CurveStyle curveStyleFor(RideMetric::MetricType type);
+    static QwtSymbol::Style symbolStyleFor(RideMetric::MetricType type);
+
+    // a metric curve as the catalogue sets one up, all but the pen colour
+    static MetricDetail forMetric(const RideMetric *metric, bool useMetricUnits);
+
+    // what Curve Settings offers, in the order of its lists
+    static QList<RideFile::SeriesType> bestSeries();
+    static QList<QwtPlotCurve::CurveStyle> curveStyles();
+    static QList<QwtSymbol::Style> symbolStyles();
+    static QList<PDModel *> estimateModels(Context *context); // the caller owns them
+
+    // "Peak 45 minute Power" (units: 1, 60 or 3600 seconds); its symbol has _ for spaces
+    static QString bestName(int duration, int units, RideFile::SeriesType series);
+
+    // "CP (cp2)", "Estimate 5 minutes Power (cp3)" (estimate: ESTIMATE_*)
+    static QString estimateName(int estimate, const QString &model, int duration, int units);
 
     int type;
     bool stack; // should this be stacked?

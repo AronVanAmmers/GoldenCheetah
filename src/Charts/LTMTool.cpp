@@ -176,29 +176,12 @@ LTMTool::LTMTool(Context *context, LTMSettings *settings) : QWidget(context->mai
         // for previously configured charts, but not for creating new ones.
         if (factory.metricName(i).startsWith("compatibility_")) continue;
 
-        // metrics catalogue and settings
-        MetricDetail adds;
+        // metrics catalogue and settings (as the command line makes a metric curve)
+        MetricDetail adds = MetricDetail::forMetric(factory.rideMetric(factory.metricName(i)),
+                                                    GlobalContext::context()->useMetricUnits);
         QColor cHSV;
-
-        adds.symbol = factory.metricName(i);
-        adds.metric = factory.rideMetric(factory.metricName(i));
         cHSV.setHsv((i%6)*(255/(factory.metricCount()/5)), 255, 255);
         adds.penColor = cHSV.convertTo(QColor::Rgb);
-        adds.curveStyle = curveStyle(factory.metricType(i));
-        adds.symbolStyle = symbolStyle(factory.metricType(i));
-        adds.smooth = false;
-        adds.trendtype = 0;
-        adds.topN = 1; // show top 1 by default always
-
-        adds.name   = Utils::unprotect(adds.metric->name());
-
-        // set default for the user overiddable fields
-        adds.uname  = adds.name;
-        adds.units = adds.metric->units(GlobalContext::context()->useMetricUnits);
-        adds.uunits = adds.units;
-
-        // default units to metric name if it is blank
-        if (adds.uunits == "") adds.uunits = adds.name;
         metrics.append(adds);
     }
 
@@ -1559,27 +1542,10 @@ EditMetricDetailDialog::estimateName()
         estimateDurationUnits->hide();
     }
 
-    // set the estimate name from model and estimate type
-    QString name;
-
-    // first do the type if estimate
-    switch(estimateSelect->currentIndex()) {
-        case 0 : name = "W'"; break;
-        case 1 : name = "CP"; break;
-        case 2 : name = "FTP"; break;
-        case 3 : name = "p-Max"; break;
-        case 4 : 
-            {
-                name = QString(tr("Estimate %1 %2 Power")).arg(estimateDuration->value())
-                                                  .arg(estimateDurationUnits->currentText());
-            }
-            break;
-        case 5 : name = tr("Endurance Index"); break;
-        case 6 : name = tr("Vo2Max Estimate"); break;
-    }
-
-    // now the model
-    name += " (" + models[modelSelect->currentIndex()]->code() + ")";
+    // set the estimate name from model and estimate type (as the command line does)
+    int units = estimateDurationUnits->currentIndex() == 0 ? 1 : estimateDurationUnits->currentIndex() == 1 ? 60 : 3600;
+    QString name = MetricDetail::estimateName(estimateSelect->currentIndex(), models[modelSelect->currentIndex()]->code(),
+                                              estimateDuration->value(), units);
     userName->setText(name);
     metricDetail->symbol = name.replace(" ", "_");
 }
@@ -1704,16 +1670,7 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     dataSeries = new QComboBox(this);
 
     // add all the different series supported
-    seriesList << RideFile::watts
-               << RideFile::wattsKg
-               << RideFile::xPower
-               << RideFile::aPower
-               << RideFile::IsoPower
-               << RideFile::hr
-               << RideFile::kph
-               << RideFile::cad
-               << RideFile::nm
-               << RideFile::vam;
+    seriesList = MetricDetail::bestSeries();
 
     foreach (RideFile::SeriesType x, seriesList) {
             dataSeries->addItem(RideFile::seriesName(x), static_cast<int>(x));
@@ -1741,11 +1698,7 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     estimateSelect = new QComboBox(this);
 
     // working with estimates, local utility functions
-    models << new CP2Model(context);
-    models << new CP3Model(context);
-    //models << new MultiModel(context); disabled in v3.6
-    models << new ExtendedModel(context);
-    //models << new WSModel(context); disabled in v3.6
+    models = MetricDetail::estimateModels(context);
     foreach(PDModel *model, models) {
         modelSelect->addItem(model->name(), model->code());
     }
@@ -2370,15 +2323,9 @@ EditMetricDetailDialog::bestName()
     // when widget destroyed we get negative indexes so ignore
     if (durationUnits->currentIndex() < 0 || dataSeries->currentIndex() < 0) return;
 
-    // set uname from current parms
-    QString desc = QString(tr("Peak %1")).arg(duration->value());
-    switch (durationUnits->currentIndex()) {
-    case 0 : desc += tr(" second "); break;
-    case 1 : desc += tr(" minute "); break;
-    default:
-    case 2 : desc += tr(" hour "); break;
-    }
-    desc += RideFile::seriesName(seriesList.at(dataSeries->currentIndex()));
+    // set uname from current parms (as the command line does)
+    int units = durationUnits->currentIndex() == 0 ? 1 : durationUnits->currentIndex() == 1 ? 60 : 3600;
+    QString desc = MetricDetail::bestName(duration->value(), units, seriesList.at(dataSeries->currentIndex()));
     userName->setText(desc);
     metricDetail->bestSymbol = desc.replace(" ", "_");
 }
@@ -2501,15 +2448,9 @@ EditMetricDetailDialog::metricSelected()
     if (chooseStress->isChecked()) stressName();
 }
 
-// uh. i hate enums when you need to modify from ints
-// this is fugly and prone to error. Tied directly to the
-// combo box above. all better solutions gratefully received
-// but wanna get this code running for now
-static QwtPlotCurve::CurveStyle styleMap[] = { QwtPlotCurve::Steps, QwtPlotCurve::Lines,
-                                               QwtPlotCurve::Sticks, QwtPlotCurve::Dots };
-static QwtSymbol::Style symbolMap[] = { QwtSymbol::NoSymbol, QwtSymbol::Ellipse, QwtSymbol::Rect,
-                                        QwtSymbol::Diamond, QwtSymbol::Triangle, QwtSymbol::XCross,
-                                        QwtSymbol::Hexagon, QwtSymbol::Star1 };
+// the styles and symbols in the order of the combo boxes above
+static const QList<QwtPlotCurve::CurveStyle> styleMap = MetricDetail::curveStyles();
+static const QList<QwtSymbol::Style> symbolMap = MetricDetail::symbolStyles();
 void
 EditMetricDetailDialog::applyClicked()
 {
@@ -2584,30 +2525,6 @@ EditMetricDetailDialog::applyClicked()
     accept();
 }
 
-QwtPlotCurve::CurveStyle
-LTMTool::curveStyle(RideMetric::MetricType type)
-{
-    switch (type) {
-
-    case RideMetric::Average : return QwtPlotCurve::Lines;
-    case RideMetric::Total : return QwtPlotCurve::Steps;
-    case RideMetric::Peak : return QwtPlotCurve::Lines;
-    default : return QwtPlotCurve::Lines;
-
-    }
-}
-
-QwtSymbol::Style
-LTMTool::symbolStyle(RideMetric::MetricType type)
-{
-    switch (type) {
-
-    case RideMetric::Average : return QwtSymbol::Ellipse;
-    case RideMetric::Total : return QwtSymbol::Ellipse;
-    case RideMetric::Peak : return QwtSymbol::Rect;
-    default : return QwtSymbol::XCross;
-    }
-}
 void
 EditMetricDetailDialog::cancelClicked()
 {

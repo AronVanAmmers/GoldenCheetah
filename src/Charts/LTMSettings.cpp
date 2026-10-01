@@ -17,6 +17,7 @@
  */
 
 #include "LTMSettings.h"
+#include "PDModel.h"
 #include "MainWindow.h"
 #include "LTMTool.h"
 #include "Colors.h" //dpixfactor
@@ -88,6 +89,156 @@ void
 EditChartDialog::cancelClicked()
 {
     reject();
+}
+
+/*----------------------------------------------------------------------
+ * Curves, as the curve catalogue and Curve Settings make them
+ *--------------------------------------------------------------------*/
+
+QwtPlotCurve::CurveStyle
+MetricDetail::curveStyleFor(RideMetric::MetricType type)
+{
+    switch (type) {
+
+    case RideMetric::Average : return QwtPlotCurve::Lines;
+    case RideMetric::Total : return QwtPlotCurve::Steps;
+    case RideMetric::Peak : return QwtPlotCurve::Lines;
+    default : return QwtPlotCurve::Lines;
+
+    }
+}
+
+QwtSymbol::Style
+MetricDetail::symbolStyleFor(RideMetric::MetricType type)
+{
+    switch (type) {
+
+    case RideMetric::Average : return QwtSymbol::Ellipse;
+    case RideMetric::Total : return QwtSymbol::Ellipse;
+    case RideMetric::Peak : return QwtSymbol::Rect;
+    default : return QwtSymbol::XCross;
+    }
+}
+
+MetricDetail
+MetricDetail::forMetric(const RideMetric *metric, bool useMetricUnits)
+{
+    // metrics catalogue and settings
+    MetricDetail adds;
+
+    adds.symbol = metric->symbol();
+    adds.metric = metric;
+    adds.curveStyle = curveStyleFor(metric->type());
+    adds.symbolStyle = symbolStyleFor(metric->type());
+    adds.smooth = false;
+    adds.trendtype = 0;
+    adds.topN = 1; // show top 1 by default always
+
+    adds.name   = Utils::unprotect(adds.metric->name());
+
+    // set default for the user overiddable fields
+    adds.uname  = adds.name;
+    adds.units = adds.metric->units(useMetricUnits);
+    adds.uunits = adds.units;
+
+    // default units to metric name if it is blank
+    if (adds.uunits == "") adds.uunits = adds.name;
+    return adds;
+}
+
+QList<RideFile::SeriesType>
+MetricDetail::bestSeries()
+{
+    // add all the different series supported
+    return QList<RideFile::SeriesType>()
+               << RideFile::watts
+               << RideFile::wattsKg
+               << RideFile::xPower
+               << RideFile::aPower
+               << RideFile::IsoPower
+               << RideFile::hr
+               << RideFile::kph
+               << RideFile::cad
+               << RideFile::nm
+               << RideFile::vam;
+}
+
+QList<QwtPlotCurve::CurveStyle>
+MetricDetail::curveStyles()
+{
+    return { QwtPlotCurve::Steps, QwtPlotCurve::Lines, QwtPlotCurve::Sticks, QwtPlotCurve::Dots };
+}
+
+QList<QwtSymbol::Style>
+MetricDetail::symbolStyles()
+{
+    return { QwtSymbol::NoSymbol, QwtSymbol::Ellipse, QwtSymbol::Rect,
+             QwtSymbol::Diamond, QwtSymbol::Triangle, QwtSymbol::XCross,
+             QwtSymbol::Hexagon, QwtSymbol::Star1 };
+}
+
+QList<PDModel *>
+MetricDetail::estimateModels(Context *context)
+{
+    // working with estimates, local utility functions
+    QList<PDModel *> models;
+    models << new CP2Model(context);
+    models << new CP3Model(context);
+    //models << new MultiModel(context); disabled in v3.6
+    models << new ExtendedModel(context);
+    //models << new WSModel(context); disabled in v3.6
+    return models;
+}
+
+QString
+MetricDetail::bestName(int duration, int units, RideFile::SeriesType series)
+{
+    // (translated where Curve Settings shows it)
+    QString desc = QString(QCoreApplication::translate("EditMetricDetailDialog", "Peak %1")).arg(duration);
+    switch (units) {
+    case 1 : desc += QCoreApplication::translate("EditMetricDetailDialog", " second "); break;
+    case 60 : desc += QCoreApplication::translate("EditMetricDetailDialog", " minute "); break;
+    default:
+    case 3600 : desc += QCoreApplication::translate("EditMetricDetailDialog", " hour "); break;
+    }
+    desc += RideFile::seriesName(series);
+    return desc;
+}
+
+QString
+MetricDetail::estimateName(int estimate, const QString &model, int duration, int units)
+{
+    // set the estimate name from model and estimate type
+    QString name;
+
+    // the units as Curve Settings lists them
+    QString unitsText;
+    switch (units) {
+    case 1 : unitsText = QCoreApplication::translate("EditMetricDetailDialog", "seconds"); break;
+    case 60 : unitsText = QCoreApplication::translate("EditMetricDetailDialog", "minutes"); break;
+    default :
+    case 3600 : unitsText = QCoreApplication::translate("EditMetricDetailDialog", "hours"); break;
+    }
+
+    // first do the type if estimate
+    switch(estimate) {
+        case ESTIMATE_WPRIME : name = "W'"; break;
+        case ESTIMATE_CP : name = "CP"; break;
+        case ESTIMATE_FTP : name = "FTP"; break;
+        case ESTIMATE_PMAX : name = "p-Max"; break;
+        case ESTIMATE_BEST :
+            {
+                name = QString(QCoreApplication::translate("EditMetricDetailDialog", "Estimate %1 %2 Power")).arg(duration)
+                                                  .arg(unitsText);
+            }
+            break;
+        case ESTIMATE_EI : name = QCoreApplication::translate("EditMetricDetailDialog", "Endurance Index"); break;
+        case ESTIMATE_VO2MAX : name = QCoreApplication::translate("EditMetricDetailDialog", "Vo2Max Estimate"); break;
+    }
+
+    // now the model
+    name += " (" + model + ")";
+    return name;
 }
 
 /*----------------------------------------------------------------------
