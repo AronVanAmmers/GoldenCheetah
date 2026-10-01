@@ -53,14 +53,16 @@ listAthletes(CommandEnvironment &env, const CommandRequest &)
         o.insert("name", name);
         o.insert("folder", folder);
 
-        int count = QDir(folder + "/activities").entryList(QDir::Files).count();
+        // files of the formats GoldenCheetah reads, as it would load them
+        int count = 0;
+        const QStringList suffixes = RideFileFactory::instance().suffixes();
+        for (const QFileInfo &f : QDir(folder + "/activities").entryInfoList(QDir::Files))
+            if (suffixes.contains(f.suffix().toLower())) count++;
         o.insert("activity_files", count);
 
-        // is someone else using it?
-        if (!AthleteLock::heldByThisProcess(folder)) {
-            AthleteLock probe(folder);
-            if (!probe.tryLock(0)) o.insert("in_use_by", probe.holder());
-        }
+        // is someone else using it? (looked at, not taken)
+        QString holder;
+        if (AthleteLock::peek(folder, &holder) == AthleteLock::State::InUse) o.insert("in_use_by", holder);
         list.append(o);
     }
     QJsonObject data;
@@ -229,12 +231,10 @@ refreshAthlete(CommandEnvironment &env, const CommandRequest &request)
     int refreshed = s.refreshedOnOpen();
 
     if (request.args.value("rebuild").toBool(false)) {
-        // make every activity look changed so all metrics and caches are
-        // recomputed, as when the cache folder is deleted
-        for (RideItem *item : s.rideCache()->rides()) {
-            item->crc = 0;
-            item->timestamp = 0;
-        }
+        // every activity's metrics recomputed, marked stale as the core
+        // does for a changed one (its .cpx is rebuilt when out of date
+        // with the file, as always)
+        for (RideItem *item : s.rideCache()->rides()) item->isstale = true;
         s.refresh();
         refreshed = s.rideCache()->lastStaleCount();
     }
