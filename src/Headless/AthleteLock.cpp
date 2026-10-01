@@ -92,7 +92,16 @@ AthleteLock::lockFilePath(const QString &athleteDir)
 {
     QString key = canonicalKey(athleteDir);
 #ifdef Q_OS_WIN
-    key = key.toLower();    // one lock whatever the spelling
+    // one lock whatever the spelling: long names for 8.3 ones (RUNNER~1),
+    // and case doesn't matter
+    std::wstring native = QDir::toNativeSeparators(key).toStdWString();
+    DWORD size = GetLongPathNameW(native.c_str(), nullptr, 0);
+    if (size) {
+        std::wstring longName(size, L'\0');
+        DWORD got = GetLongPathNameW(native.c_str(), &longName[0], size);
+        if (got && got < size) key = QDir::fromNativeSeparators(QString::fromStdWString(longName.substr(0, got)));
+    }
+    key = key.toLower();
 #endif
     QByteArray hash = QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha1).toHex().left(16);
     return lockDirectory() + "/" + QString::fromLatin1(hash) + ".lock";
