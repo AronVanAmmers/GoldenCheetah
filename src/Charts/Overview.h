@@ -54,6 +54,9 @@ class OverviewWindow : public GcChartWindow
         QString getConfiguration() const;
         void setConfiguration(QString x);
 
+        // the configuration an overview starts with, for its scope
+        static QString defaultConfig(OverviewScope scope);
+
         int minimumColumns() const { return mincolsEdit->value(); }
         void setMinimumColumns(int x) { if (x>0 && x< 11) {mincolsEdit->setValue(x); space->setMinimumColumns(x); }}
 

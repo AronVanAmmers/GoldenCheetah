@@ -40,6 +40,8 @@
 #include "PMCData.h"
 #include "TimeUtils.h"
 #include "Utils.h"
+#include "Overview.h"
+#include "PerspectiveConfigParser.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -68,15 +70,13 @@ struct OverviewLayout {
     QList<OverviewChart> charts;
 };
 
-// the overview a new athlete starts with
+// the overview a new athlete starts with (read once)
 static QJsonArray
 defaultTiles()
 {
-    QFile file(":charts/overview-analysis.gchart");
-    if (!file.open(QIODevice::ReadOnly)) return QJsonArray();
-    QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
-    QString config = root["CHART"].toObject()["PROPERTIES"].toObject()["config"].toString();
-    return QJsonDocument::fromJson(config.toUtf8()).object()["CHARTS"].toArray();
+    static const QJsonArray tiles = QJsonDocument::fromJson(OverviewWindow::defaultConfig(OverviewScope::ANALYSIS).toUtf8())
+                                    .object()["CHARTS"].toArray();
+    return tiles;
 }
 
 // the analysis layouts, as AbstractView::restoreState reads them
@@ -90,32 +90,31 @@ readLayouts(Athlete *athlete, QString &source)
     QFile file(source);
     if (!file.open(QIODevice::ReadOnly)) return layouts;
 
-    QXmlStreamReader xml(&file);
-    int window = -1;
-    while (!xml.atEnd()) {
-        if (!xml.readNextStartElement()) continue;
-        QXmlStreamAttributes a = xml.attributes();
-        if (xml.name() == QLatin1String("layout")) {
-            OverviewLayout l;
-            l.name = Utils::unprotect(a.value("name").toString());
-            l.expression = Utils::unprotect(a.value("expression").toString());
-            layouts << l;
-            window = -1;
-        } else if (xml.name() == QLatin1String("chart") && !layouts.isEmpty()) {
-            window = a.value("id").toInt();
-            if (window == overviewWindow || window == blankOverviewWindow) {
-                OverviewChart c;
-                c.title = Utils::unprotect(a.value("title").toString());
-                // an unconfigured overview gets the default tiles
-                if (window == overviewWindow) c.tiles = defaultTiles();
-                layouts.last().charts << c;
+    QXmlInputSource input(&file);
+    QXmlSimpleReader reader;
+    PerspectiveConfigParser parser(VIEW_ANALYSIS);
+    reader.setContentHandler(&parser);
+    reader.setErrorHandler(&parser);
+    reader.parse(input);
+
+    for (const PerspectiveConfig &p : parser.layouts) {
+        OverviewLayout l;
+        l.name = p.name;
+        l.expression = p.expression;
+        for (const PerspectiveChartConfig &chart : p.charts) {
+            if (chart.id != overviewWindow && chart.id != blankOverviewWindow) continue;
+            OverviewChart c;
+            c.title = chart.title;
+            // an unconfigured overview gets the default tiles
+            if (chart.id == overviewWindow) c.tiles = defaultTiles();
+            const PerspectiveChartConfig::Property *config = chart.property("config");
+            if (config) {
+                QJsonObject root = QJsonDocument::fromJson(config->value.toUtf8()).object();
+                if (root["version"].toString() == "2.0") c.tiles = root["CHARTS"].toArray();
             }
-        } else if (xml.name() == QLatin1String("property") && (window == overviewWindow || window == blankOverviewWindow)
-                   && a.value("name") == QLatin1String("config")) {
-            QString config = Utils::unprotect(a.value("value").toString());
-            QJsonObject root = QJsonDocument::fromJson(config.toUtf8()).object();
-            if (root["version"].toString() == "2.0") layouts.last().charts.last().tiles = root["CHARTS"].toArray();
+            l.charts << c;
         }
+        layouts << l;
     }
     return layouts;
 }

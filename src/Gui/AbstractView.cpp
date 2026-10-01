@@ -913,147 +913,83 @@ AbstractView::onActive()
 //
 // view layout parser - reads in athletehome/xxx-layout.xml
 //
-bool ViewParser::startDocument()
+bool ViewParser::endElement( const QString &namespaceURI, const QString &localName, const QString &qName )
 {
-    page = NULL;
-    chart = NULL;
-    return true;
-}
+    PerspectiveConfigParser::endElement(namespaceURI, localName, qName);
+    if (qName != "layout" || layouts.isEmpty()) return true;
+    const PerspectiveConfig &layout = layouts.last();
 
-bool ViewParser::endElement( const QString&, const QString&, const QString &qName )
-{
-    if (qName == "chart" && chart && page) { // add chart to homewindow
+    // we need a new perspective for this view type
+    Perspective *page = new Perspective(context, layout.name, layout.type);
+    page->setExpression(layout.expression);
+    page->setTrainSwitch(layout.trainswitch);
+    perspectives.append(page);
+
+    foreach (const PerspectiveChartConfig &config, layout.charts) {
+
+        // new chart
+        GcWinID type = static_cast<GcWinID>(config.id);
+        GcChartWindow *chart = GcWindowRegistry::newGcWindow(type, context);
+        if (chart == NULL) continue;
+        chart->setProperty("title", QVariant(config.title));
+
+        foreach (const PerspectiveChartConfig::Property &property, config.properties) {
+
+            const QString &name = property.name, &type = property.type, &value = property.value;
+
+            // set the chart property
+            if (type == "int") chart->setProperty(name.toLatin1(), QVariant(value.toInt()));
+            if (type == "double") chart->setProperty(name.toLatin1(), QVariant(value.toDouble()));
+
+            // deprecate dateRange asa chart property THAT IS DSAVED IN STATE
+            if (type == "QString" && name != "dateRange") chart->setProperty(name.toLatin1(), QVariant(QString(value)));
+            if (type == "QDate") chart->setProperty(name.toLatin1(), QVariant(QDate::fromString(value)));
+            if (type == "QTime") chart->setProperty(name.toLatin1(), QVariant(QTime::fromString(value, "hh:mm:ss")));
+            if (type == "bool") chart->setProperty(name.toLatin1(), QVariant(value.toInt() ? true : false));
+            if (type == "LTMSettings") {
+                QByteArray base64(value.toLatin1());
+                QByteArray unmarshall = QByteArray::fromBase64(base64);
+                QDataStream s(&unmarshall, QIODevice::ReadOnly);
+                LTMSettings x;
+                s >> x;
+                chart->setProperty(name.toLatin1(), QVariant().fromValue<LTMSettings>(x));
+            }
+        }
+
+        // add chart to homewindow
         page->addChart(chart);
     }
 
-    if (qName == "layout" && page) {
+    // one we just did needs resolving translate the charts and add to the perspective
 
-        // one we just did needs resolving translate the charts and add to the perspective
+    // are we english language?
+    QVariant lang = appsettings->value(NULL, GC_LANG, QLocale::system().name());
+    bool english = lang.toString().startsWith("en") ? true : false;
 
-        // are we english language?
-        QVariant lang = appsettings->value(NULL, GC_LANG, QLocale::system().name());
-        bool english = lang.toString().startsWith("en") ? true : false;
+    // translate the metrics, but only if the built-in "default.XML"s are read (and only for LTM charts)
+    // and only if the language is not English (i.e. translation is required).
 
-        // translate the metrics, but only if the built-in "default.XML"s are read (and only for LTM charts)
-        // and only if the language is not English (i.e. translation is required).
+    if (useDefault && !english) {
 
-        if (useDefault && !english) {
+        // translate the titles
+        Perspective::translateChartTitles(page->charts);
 
-            // translate the titles
-            Perspective::translateChartTitles(page->charts);
+        // translate the LTM settings
+        for (int i=0; i<page->charts.count(); i++) {
+            // find out if it's an LTMWindow via dynamic_cast
+            LTMWindow* ltmW = dynamic_cast<LTMWindow*> (page->charts[i]);
+            if (ltmW) {
+                // the current chart is an LTMWindow, let's translate
 
-            // translate the LTM settings
-            for (int i=0; i<page->charts.count(); i++) {
-                // find out if it's an LTMWindow via dynamic_cast
-                LTMWindow* ltmW = dynamic_cast<LTMWindow*> (page->charts[i]);
-                if (ltmW) {
-                    // the current chart is an LTMWindow, let's translate
-
-                    // now get the LTMMetrics
-                    LTMSettings workSettings = ltmW->getSettings();
-                    // replace name and unit for translated versions
-                    workSettings.translateMetrics(GlobalContext::context()->useMetricUnits);
-                    ltmW->applySettings(workSettings);
-                }
+                // now get the LTMMetrics
+                LTMSettings workSettings = ltmW->getSettings();
+                // replace name and unit for translated versions
+                workSettings.translateMetrics(GlobalContext::context()->useMetricUnits);
+                ltmW->applySettings(workSettings);
             }
-        }
-
-        page->styleChanged(style);
-    }
-    return true;
-}
-
-bool ViewParser::startElement( const QString&, const QString&, const QString &name, const QXmlAttributes &attrs )
-{
-    if (name == "layout") {
-
-        QString name="General";
-        int typetouse=type;
-        int trainswitch=0;
-        QString expression;
-        for(int i=0; i<attrs.count(); i++) {
-            if (attrs.qName(i) == "style") {
-                style = Utils::unprotect(attrs.value(i)).toInt();
-            }
-            if (attrs.qName(i) == "name") {
-                name =  Utils::unprotect(attrs.value(i));
-            }
-            if (attrs.qName(i) == "expression") {
-                expression = Utils::unprotect(attrs.value(i));
-            }
-            if (attrs.qName(i) == "type") {
-                typetouse = Utils::unprotect(attrs.value(i)).toInt();
-            }
-            if (attrs.qName(i) == "trainswitch") {
-                trainswitch = attrs.value(i).toInt();
-            }
-        }
-
-        // we need a new perspective for this view type
-        page = new Perspective(context, name, typetouse);
-        page->setExpression(expression);
-        page->setTrainSwitch(trainswitch);
-        perspectives.append(page);
-    }
-    else if (name == "chart") {
-
-        QString name="", title="", typeStr="";
-        GcWinID type;
-
-        // get attributes
-        for(int i=0; i<attrs.count(); i++) {
-            if (attrs.qName(i) == "name") name = Utils::unprotect(attrs.value(i));
-            if (attrs.qName(i) == "title") title = Utils::unprotect(attrs.value(i));
-            if (attrs.qName(i) == "id")  typeStr = Utils::unprotect(attrs.value(i));
-        }
-
-        // new chart
-        type = static_cast<GcWinID>(typeStr.toInt());
-        chart = GcWindowRegistry::newGcWindow(type, context);
-        if (chart != NULL) {
-            chart->setProperty("title", QVariant(title));
         }
     }
-    else if (name == "property") {
 
-        QString name, type, value;
-
-        // get attributes
-        for(int i=0; i<attrs.count(); i++) {
-            if (attrs.qName(i) == "name") name = Utils::unprotect(attrs.value(i));
-            if (attrs.qName(i) == "value") value = Utils::unprotect(attrs.value(i));
-            if (attrs.qName(i) == "type")  type = Utils::unprotect(attrs.value(i));
-        }
-
-        // set the chart property
-        if (type == "int" && chart) chart->setProperty(name.toLatin1(), QVariant(value.toInt()));
-        if (type == "double" && chart) chart->setProperty(name.toLatin1(), QVariant(value.toDouble()));
-
-        // deprecate dateRange asa chart property THAT IS DSAVED IN STATE
-        if (type == "QString" && name != "dateRange" && chart) chart->setProperty(name.toLatin1(), QVariant(QString(value)));
-        if (type == "QDate" && chart) chart->setProperty(name.toLatin1(), QVariant(QDate::fromString(value)));
-        if (type == "QTime" && chart) chart->setProperty(name.toLatin1(), QVariant(QTime::fromString(value, "hh:mm:ss")));
-        if (type == "bool" && chart) chart->setProperty(name.toLatin1(), QVariant(value.toInt() ? true : false));
-        if (type == "LTMSettings" && chart) {
-            QByteArray base64(value.toLatin1());
-            QByteArray unmarshall = QByteArray::fromBase64(base64);
-            QDataStream s(&unmarshall, QIODevice::ReadOnly);
-            LTMSettings x;
-            s >> x;
-            chart->setProperty(name.toLatin1(), QVariant().fromValue<LTMSettings>(x));
-        }
-
-    }
-    return true;
-}
-
-bool ViewParser::characters( const QString&)
-{
-    return true;
-}
-
-
-bool ViewParser::endDocument()
-{
+    page->styleChanged(layout.style);
     return true;
 }
