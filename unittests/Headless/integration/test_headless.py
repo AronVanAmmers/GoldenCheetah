@@ -562,25 +562,35 @@ class TestLivesWithOtherTools(Headless):
         self.assertGreater(after["metrics"]["coggan_tss"], before["metrics"]["coggan_tss"])
         self.assertEqual(self.gcj("zones", "show")["data"]["power"]["ranges"][0]["cp"], 200)
 
-    @unittest.skipIf(os.name == "nt", "fakes a lock held by a POSIX 'sleep'; the AthleteLock unit test covers Windows")
     def test_refuses_while_another_process_holds_the_athlete(self):
-        holder = subprocess.Popen(["sleep", "60"])
+        # a real holder: serve, busy with a slow request on the athlete
+        self.requirePython(self.gcj("version")["data"]["python"])
+        r = self.gc("processor", "install", "hold", "--source", "import time\ntime.sleep(4)\n")
+        self.assertEqual(r.code, 0, r)
+        self.addCleanup(self.gc, "processor", "remove", "hold")
+        server, port = start_server(self.env, self.home, os.path.join(self.tmp, "hold.log"))
         try:
+            answer = []
+            slow = threading.Thread(target=lambda: answer.append(call_server(
+                port, "POST", "/athletes/%s/processors/hold/runs" % self.athlete, {"activity": [self.activity]})))
+            slow.start()
             lock = self.lock_file(self.folder)
-            os.makedirs(self.lock_dir, exist_ok=True)
-            with open(lock, "w") as f:
-                f.write("%d\nsleep\n%s\n" % (holder.pid, self.gcj("version")["data"]["host"]))
+            deadline = time.time() + 20
+            while time.time() < deadline and not os.path.exists(lock):
+                time.sleep(0.05)
+            self.assertTrue(os.path.exists(lock), "serve never took the athlete")
+
             r = self.gc("--athlete", self.athlete, "activity", "list")
             self.assertEqual(r.code, 4, r)
             self.assertIn(b"in use", r.err)
-            # the folder is untouched
-            self.assertTrue(os.path.exists(lock))
+
+            # another process waits its turn with --lock-wait
+            r = self.gc("--athlete", self.athlete, "--lock-wait", "30", "activity", "list")
+            self.assertEqual(r.code, 0, r)
+            slow.join(timeout=30)
+            self.assertEqual(answer[0][0], 200, answer)
         finally:
-            holder.kill()
-            holder.wait()
-        # the holder died: its lock is stale and taken over
-        r = self.gc("--athlete", self.athlete, "activity", "list")
-        self.assertEqual(r.code, 0, r)
+            stop_server(server)
         self.assertClosed()
 
     @unittest.skipIf(os.name == "nt", "fakes a dead process's lock with a POSIX 'true'")
@@ -1102,6 +1112,60 @@ def free_port():
         return s.getsockname()[1]
 
 
+def start_server(env, home, log_path, *args):
+    """serve on a free port: (process, port). Another process may take the
+    port between choosing and binding it, so a server that can't listen is
+    tried again on another."""
+    for _ in range(3):
+        port = free_port()
+        with open(log_path, "wb") as log:
+            server = subprocess.Popen([BINARY, "--cli", "--home", home, "serve", "--port", str(port)] + list(args),
+                                      env=env, stdout=subprocess.DEVNULL, stderr=log)
+        deadline = time.time() + 30
+        while time.time() < deadline and server.poll() is None:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                    return server, port
+            except OSError:
+                time.sleep(0.2)
+        if server.poll() is None:
+            server.kill()
+            server.wait()
+        with open(log_path, "rb") as log:
+            text = log.read().decode("utf-8", "replace")
+        if "can't listen" not in text:
+            break
+    raise RuntimeError("REST server did not start:\n" + text)
+
+
+def stop_server(server):
+    if server.poll() is not None:
+        return
+    if os.name == "nt":
+        server.terminate()      # no SIGINT for child processes on Windows
+    else:
+        server.send_signal(signal.SIGINT)
+    try:
+        server.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        server.kill()
+        server.wait()
+
+
+def call_server(port, method, path, body=None, timeout=60):
+    """(status, body) of a request to /v1, status None when the connection failed"""
+    req = urllib.request.Request("http://127.0.0.1:%d/v1%s" % (port, path), method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Content-Type": "application/json"} if body is not None else {})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+    except (OSError, ConnectionError) as e:
+        return None, str(e).encode()
+
+
 class TestRest(Headless):
 
     token = uuid.uuid4().hex
@@ -1109,32 +1173,11 @@ class TestRest(Headless):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.port = free_port()
-        cmd = [BINARY, "--cli", "--home", cls.home, "serve", "--port", str(cls.port), "--token", cls.token]
-        cls.serverlog = open(os.path.join(cls.tmp, "server.log"), "wb")
-        cls.server = subprocess.Popen(cmd, env=cls.env, stdout=subprocess.DEVNULL, stderr=cls.serverlog)
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            try:
-                with socket.create_connection(("127.0.0.1", cls.port), timeout=0.5):
-                    break
-            except OSError:
-                time.sleep(0.2)
-        else:
-            cls.server.kill()
-            raise RuntimeError("REST server did not start")
+        cls.server, cls.port = start_server(cls.env, cls.home, os.path.join(cls.tmp, "server.log"), "--token", cls.token)
 
     @classmethod
     def tearDownClass(cls):
-        if os.name == "nt":
-            cls.server.terminate()      # no SIGINT for child processes on Windows
-        else:
-            cls.server.send_signal(signal.SIGINT)
-        try:
-            cls.server.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            cls.server.kill()
-        cls.serverlog.close()
+        stop_server(cls.server)
         super().tearDownClass()
 
     def call(self, method, path, body=None, headers=None, raw=None, auth=True):
@@ -1327,47 +1370,28 @@ class TestRestShutdown(Headless):
         self.assertEqual(r.code, 0, r)
         r = self.gc("processor", "install", "slow", "--source", "import time\ntime.sleep(4)\n")
         self.assertEqual(r.code, 0, r)
-        port = free_port()
-        with open(os.path.join(self.tmp, "shutdown.log"), "wb") as log:
-            server = subprocess.Popen([BINARY, "--cli", "--home", self.home, "serve", "--port", str(port)],
-                                      env=self.env, stdout=subprocess.DEVNULL, stderr=log)
-            try:
-                deadline = time.time() + 30
-                while time.time() < deadline and server.poll() is None:
-                    try:
-                        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                            break
-                    except OSError:
-                        time.sleep(0.2)
-                answers = []
+        server, port = start_server(self.env, self.home, os.path.join(self.tmp, "shutdown.log"))
+        try:
+            answers = []
 
-                def call(method, path, body=None):
-                    req = urllib.request.Request("http://127.0.0.1:%d/v1%s" % (port, path), method=method,
-                                                 data=json.dumps(body).encode() if body is not None else None,
-                                                 headers={"Content-Type": "application/json"} if body is not None else {})
-                    try:
-                        with urllib.request.urlopen(req, timeout=60) as resp:
-                            answers.append((resp.status, resp.read()))
-                    except urllib.error.HTTPError as e:
-                        answers.append((e.code, e.read()))
-                    except (OSError, ConnectionError) as e:
-                        answers.append((None, str(e).encode()))
+            def call(method, path, body=None):
+                answers.append(call_server(port, method, path, body))
 
-                a = "/athletes/" + self.athlete
-                threads = [threading.Thread(target=call, args=("POST", a + "/processors/slow/runs", {"all": True}))]
-                threads[0].start()
-                time.sleep(0.5)
-                for _ in range(3):
-                    threads.append(threading.Thread(target=call, args=("GET", a + "/activities")))
-                    threads[-1].start()
-                time.sleep(0.5)
-                server.send_signal(signal.SIGINT)
-                server.wait(timeout=15)
-                for t in threads:
-                    t.join(timeout=30)
-            finally:
-                if server.poll() is None:
-                    server.kill()
+            a = "/athletes/" + self.athlete
+            threads = [threading.Thread(target=call, args=("POST", a + "/processors/slow/runs", {"all": True}))]
+            threads[0].start()
+            time.sleep(0.5)
+            for _ in range(3):
+                threads.append(threading.Thread(target=call, args=("GET", a + "/activities")))
+                threads[-1].start()
+            time.sleep(0.5)
+            server.send_signal(signal.SIGINT)
+            server.wait(timeout=15)
+            for t in threads:
+                t.join(timeout=30)
+        finally:
+            if server.poll() is None:
+                server.kill()
         self.assertEqual(len(answers), 4)
         for status, body in answers:
             self.assertIn(status, (200, 503, None), body)
