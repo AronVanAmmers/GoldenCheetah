@@ -4,6 +4,7 @@
 #include <QCoreApplication>
 #include <QProcess>
 #include <QTemporaryDir>
+#include <QDir>
 #include <QFile>
 #include <QThread>
 
@@ -44,6 +45,16 @@ private slots:
         lock.unlock();
         QVERIFY(!AthleteLock::heldByThisProcess(dir.path()));
         QVERIFY(!QFile::exists(AthleteLock::lockFilePath(dir.path())));
+    }
+
+    void lockIsNotInTheAthleteFolder() {
+        QTemporaryDir dir;
+        QString path = AthleteLock::lockFilePath(dir.path());
+        QVERIFY(!path.startsWith(QDir(dir.path()).canonicalPath()));
+        QVERIFY(path.startsWith(QDir(qEnvironmentVariable("XDG_RUNTIME_DIR")).canonicalPath()));
+        QCOMPARE(AthleteLock::lockFilePath(dir.path() + "/./"), path);
+        QTemporaryDir other;
+        QVERIFY(AthleteLock::lockFilePath(other.path()) != path);
     }
 
     void sharedWithinProcessInAnyOrder() {
@@ -134,6 +145,10 @@ int main(int argc, char **argv)
 {
     QByteArray hold = qgetenv("HOLD_LOCK");
     if (!hold.isEmpty()) return holdLock(QString::fromLocal8Bit(hold));
+
+    // locks go in the runtime folder, one of our own (the holder inherits it)
+    QTemporaryDir runtime;
+    qputenv("XDG_RUNTIME_DIR", QDir(runtime.path()).canonicalPath().toLocal8Bit());
 
     QCoreApplication app(argc, argv);
     TestAthleteLock test;

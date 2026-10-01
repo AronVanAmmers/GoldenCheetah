@@ -36,6 +36,10 @@
 // A lock left behind by a process that no longer exists is detected as
 // stale and removed automatically (see QLockFile).
 //
+// The lock file is kept on this machine, not in the athlete folder, so a
+// folder synced between machines never carries a lock from one to the
+// other. It excludes processes of the same user on the same machine.
+//
 class AthleteLock
 {
     public:
@@ -60,7 +64,7 @@ class AthleteLock
         static QString describe(qint64 pid, const QString &hostname, const QString &appname);
         qint64 holderPid() const { return pid; }
 
-        // the file used for locking
+        // the file used for locking, named by a hash of the folder's path
         static QString lockFilePath(const QString &athleteDir);
 
         // does this process already hold the lock for this athlete?

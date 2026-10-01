@@ -18,6 +18,7 @@
 
 #include "AthleteLock.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -25,6 +26,7 @@
 #include <QHash>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QStandardPaths>
 #include <memory>
 
 #ifdef Q_OS_WIN
@@ -57,10 +59,53 @@ static QString canonicalKey(const QString &athleteDir)
     return QDir::cleanPath(path);
 }
 
+// a folder on this machine, never in the athlete folder: athlete folders
+// are often synced (Dropbox, OneDrive), and a lock synced from another
+// machine would never be stale here. $XDG_RUNTIME_DIR where it's set (it
+// is cleared at logout), else the user's cache folder, else temp.
+static QString
+lockDirectory()
+{
+    static QString dir;
+    static QMutex mutex;
+    QMutexLocker locker(&mutex);
+    if (!dir.isEmpty()) return dir;
+
+    QStringList bases;
+    QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if (!runtime.isEmpty() && QDir::isAbsolutePath(runtime)) bases << runtime;
+    QString cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
+    if (!cache.isEmpty()) bases << cache;
+    bases << QDir::tempPath();
+    for (const QString &base : bases) {
+        QString candidate = QDir(base).absoluteFilePath("GoldenCheetah/locks");
+        if (QDir().mkpath(candidate) && QFileInfo(candidate).isWritable()) return dir = candidate;
+    }
+    return dir = QDir(QDir::tempPath()).absoluteFilePath("GoldenCheetah/locks");
+}
+
 QString
 AthleteLock::lockFilePath(const QString &athleteDir)
 {
-    return canonicalKey(athleteDir) + "/athlete.lock";
+    QString key = canonicalKey(athleteDir);
+#ifdef Q_OS_WIN
+    key = key.toLower();    // one lock whatever the spelling
+#endif
+    QByteArray hash = QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha1).toHex().left(16);
+    return lockDirectory() + "/" + QString::fromLatin1(hash) + ".lock";
+}
+
+// earlier builds of this branch kept the lock in the athlete folder;
+// remove one left behind when its process is gone
+static void
+removeOldLock(const QString &key)
+{
+    QString old = key + "/athlete.lock";
+    if (!QFile::exists(old)) return;
+    // only a stale one can be taken, and unlocking removes it
+    QLockFile file(old);
+    file.setStaleLockTime(0);
+    if (file.tryLock(0)) file.unlock();
 }
 
 bool
@@ -144,6 +189,7 @@ AthleteLock::tryLock(int timeoutMs)
     file->setStaleLockTime(0);
 
     if (file->tryLock(timeoutMs)) {
+        removeOldLock(key);
         entry.count = 1;
         entry.file = file;
         locked = true;
