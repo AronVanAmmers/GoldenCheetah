@@ -37,6 +37,7 @@
 #include <QDebug>
 #include <QUuid>
 #include <QMessageBox>
+#include <QTextDocumentFragment>
 #include <QFileDialog>
 #include <QScrollBar>
 
@@ -834,7 +835,9 @@ GcUpgrade::upgradeLate(Context *context)
 
         // show upgrade log
         upgradeLog->enableButtons();
+        // headless: nobody to show it to, the log has it
         if (! context->isHeadless()) upgradeLog->exec();
+        else qWarning("%s", qPrintable(upgradeLog->plainText()));
 
         // user can only select "Accept" to end with the upgrade step
         return 0;
@@ -1142,6 +1145,12 @@ GcUpgradeLogDialog::linkClickedSlot( QUrl url )
 
 }
 
+
+QString
+GcUpgradeLogDialog::plainText() const
+{
+    return QTextDocumentFragment::fromHtml(reportText).toPlainText();
+}
 
 void
 GcUpgradeLogDialog::append(QString text, int level) {
