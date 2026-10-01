@@ -158,6 +158,10 @@ struct CommandResult {
 
     static CommandResult success(const QJsonObject &data = QJsonObject());
     static CommandResult failure(Status status, const QString &error);
+
+    // a command that did several things: Ok, Partial when some of them
+    // failed, Failed when all of them did; error says what went wrong
+    static CommandResult batch(const QJsonObject &data, int failed, int total, const QString &error);
 };
 
 // the part of the core a handler needs, implemented by the session layer

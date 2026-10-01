@@ -330,4 +330,13 @@ ResultFormat::text(const CommandResult &result)
     return render(result.data);
 }
 
+QString
+ResultFormat::statusLine(const QJsonObject &item, const QString &keyField, int width, const QString &afterKey)
+{
+    QString line = QString("%1  %2").arg(item.value("status").toString(), -width).arg(item.value(keyField).toString());
+    line += afterKey;
+    if (item.contains("message")) line += "  " + item.value("message").toString();
+    return line + "\n";
+}
+
 } // namespace Headless

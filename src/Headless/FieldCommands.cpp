@@ -23,6 +23,7 @@
 //
 
 #include "HeadlessCommands.h"
+#include "ResultFormat.h"
 
 #include "Context.h"
 #include "RideMetadata.h"
@@ -193,9 +194,7 @@ addFields(CommandEnvironment &env, const CommandRequest &request)
             }
         }
         report.append(r);
-        text += QString("%1  %2").arg(r.value("status").toString(), -9).arg(name);
-        if (r.contains("message")) text += "  " + r.value("message").toString();
-        text += "\n";
+        text += ResultFormat::statusLine(r, "name", 9);
     }
 
     if (added || changed) {
@@ -209,12 +208,9 @@ addFields(CommandEnvironment &env, const CommandRequest &request)
     data.insert("updated", changed);
     data.insert("unchanged", unchanged);
     data.insert("failed", failed);
-    CommandResult result = CommandResult::success(data);
+    CommandResult result = CommandResult::batch(data, failed, added + changed + unchanged + failed,
+                                                QString("%1 field(s) not added").arg(failed));
     result.text = text;
-    if (failed) {
-        result.status = (added || changed || unchanged) ? Status::Partial : Status::Failed;
-        result.error = QString("%1 field(s) not added").arg(failed);
-    }
     return result;
 }
 

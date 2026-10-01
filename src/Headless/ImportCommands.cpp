@@ -27,6 +27,7 @@
 //
 
 #include "HeadlessCommands.h"
+#include "ResultFormat.h"
 #include "ActivitySelection.h"
 
 #include "Context.h"
@@ -332,11 +333,10 @@ importCommand(CommandEnvironment &env, const CommandRequest &request)
         else if (i.status == "failed") failed++;
         else if (i.status == "ok") ok++;
 
-        QString line = QString("%1  %2").arg(i.status, -8).arg(i.source);
-        if (!i.activity.isEmpty()) line += "  -> " + i.activity;
-        if (!i.sport.isEmpty()) line += " (" + i.sport + ")";
-        if (!i.message.isEmpty()) line += "  " + i.message;
-        text += line + "\n";
+        QString target;
+        if (!i.activity.isEmpty()) target += "  -> " + i.activity;
+        if (!i.sport.isEmpty()) target += " (" + i.sport + ")";
+        text += ResultFormat::statusLine(i.json(), "source", 8, target);
         for (const QString &w : i.warnings) text += "          warning: " + w + "\n";
     }
 
@@ -351,12 +351,9 @@ importCommand(CommandEnvironment &env, const CommandRequest &request)
     if (options.dryRun) text += QString("%1 importable, %2 skipped, %3 failed (dry run)\n").arg(ok).arg(skipped).arg(failed);
     else text += QString("%1 imported, %2 skipped, %3 failed\n").arg(imported).arg(skipped).arg(failed);
 
-    CommandResult result = CommandResult::success(data);
+    CommandResult result = CommandResult::batch(data, failed, imported + skipped + ok + failed,
+                                                QString("%1 file(s) could not be imported").arg(failed));
     result.text = text;
-    if (failed) {
-        result.status = (imported || skipped || ok) ? Status::Partial : Status::Failed;
-        result.error = QString("%1 file(s) could not be imported").arg(failed);
-    }
     return result;
 }
 

@@ -23,6 +23,7 @@
 //
 
 #include "HeadlessCommands.h"
+#include "ResultFormat.h"
 #include "HeadlessApp.h"
 #include "ActivitySelection.h"
 #include "ActivityJson.h"
@@ -378,9 +379,7 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
         report.append(r);
         if (!wasOpen) item->close();
 
-        text += QString("%1  %2").arg(r.value("status").toString(), -9).arg(r.value("activity").toString());
-        if (r.contains("message")) text += "  " + r.value("message").toString();
-        text += "\n";
+        text += ResultFormat::statusLine(r, "activity", 9);
         if (!output.isEmpty()) {
             for (const QString &line : output.split("\n")) text += "          | " + line + "\n";
         }
@@ -400,12 +399,9 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
     text += QString("%1 processed, %2 skipped, %3 failed%4\n").arg(processed).arg(skipped).arg(failed)
             .arg(dryRun ? " (dry run, nothing saved)" : "");
 
-    CommandResult result = CommandResult::success(data);
+    CommandResult result = CommandResult::batch(data, failed, processed + skipped + failed,
+                                                QString("%1 activit%2 failed").arg(failed).arg(failed == 1 ? "y" : "ies"));
     result.text = text;
-    if (failed) {
-        result.status = (processed || skipped) ? Status::Partial : Status::Failed;
-        result.error = QString("%1 activit%2 failed").arg(failed).arg(failed == 1 ? "y" : "ies");
-    }
     return result;
 }
 
