@@ -37,7 +37,7 @@ A `Context` with a null main window is headless (`Context::isHeadless()`), and `
 
 Saving an activity lives in `RideCache::saveSilent` (formerly `MainWindow::saveSilent`), so the GUI and headless sessions save the same way.
 
-`AthleteLock` (a `QLockFile` in the athlete folder) is taken by `Athlete` itself, so the GUI and headless sessions exclude each other. Within one process the lock is shared.
+`AthleteLock` (a `QLockFile`) is taken by `Athlete` itself, so the GUI and headless sessions exclude each other. Within one process the lock is shared. The lock file is kept on this machine (`$XDG_RUNTIME_DIR/GoldenCheetah/locks`, else the user's cache folder, named by a hash of the athlete folder's path), not in the athlete folder: athlete folders are often synced between machines, and a lock synced from another machine would never be stale. So it excludes processes of the same user on one machine, not two machines sharing a synced folder.
 
 ## Adding a command
 

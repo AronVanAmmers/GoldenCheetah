@@ -13,6 +13,7 @@
 
 import base64
 import csv
+import hashlib
 import html
 import io
 import json
@@ -99,6 +100,9 @@ class Headless(unittest.TestCase):
         cls.env.pop("QT_QPA_PLATFORM", None)
         cls.env.pop("GC_HOME", None)
         os.makedirs(cls.env["HOME"])
+        # athlete locks are kept here, not in the athlete folder
+        cls.env["XDG_RUNTIME_DIR"] = os.path.join(cls.tmp, "runtime")
+        os.makedirs(cls.env["XDG_RUNTIME_DIR"], mode=0o700)
         r = cls.gc_class("athlete", "create", cls.athlete, "--cp", "250", "--weight", "70")
         assert r.code == 0, r
 
@@ -128,9 +132,22 @@ class Headless(unittest.TestCase):
     def activity_files(self):
         return sorted(f for f in os.listdir(os.path.join(self.folder, "activities")) if f.endswith(".json"))
 
+    @property
+    def lock_dir(self):
+        return os.path.join(self.env["XDG_RUNTIME_DIR"], "GoldenCheetah", "locks")
+
+    def lock_file(self, folder):
+        """the athlete's lock, named by a hash of its canonical path"""
+        key = os.path.realpath(folder).replace(os.sep, "/")
+        if os.name == "nt":
+            key = key.lower()
+        return os.path.join(self.lock_dir, hashlib.sha1(key.encode("utf-8")).hexdigest()[:16] + ".lock")
+
     def assertClosed(self):
         """a command must never leave the athlete open"""
-        self.assertFalse(os.path.exists(os.path.join(self.folder, "athlete.lock")), "athlete lock left behind")
+        locks = os.listdir(self.lock_dir) if os.path.isdir(self.lock_dir) else []
+        self.assertEqual([f for f in locks if f.endswith(".lock")], [], "athlete lock left behind")
+        self.assertFalse(os.path.exists(os.path.join(self.folder, "athlete.lock")), "lock in the athlete folder")
         with open(os.path.join(self.folder, "config", "athlete-general.ini")) as f:
             self.assertNotIn("safeexit=false", f.read())
 
@@ -501,7 +518,8 @@ class TestLivesWithOtherTools(Headless):
     def test_refuses_while_another_process_holds_the_athlete(self):
         holder = subprocess.Popen(["sleep", "60"])
         try:
-            lock = os.path.join(self.folder, "athlete.lock")
+            lock = self.lock_file(self.folder)
+            os.makedirs(self.lock_dir, exist_ok=True)
             with open(lock, "w") as f:
                 f.write("%d\nsleep\n%s\n" % (holder.pid, self.gcj("version")["data"]["host"]))
             r = self.gc("--athlete", self.athlete, "activity", "list")
@@ -516,6 +534,30 @@ class TestLivesWithOtherTools(Headless):
         r = self.gc("--athlete", self.athlete, "activity", "list")
         self.assertEqual(r.code, 0, r)
         self.assertClosed()
+
+    @unittest.skipIf(os.name == "nt", "fakes a dead process's lock with a POSIX 'true'")
+    def test_lock_left_in_the_folder_by_older_builds(self):
+        # the lock moved out of the athlete folder: one there (synced from
+        # another machine, say) doesn't stop a command, and a stale one
+        # from this machine is removed
+        old = os.path.join(self.folder, "athlete.lock")
+        try:
+            with open(old, "w") as f:
+                f.write("999999\nGoldenCheetah\nsome-other-machine\n")
+            r = self.gc("--athlete", self.athlete, "activity", "list")
+            self.assertEqual(r.code, 0, r)
+            self.assertTrue(os.path.exists(old))
+
+            gone = subprocess.Popen(["true"])
+            gone.wait()
+            with open(old, "w") as f:
+                f.write("%d\nGoldenCheetah\n%s\n" % (gone.pid, self.gcj("version")["data"]["host"]))
+            r = self.gc("--athlete", self.athlete, "activity", "list")
+            self.assertEqual(r.code, 0, r)
+            self.assertFalse(os.path.exists(old))
+        finally:
+            if os.path.exists(old):
+                os.remove(old)
 
     def test_refuses_when_gui_did_not_close_cleanly(self):
         ini = os.path.join(self.folder, "config", "athlete-general.ini")
