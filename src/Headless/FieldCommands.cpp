@@ -67,17 +67,21 @@ struct MetadataConfig {
     QString colorfield;
     QList<DefaultDefinition> defaults;
 
+    // the definitions as loaded, the copy activity set and the GUI's Data
+    // Fields page use (from metadata.xml, older athlete files or the
+    // built-in defaults)
     void read() {
-        QString file = metadataFile();
-        // GlobalContext writes the file on first use if it is missing
-        if (!QFile(file).exists()) file = ":/xml/metadata.xml";
-        RideMetadata::readXML(file, keywords, fields, colorfield, defaults);
+        RideMetadata *metadata = GlobalContext::context()->rideMetadata;
+        keywords = metadata->getKeywords();
+        fields = metadata->getFields();
+        colorfield = metadata->getColorField();
+        defaults = metadata->getDefaults();
     }
 
     bool write(QString &error) {
         if (!RideMetadata::serialize(metadataFile(), keywords, fields, colorfield, defaults, &error)) return false;
 
-        // everyone reads the new definitions
+        // everyone reads the new definitions, the in-memory copy included
         GlobalContext::context()->notifyConfigChanged(CONFIG_FIELDS);
         return true;
     }
@@ -120,7 +124,8 @@ listFields(CommandEnvironment &env, const CommandRequest &request)
     }
     QJsonObject data;
     data.insert("fields", list);
-    data.insert("file", metadataFile());
+    // none until the definitions have been saved
+    data.insert("file", QFile::exists(metadataFile()) ? QJsonValue(metadataFile()) : QJsonValue());
     return CommandResult::success(data);
 }
 
