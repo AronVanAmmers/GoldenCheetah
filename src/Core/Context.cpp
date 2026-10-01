@@ -110,17 +110,7 @@ GlobalContext::userMetricsConfigChanged()
     QString metrics(gcroot + "/usermetrics.xml");
     if (QFile(metrics).exists()) {
 
-        QFile metricfile(metrics);
-        QXmlInputSource source(&metricfile);
-        QXmlSimpleReader xmlReader;
-        UserMetricParser handler;
-
-        xmlReader.setContentHandler(&handler);
-        xmlReader.setErrorHandler(&handler);
-
-        // parse and get return values
-        xmlReader.parse(source);
-        _userMetrics = handler.getSettings();
+        _userMetrics = UserMetricParser::load(metrics);
         UserMetric::addCompatibility(_userMetrics);
     }
 

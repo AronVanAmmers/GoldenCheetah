@@ -31,6 +31,9 @@ class UserMetricParser : public QXmlDefaultHandler
 
 public:
     static bool serialize(QString, QList<UserMetricSettings>, QString *error = nullptr); // false: not saved
+
+    // the user metrics in a usermetrics.xml (none when it can't be read)
+    static QList<UserMetricSettings> load(const QString &filename);
     static void serializeToQTextStream(QTextStream&, QList<UserMetricSettings>);
     QList<UserMetricSettings> &getSettings() { return settings; }
 
