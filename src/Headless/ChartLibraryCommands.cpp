@@ -45,129 +45,100 @@
 
 namespace Headless {
 
-static const QStringList groupNames = { "day", "week", "month", "year", "tod", "all" };
+// a name for each value of one of the chart's enums
+template<class T>
+struct Choices {
+    QStringList names;
+    QList<T> values;
 
-static int
-groupId(const QString &name)
-{
-    switch (groupNames.indexOf(name)) {
-    case 0: return LTM_DAY;
-    case 1: return LTM_WEEK;
-    case 2: return LTM_MONTH;
-    case 3: return LTM_YEAR;
-    case 4: return LTM_TOD;
-    case 5: return LTM_ALL;
-    default: return 0;
+    QString name(T value) const {
+        int i = values.indexOf(value);
+        return i >= 0 ? names.at(i) : QString::number(int(value));
     }
+    // names given are checked against the parameter's oneOf
+    T value(const QString &name) const { return values.value(names.indexOf(name), values.first()); }
+    // "a, b or c", as the help and the messages put it
+    QString either() const { return QStringList(names.mid(0, names.count() - 1)).join(", ") + " or " + names.last(); }
+};
+
+static const Choices<int> &
+groups()
+{
+    static const Choices<int> c{ { "day", "week", "month", "year", "tod", "all" },
+                                 { LTM_DAY, LTM_WEEK, LTM_MONTH, LTM_YEAR, LTM_TOD, LTM_ALL } };
+    return c;
 }
+
+// styles, markers and best series are in the order Curve Settings lists them
+static const Choices<QwtPlotCurve::CurveStyle> &
+styles()
+{
+    static const Choices<QwtPlotCurve::CurveStyle> c{ { "bar", "line", "sticks", "dots" }, MetricDetail::curveStyles() };
+    return c;
+}
+
+static const Choices<QwtSymbol::Style> &
+markers()
+{
+    static const Choices<QwtSymbol::Style> c{ { "none", "circle", "square", "diamond", "triangle", "cross", "hexagon", "star" },
+                                              MetricDetail::symbolStyles() };
+    return c;
+}
+
+static const Choices<RideFile::SeriesType> &
+bestSeries()
+{
+    static const Choices<RideFile::SeriesType> c{
+        { "power", "wpk", "xpower", "apower", "isopower", "heartrate", "speed", "cadence", "torque", "vam" },
+        MetricDetail::bestSeries() };
+    return c;
+}
+
+static const Choices<int> &
+durationUnits()
+{
+    static const Choices<int> c{ { "sec", "min", "hour" }, { 1, 60, 3600 } };
+    return c;
+}
+
+static const Choices<int> &
+estimates()
+{
+    static const Choices<int> c{ { "wprime", "cp", "ftp", "pmax", "best", "ei", "vo2max" },
+                                 { ESTIMATE_WPRIME, ESTIMATE_CP, ESTIMATE_FTP, ESTIMATE_PMAX, ESTIMATE_BEST, ESTIMATE_EI, ESTIMATE_VO2MAX } };
+    return c;
+}
+
+static const Choices<int> &
+curveTypes()
+{
+    static const Choices<int> c{ { "metric", "pmc", "meta", "best", "estimate", "stress", "formula", "measure", "performance", "banister" },
+                                 { METRIC_DB, METRIC_PM, METRIC_META, METRIC_BEST, METRIC_ESTIMATE, METRIC_STRESS,
+                                   METRIC_FORMULA, METRIC_D_MEASURE, METRIC_PERFORMANCE, METRIC_BANISTER } };
+    return c;
+}
+
+// the models Curve Settings offers estimates from (MetricDetail::estimateModels)
+static const QStringList modelNames = { "cp2", "cp3", "ext" };
 
 static QString
-groupName(int groupBy)
+modelEither()
 {
-    switch (groupBy) {
-    case LTM_DAY: return "day";
-    case LTM_WEEK: return "week";
-    case LTM_MONTH: return "month";
-    case LTM_YEAR: return "year";
-    case LTM_TOD: return "tod";
-    case LTM_ALL: return "all";
-    default: return QString::number(groupBy);
-    }
+    return Choices<int>{ modelNames, { 0, 0, 0 } }.either();
 }
-
-static const QStringList styleNames = { "bar", "line", "sticks", "dots" };
-static const QStringList markerNames = { "none", "circle", "square", "diamond", "triangle", "cross", "hexagon", "star" };
-static const QStringList unitNames = { "sec", "min", "hour" };
-static const QStringList seriesNames = { "power", "wpk", "xpower", "apower", "isopower", "heartrate", "speed", "cadence", "torque", "vam" };
-static const QStringList modelNames = { "cp2", "cp3", "ext" };
-static const QStringList estimateNames = { "wprime", "cp", "ftp", "pmax", "best", "ei", "vo2max" };
 
 static const char *oneCurveDrawing =
     "style, marker, color, fill, filter and units apply to one curve; add each curve with 'chart library curve add'";
 
 static QString
-curveTypeName(int type)
-{
-    switch (type) {
-    case METRIC_DB: return "metric";
-    case METRIC_PM: return "pmc";
-    case METRIC_META: return "meta";
-    case METRIC_BEST: return "best";
-    case METRIC_ESTIMATE: return "estimate";
-    case METRIC_STRESS: return "stress";
-    case METRIC_FORMULA: return "formula";
-    case METRIC_D_MEASURE: return "measure";
-    case METRIC_PERFORMANCE: return "performance";
-    case METRIC_BANISTER: return "banister";
-    default: return QString::number(type);
-    }
-}
-
-// the names below are in the order Curve Settings lists them (MetricDetail)
-static QString
-styleName(QwtPlotCurve::CurveStyle style)
-{
-    int i = MetricDetail::curveStyles().indexOf(style);
-    return i >= 0 ? styleNames.at(i) : QString::number(int(style));
-}
-
-static QwtPlotCurve::CurveStyle
-styleFromName(const QString &name)
-{
-    return MetricDetail::curveStyles().value(styleNames.indexOf(name), QwtPlotCurve::Lines);
-}
-
-static QString
-markerName(QwtSymbol::Style style)
-{
-    int i = MetricDetail::symbolStyles().indexOf(style);
-    return i >= 0 ? markerNames.at(i) : QString::number(int(style));
-}
-
-static QwtSymbol::Style
-markerFromName(const QString &name)
-{
-    return MetricDetail::symbolStyles().value(markerNames.indexOf(name), QwtSymbol::NoSymbol);
-}
-
-static QString
-unitName(int units)
-{
-    if (units == 1) return "sec";
-    if (units == 60) return "min";
-    if (units == 3600) return "hour";
-    return QString::number(units);
-}
-
-static int
-unitSeconds(const QString &name)
-{
-    switch (unitNames.indexOf(name)) {
-    case 0: return 1;
-    case 1: return 60;
-    case 2: return 3600;
-    default: return 0;
-    }
-}
-
-// seriesNames are in the order of MetricDetail::bestSeries()
-static RideFile::SeriesType
-seriesFromName(const QString &name)
-{
-    return MetricDetail::bestSeries().value(seriesNames.indexOf(name), RideFile::none);
-}
-
-static QString
 seriesToken(RideFile::SeriesType series)
 {
-    int i = MetricDetail::bestSeries().indexOf(series);
-    if (i >= 0) return seriesNames.at(i);
+    if (bestSeries().values.contains(series)) return bestSeries().name(series);
     QString symbol = RideFile::symbolForSeries(series);
     return symbol.isEmpty() ? QString::number(int(series)) : symbol.toLower();
 }
 
-// the models Curve Settings offers estimates from, and what each one gives:
-// best power, endurance index and VO2max come from every model
+// what each model gives: best power, endurance index and VO2max come from every model
 static bool
 modelOffers(PDModel *model, int estimate)
 {
@@ -180,34 +151,12 @@ modelOffers(PDModel *model, int estimate)
     }
 }
 
-static int
-estimateId(const QString &name)
-{
-    switch (estimateNames.indexOf(name)) {
-    case 0: return ESTIMATE_WPRIME;
-    case 1: return ESTIMATE_CP;
-    case 2: return ESTIMATE_FTP;
-    case 3: return ESTIMATE_PMAX;
-    case 4: return ESTIMATE_BEST;
-    case 5: return ESTIMATE_EI;
-    case 6: return ESTIMATE_VO2MAX;
-    default: return -1;
-    }
-}
-
-static QString
-estimateToken(int estimate)
-{
-    if (estimate >= 0 && estimate < estimateNames.count()) return estimateNames.at(estimate);
-    return QString::number(estimate);
-}
-
 static QString
 offersText(PDModel *model)
 {
     QStringList offers;
-    for (int estimate = 0; estimate < estimateNames.count(); estimate++)
-        if (modelOffers(model, estimate)) offers << estimateNames.at(estimate);
+    for (int estimate : estimates().values)
+        if (modelOffers(model, estimate)) offers << estimates().name(estimate);
     return offers.join(", ");
 }
 
@@ -275,7 +224,7 @@ curveDetail(const MetricDetail &m)
 {
     if (m.type == METRIC_DB) return m.symbol;
     if (m.type == METRIC_BEST)
-        return QString("%1 %2 %3").arg(m.duration).arg(unitName(m.duration_units)).arg(seriesToken(m.series));
+        return QString("%1 %2 %3").arg(m.duration).arg(durationUnits().name(m.duration_units)).arg(seriesToken(m.series));
     if (m.type == METRIC_ESTIMATE) {
         if (!m.uname.isEmpty()) return m.uname;
         return MetricDetail::estimateName(m.estimate, m.model, m.estimateDuration, m.estimateDuration_units);
@@ -328,7 +277,7 @@ curveJson(const MetricDetail &m, int index)
 {
     QJsonObject o;
     o.insert("index", index);
-    o.insert("type", curveTypeName(m.type));
+    o.insert("type", curveTypes().name(m.type));
     o.insert("detail", curveDetail(m));
     if (!m.symbol.isEmpty()) o.insert("symbol", m.symbol);
     QString formula = metricFormulaName(m.symbol);
@@ -336,22 +285,22 @@ curveJson(const MetricDetail &m, int index)
     if (!m.name.isEmpty()) o.insert("name", m.name);
     if (m.type == METRIC_BEST) {
         o.insert("duration", m.duration);
-        o.insert("unit", unitName(m.duration_units));
+        o.insert("unit", durationUnits().name(m.duration_units));
         o.insert("series", seriesToken(m.series));
     }
     if (m.type == METRIC_ESTIMATE) {
         o.insert("model", m.model);
-        o.insert("estimate", estimateToken(m.estimate));
+        o.insert("estimate", estimates().name(m.estimate));
         o.insert("wpk", m.wpk);
         if (m.estimate == ESTIMATE_BEST) {
             o.insert("duration", m.estimateDuration);
-            o.insert("unit", unitName(m.estimateDuration_units));
+            o.insert("unit", durationUnits().name(m.estimateDuration_units));
         }
     }
     // the axis a curve goes on is chosen by these
     o.insert("units", m.uunits);
-    o.insert("style", styleName(m.curveStyle));
-    o.insert("marker", markerName(m.symbolStyle));
+    o.insert("style", styles().name(m.curveStyle));
+    o.insert("marker", markers().name(m.symbolStyle));
     o.insert("color", colorText(m.penColor));
     o.insert("fill", m.fillCurve);
     QString expression = filterExpression(m.datafilter);
@@ -368,7 +317,7 @@ chartJson(const LTMSettings &chart)
     for (int i = 0; i < chart.metrics.count(); i++) metrics.append(curveJson(chart.metrics.at(i), i + 1));
     QJsonObject o;
     o.insert("name", chart.name);
-    o.insert("by", groupName(chart.groupBy));
+    o.insert("by", groups().name(chart.groupBy));
     o.insert("metrics", metrics);
     return o;
 }
@@ -376,15 +325,15 @@ chartJson(const LTMSettings &chart)
 static QString
 chartText(const LTMSettings &chart)
 {
-    QString text = QString("%1 (%2)\n").arg(chart.name, groupName(chart.groupBy));
+    QString text = QString("%1 (%2)\n").arg(chart.name, groups().name(chart.groupBy));
     for (int i = 0; i < chart.metrics.count(); i++) {
         const MetricDetail &m = chart.metrics.at(i);
         text += QString("  %1  %2  %3  %4  %5\n")
             .arg(i + 1)
-            .arg(curveTypeName(m.type))
+            .arg(curveTypes().name(m.type))
             .arg(curveDetail(m))
-            .arg(styleName(m.curveStyle))
-            .arg(markerName(m.symbolStyle));
+            .arg(styles().name(m.curveStyle))
+            .arg(markers().name(m.symbolStyle));
     }
     return text;
 }
@@ -413,14 +362,10 @@ nameTaken(const QList<LTMSettings> &charts, const QString &name, int except)
     return false;
 }
 
-// as LTMTool's catalogue has it, with our palette
-static MetricDetail
-metricCurve(const RideMetric *metric, int index)
+// what every new curve starts with, in our palette
+static void
+resetCurve(MetricDetail &detail, int index)
 {
-    MetricDetail detail = MetricDetail::forMetric(metric, GlobalContext::context()->useMetricUnits);
-    detail.type = METRIC_DB;
-    detail.penColor = penColor(index);
-    detail.brushColor = detail.penColor;
     detail.showOnPlot = true;
     detail.filter = 0;
     detail.from = 0;
@@ -434,6 +379,17 @@ metricCurve(const RideMetric *metric, int index)
     detail.duration_units = 1;
     detail.series = RideFile::none;
     detail.submax = false;
+    detail.penColor = penColor(index);
+    detail.brushColor = detail.penColor;
+}
+
+// as LTMTool's catalogue has it, drawn as it draws that kind of metric
+static MetricDetail
+metricCurve(const RideMetric *metric, int index)
+{
+    MetricDetail detail = MetricDetail::forMetric(metric, GlobalContext::context()->useMetricUnits);
+    detail.type = METRIC_DB;
+    resetCurve(detail, index);
     detail.formulaType = metric->type();
     return detail;
 }
@@ -476,11 +432,18 @@ metricFromSymbol(const QString &symbol, int index, MetricDetail &detail, QString
     return true;
 }
 
+// --metric, as symbols
 static bool
-metricsFromArgs(const QJsonObject &args, QList<MetricDetail> &curves, QString &error)
+curveMetrics(const QJsonObject &args, QStringList &symbols, QString &error)
 {
-    QStringList symbols;
-    if (!resolveMetrics(splitList(args.value("metric")), symbols, error)) return false;
+    symbols.clear();
+    if (!args.contains("metric")) return true;
+    return resolveMetrics(splitList(args.value("metric")), symbols, error);
+}
+
+static bool
+metricsFromSymbols(const QStringList &symbols, QList<MetricDetail> &curves, QString &error)
+{
     if (symbols.isEmpty()) {
         error = "give a metric with --metric";
         return false;
@@ -558,11 +521,11 @@ readDrawing(Context *context, const QJsonObject &args, Drawing &drawing, QString
 {
     if (args.contains("style")) {
         drawing.style = true;
-        drawing.curveStyle = styleFromName(args.value("style").toString());
+        drawing.curveStyle = styles().value(args.value("style").toString());
     }
     if (args.contains("marker")) {
         drawing.marker = true;
-        drawing.symbolStyle = markerFromName(args.value("marker").toString());
+        drawing.symbolStyle = markers().value(args.value("marker").toString());
     }
     if (args.contains("color")) {
         drawing.color = true;
@@ -602,24 +565,11 @@ applyDrawing(MetricDetail &detail, const Drawing &drawing)
     }
 }
 
+// a best or an estimate: a plain line
 static void
 prepareCurve(MetricDetail &detail, int index)
 {
-    detail.showOnPlot = true;
-    detail.filter = 0;
-    detail.from = 0;
-    detail.to = 0;
-    detail.estimate = 0;
-    detail.estimateDuration = 0;
-    detail.estimateDuration_units = 1;
-    detail.wpk = false;
-    detail.run = false;
-    detail.duration = 0;
-    detail.duration_units = 1;
-    detail.series = RideFile::none;
-    detail.submax = false;
-    detail.penColor = penColor(index);
-    detail.brushColor = detail.penColor;
+    resetCurve(detail, index);
     detail.curveStyle = QwtPlotCurve::Lines;
     detail.symbolStyle = QwtSymbol::NoSymbol;
     detail.fillCurve = false;
@@ -657,29 +607,34 @@ strayCurveArgs(const QJsonObject &args, QString &error)
     return true;
 }
 
+// a duration and its --unit: --best's, or --duration of an estimate of best power
+static bool
+readDuration(const QJsonObject &args, const QString &key, const QString &what, int &duration, int &units, QString &error)
+{
+    if (!args.contains(key)) {
+        error = QString("%1 needs --%2").arg(what, key);
+        return false;
+    }
+    duration = args.value(key).toInt();
+    if (!durationOk(duration, error)) return false;
+    if (!args.contains("unit")) {
+        error = QString("%1 needs --unit %2").arg(what, durationUnits().either());
+        return false;
+    }
+    units = durationUnits().value(args.value("unit").toString());
+    return true;
+}
+
 static bool
 buildBest(Context *context, const QJsonObject &args, int index, MetricDetail &detail, QString &error)
 {
-    int duration = args.value("best").toInt();
-    if (!durationOk(duration, error)) return false;
-    if (!args.contains("unit")) {
-        error = "best needs --unit sec, min or hour";
-        return false;
-    }
-    int units = unitSeconds(args.value("unit").toString());
-    if (!units) {
-        error = "unit must be sec, min or hour";
-        return false;
-    }
+    int duration = 0, units = 1;
+    if (!readDuration(args, "best", "best", duration, units, error)) return false;
     if (!args.contains("series")) {
-        error = QString("best needs --series (%1)").arg(seriesNames.join(", "));
+        error = QString("best needs --series (%1)").arg(bestSeries().names.join(", "));
         return false;
     }
-    RideFile::SeriesType series = seriesFromName(args.value("series").toString());
-    if (series == RideFile::none) {
-        error = QString("series must be one of: %1").arg(seriesNames.join(", "));
-        return false;
-    }
+    RideFile::SeriesType series = bestSeries().value(args.value("series").toString());
 
     prepareCurve(detail, index);
     detail.type = METRIC_BEST;
@@ -698,7 +653,7 @@ static bool
 buildEstimate(Context *context, const QJsonObject &args, int index, MetricDetail &detail, QString &error)
 {
     if (!args.contains("model")) {
-        error = "estimate needs --model cp2, cp3 or ext";
+        error = "estimate needs --model " + modelEither();
         return false;
     }
     QList<PDModel *> models = MetricDetail::estimateModels(context);
@@ -706,39 +661,19 @@ buildEstimate(Context *context, const QJsonObject &args, int index, MetricDetail
     PDModel *model = nullptr;
     for (PDModel *m : models) if (m->code() == args.value("model").toString()) model = m;
     if (!model) {
-        error = "model must be cp2, cp3 or ext";
+        error = "model must be " + modelEither();
         return false;
     }
-    int estimate = estimateId(args.value("estimate").toString());
-    if (estimate < 0) {
-        error = QString("estimate must be one of: %1").arg(estimateNames.join(", "));
-        return false;
-    }
+    int estimate = estimates().value(args.value("estimate").toString());
     if (!modelOffers(model, estimate)) {
         error = QString("the %1 model does not offer %2; it offers %3")
-            .arg(model->code(), estimateToken(estimate), offersText(model));
+            .arg(model->code(), estimates().name(estimate), offersText(model));
         return false;
     }
 
-    int duration = 0;
-    int units = 1;
-    if (estimate == ESTIMATE_BEST) {
-        if (!args.contains("duration")) {
-            error = "an estimate of best power needs --duration";
-            return false;
-        }
-        duration = args.value("duration").toInt();
-        if (!durationOk(duration, error)) return false;
-        if (!args.contains("unit")) {
-            error = "an estimate of best power needs --unit sec, min or hour";
-            return false;
-        }
-        units = unitSeconds(args.value("unit").toString());
-        if (!units) {
-            error = "unit must be sec, min or hour";
-            return false;
-        }
-    }
+    int duration = 0, units = 1;
+    if (estimate == ESTIMATE_BEST
+        && !readDuration(args, "duration", "an estimate of best power", duration, units, error)) return false;
 
     prepareCurve(detail, index);
     detail.type = METRIC_ESTIMATE;
@@ -758,15 +693,13 @@ buildEstimate(Context *context, const QJsonObject &args, int index, MetricDetail
 
 // one curve: a metric, a best, or an estimate, plus any drawing flags that were given
 static bool
-buildCurve(Context *context, const QJsonObject &args, int index, MetricDetail &detail, QString &error)
+buildCurve(Context *context, const QJsonObject &args, const QStringList &symbols, int index, MetricDetail &detail, QString &error)
 {
     if (!strayCurveArgs(args, error)) return false;
     Drawing drawing;
     if (!readDrawing(context, args, drawing, error)) return false;
 
     if (args.contains("metric")) {
-        QStringList symbols;
-        if (!resolveMetrics(splitList(args.value("metric")), symbols, error)) return false;
         if (symbols.count() != 1) {
             error = oneCurveDrawing;
             return false;
@@ -867,6 +800,20 @@ writeCharts(Athlete *athlete, QList<LTMSettings> charts, const QJsonObject &args
     return CommandResult::success();
 }
 
+// a change saved, and the chart it leaves (data) reported with its status
+static CommandResult
+saveChartChange(Athlete *athlete, const QList<LTMSettings> &charts, const QJsonObject &args,
+                QJsonObject data, const QString &status, const QString &text)
+{
+    CommandResult written = writeCharts(athlete, charts, args);
+    if (!written.ok()) return written;
+    data.insert("status", status);
+    data.insert("file", chartsPath(athlete));
+    CommandResult result = CommandResult::success(data);
+    result.text = text;
+    return result;
+}
+
 static CommandResult
 listCharts(CommandEnvironment &env, const CommandRequest &)
 {
@@ -900,7 +847,6 @@ showChart(CommandEnvironment &env, const CommandRequest &request)
 static bool
 replacementCurves(Context *context, const QJsonObject &args, QList<MetricDetail> &curves, QString &error)
 {
-    if (!supportedTypes(args, error)) return false;
     int sources = curveSources(args);
     if (sources == 0) {
         error = "give a curve with --metric, --best or --estimate";
@@ -910,20 +856,18 @@ replacementCurves(Context *context, const QJsonObject &args, QList<MetricDetail>
         error = "give only one of --metric, --best and --estimate";
         return false;
     }
-    if (args.contains("metric")) {
-        QStringList symbols;
-        if (!resolveMetrics(splitList(args.value("metric")), symbols, error)) return false;
-        if (symbols.count() != 1) {
-            if (hasDrawing(args)) {
-                error = oneCurveDrawing;
-                return false;
-            }
-            if (!strayCurveArgs(args, error)) return false;
-            return metricsFromArgs(args, curves, error);
+    QStringList symbols;
+    if (!curveMetrics(args, symbols, error)) return false;
+    if (args.contains("metric") && symbols.count() != 1) {
+        if (hasDrawing(args)) {
+            error = oneCurveDrawing;
+            return false;
         }
+        if (!strayCurveArgs(args, error)) return false;
+        return metricsFromSymbols(symbols, curves, error);
     }
     MetricDetail detail;
-    if (!buildCurve(context, args, 0, detail, error)) return false;
+    if (!buildCurve(context, args, symbols, 0, detail, error)) return false;
     curves << detail;
     return true;
 }
@@ -938,28 +882,16 @@ addChart(CommandEnvironment &env, const CommandRequest &request)
     if (nameTaken(athlete->presets, name, -1))
         return CommandResult::failure(Status::Usage, QString("a chart called '%1' already exists").arg(name));
 
-    int by = groupId(request.args.value("by").toString());
-    if (!by) return CommandResult::failure(Status::Usage, "group by must be day, week, month, year, tod or all");
-
     QList<MetricDetail> curves;
     QString error;
-    if (!replacementCurves(env.session->context(), request.args, curves, error))
+    if (!supportedTypes(request.args, error) || !replacementCurves(env.session->context(), request.args, curves, error))
         return CommandResult::failure(Status::Usage, error);
 
     QList<LTMSettings> charts = athlete->presets;
-    LTMSettings chart = blankChart(name, by);
+    LTMSettings chart = blankChart(name, groups().value(request.args.value("by").toString()));
     chart.metrics = curves;
     charts.append(chart);
-
-    CommandResult written = writeCharts(athlete, charts, request.args);
-    if (!written.ok()) return written;
-
-    QJsonObject data = chartJson(chart);
-    data.insert("status", "added");
-    data.insert("file", chartsPath(athlete));
-    CommandResult result = CommandResult::success(data);
-    result.text = QString("added %1\n").arg(name);
-    return result;
+    return saveChartChange(athlete, charts, request.args, chartJson(chart), "added", QString("added %1\n").arg(name));
 }
 
 static CommandResult
@@ -993,27 +925,15 @@ editChart(CommandEnvironment &env, const CommandRequest &request)
         chart.name = name;
         chart.title = name;
     }
-    if (regroup) {
-        int by = groupId(request.args.value("by").toString());
-        if (!by) return CommandResult::failure(Status::Usage, "group by must be day, week, month, year, tod or all");
-        chart.groupBy = by;
-    }
+    if (regroup) chart.groupBy = groups().value(request.args.value("by").toString());
     if (replace) {
         QList<MetricDetail> curves;
         if (!replacementCurves(env.session->context(), request.args, curves, error))
             return CommandResult::failure(Status::Usage, error);
         chart.metrics = curves;
     }
-
-    CommandResult written = writeCharts(athlete, charts, request.args);
-    if (!written.ok()) return written;
-
-    QJsonObject data = chartJson(charts.at(index));
-    data.insert("status", "updated");
-    data.insert("file", chartsPath(athlete));
-    CommandResult result = CommandResult::success(data);
-    result.text = QString("updated %1\n").arg(charts.at(index).name);
-    return result;
+    return saveChartChange(athlete, charts, request.args, chartJson(chart), "updated",
+                           QString("updated %1\n").arg(chart.name));
 }
 
 static CommandResult
@@ -1027,16 +947,8 @@ removeChart(CommandEnvironment &env, const CommandRequest &request)
 
     QList<LTMSettings> charts = athlete->presets;
     charts.removeAt(index);
-    CommandResult written = writeCharts(athlete, charts, request.args);
-    if (!written.ok()) return written;
-
-    QJsonObject data;
-    data.insert("status", "removed");
-    data.insert("name", name);
-    data.insert("file", chartsPath(athlete));
-    CommandResult result = CommandResult::success(data);
-    result.text = QString("removed %1\n").arg(name);
-    return result;
+    return saveChartChange(athlete, charts, request.args, QJsonObject{ { "name", name } }, "removed",
+                           QString("removed %1\n").arg(name));
 }
 
 static int
@@ -1063,20 +975,14 @@ addCurve(CommandEnvironment &env, const CommandRequest &request)
 
     QList<LTMSettings> charts = athlete->presets;
     LTMSettings &chart = charts[chartIndex];
+    QStringList symbols;
     MetricDetail detail;
-    if (!buildCurve(env.session->context(), request.args, chart.metrics.count(), detail, error))
+    if (!curveMetrics(request.args, symbols, error)
+        || !buildCurve(env.session->context(), request.args, symbols, chart.metrics.count(), detail, error))
         return CommandResult::failure(Status::Usage, error);
     chart.metrics.append(detail);
-
-    CommandResult written = writeCharts(athlete, charts, request.args);
-    if (!written.ok()) return written;
-
-    QJsonObject data = chartJson(charts.at(chartIndex));
-    data.insert("status", "added");
-    data.insert("file", chartsPath(athlete));
-    CommandResult result = CommandResult::success(data);
-    result.text = QString("added curve %1 on %2\n").arg(chart.metrics.count()).arg(chart.name);
-    return result;
+    return saveChartChange(athlete, charts, request.args, chartJson(chart), "added",
+                           QString("added curve %1 on %2\n").arg(chart.metrics.count()).arg(chart.name));
 }
 
 static CommandResult
@@ -1102,8 +1008,9 @@ editCurve(CommandEnvironment &env, const CommandRequest &request)
         QJsonObject args = request.args;
         const MetricDetail &old = chart.metrics.at(index);
         if (args.contains("estimate") && !args.contains("wpk") && old.type == METRIC_ESTIMATE) args.insert("wpk", old.wpk);
+        QStringList symbols;
         MetricDetail detail;
-        if (!buildCurve(env.session->context(), args, index, detail, error))
+        if (!curveMetrics(args, symbols, error) || !buildCurve(env.session->context(), args, symbols, index, detail, error))
             return CommandResult::failure(Status::Usage, error);
         chart.metrics[index] = detail;
     } else if (hasDrawing(request.args)) {
@@ -1115,16 +1022,8 @@ editCurve(CommandEnvironment &env, const CommandRequest &request)
     } else {
         return CommandResult::failure(Status::Usage, "give a drawing or a curve to put in its place");
     }
-
-    CommandResult written = writeCharts(athlete, charts, request.args);
-    if (!written.ok()) return written;
-
-    QJsonObject data = chartJson(charts.at(chartIndex));
-    data.insert("status", "updated");
-    data.insert("file", chartsPath(athlete));
-    CommandResult result = CommandResult::success(data);
-    result.text = QString("updated curve %1 on %2\n").arg(index + 1).arg(chart.name);
-    return result;
+    return saveChartChange(athlete, charts, request.args, chartJson(chart), "updated",
+                           QString("updated curve %1 on %2\n").arg(index + 1).arg(chart.name));
 }
 
 static CommandResult
@@ -1140,23 +1039,15 @@ removeCurve(CommandEnvironment &env, const CommandRequest &request)
     int index = curveNumber(chart, request.args.value("index").toInt(), error);
     if (index < 0) return CommandResult::failure(Status::Usage, error);
     chart.metrics.removeAt(index);
-
-    CommandResult written = writeCharts(athlete, charts, request.args);
-    if (!written.ok()) return written;
-
-    QJsonObject data = chartJson(charts.at(chartIndex));
-    data.insert("status", "removed");
-    data.insert("file", chartsPath(athlete));
-    CommandResult result = CommandResult::success(data);
-    result.text = QString("removed curve %1 on %2\n").arg(index + 1).arg(chart.name);
-    return result;
+    return saveChartChange(athlete, charts, request.args, chartJson(chart), "removed",
+                           QString("removed curve %1 on %2\n").arg(index + 1).arg(chart.name));
 }
 
 static ParamSpec
 byParam(bool withDefault)
 {
-    ParamSpec by("by", ParamType::String, "group activities by day, week, month, year, tod or all");
-    by.oneOf(groupNames);
+    ParamSpec by("by", ParamType::String, "group activities by " + groups().either());
+    by.oneOf(groups().names);
     if (withDefault) by.def("week");
     return by;
 }
@@ -1164,8 +1055,8 @@ byParam(bool withDefault)
 static void
 drawingParams(CommandSpec &spec)
 {
-    spec.params << ParamSpec("style", ParamType::String, "how the curve is drawn").oneOf(styleNames);
-    spec.params << ParamSpec("marker", ParamType::String, "marker drawn on the curve").oneOf(markerNames);
+    spec.params << ParamSpec("style", ParamType::String, "how the curve is drawn").oneOf(styles().names);
+    spec.params << ParamSpec("marker", ParamType::String, "marker drawn on the curve").oneOf(markers().names);
     spec.params << ParamSpec("color", ParamType::String, "pen color as RRGGBB");
     spec.params << ParamSpec("fill", ParamType::Bool, "fill under the curve");
     spec.params << ParamSpec("filter", ParamType::String, "curve data filter, such as isRun; \"\" for none");
@@ -1197,10 +1088,10 @@ typedCurveParams(CommandSpec &spec, bool metricRepeated)
     if (metricRepeated) metric.many();
     spec.params << metric;
     spec.params << ParamSpec("best", ParamType::Int, "peak duration; also give --unit and --series");
-    spec.params << ParamSpec("unit", ParamType::String, "duration unit").oneOf(unitNames);
-    spec.params << ParamSpec("series", ParamType::String, "series for a best; power is the one CP Analysis uses").oneOf(seriesNames);
-    spec.params << ParamSpec("estimate", ParamType::String, "wprime, cp, ftp, pmax, best, ei or vo2max").oneOf(estimateNames);
-    spec.params << ParamSpec("model", ParamType::String, "cp2, cp3 or ext").oneOf(modelNames);
+    spec.params << ParamSpec("unit", ParamType::String, "duration unit").oneOf(durationUnits().names);
+    spec.params << ParamSpec("series", ParamType::String, "series for a best; power is the one CP Analysis uses").oneOf(bestSeries().names);
+    spec.params << ParamSpec("estimate", ParamType::String, estimates().either()).oneOf(estimates().names);
+    spec.params << ParamSpec("model", ParamType::String, modelEither()).oneOf(modelNames);
     spec.params << ParamSpec("duration", ParamType::Int, "length of an estimate of best power");
     spec.params << ParamSpec("wpk", ParamType::Bool, "an estimate per kilogram instead of absolute");
     drawingParams(spec);
@@ -1238,7 +1129,7 @@ registerChartLibraryCommands(CommandRegistry &registry)
     add.spec.summary = "add a Trends chart";
     add.spec.description =
         "A curve is a metric from 'metric list', a best (a duration of one series)\n"
-        "or an estimate from a CP model (cp2, cp3 or ext). Several --metric flags\n"
+        "or an estimate from a CP model (" + modelEither() + "). Several --metric flags\n"
         "and no drawing flags keep today's metric curves. A style, marker, color,\n"
         "fill, filter or units applies to one curve; add further curves with\n"
         "'chart library curve add'. --by defaults to week. PMC, Banister,\n"
