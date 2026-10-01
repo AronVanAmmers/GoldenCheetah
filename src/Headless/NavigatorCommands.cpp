@@ -28,6 +28,8 @@
 #include "Settings.h"
 #include "RideMetric.h"
 
+#include <QCoreApplication>
+
 namespace Headless {
 
 //
@@ -125,7 +127,8 @@ setFavourites(CommandEnvironment &env, const CommandRequest &request)
 // metric's internal name, widths stay aligned with the headings.
 //
 
-static const QString defaultHeadings = "*|Workout Code|Date|";
+// translated as RideNavigator has it, so the defaults match the GUI's
+static QString defaultHeadings() { return QCoreApplication::translate("RideNavigator", "*|Workout Code|Date|"); }
 static const QString defaultWidths = "0|100|100|";
 
 static void
@@ -134,7 +137,7 @@ loadColumns(const QString &athlete, QStringList &columns, QStringList &widths)
     QString headings = appsettings->cvalue(athlete, GC_NAVHEADINGS, "").toString();
     QString stored = appsettings->cvalue(athlete, GC_NAVHEADINGWIDTHS, "").toString();
     if (headings.isEmpty()) {
-        headings = defaultHeadings;
+        headings = defaultHeadings();
         stored = defaultWidths;
     }
     columns = headings.split("|", Qt::SkipEmptyParts);

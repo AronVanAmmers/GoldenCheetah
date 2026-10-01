@@ -292,6 +292,12 @@ class TestBasics(Headless):
         r = self.gc("--athlete", "Nobody", "activity", "list")
         self.assertEqual(r.code, 3, r)
 
+    def test_only_the_first_cli_flag_is_taken(self):
+        # after --, --cli is an argument: here an activity that isn't there
+        r = self.gc("activity", "list", "--", "--cli")
+        self.assertEqual(r.code, 3, r)
+        self.assertIn(b"'--cli'", r.err)
+
     def test_single_athlete_is_the_default(self):
         r = self.gc("activity", "list")
         self.assertEqual(r.code, 0, r)
@@ -1103,8 +1109,12 @@ class TestActivitiesMetricsCharts(Headless):
                 self.assertTrue(data.startswith(magic[fmt]), (chart, fmt, data[:20]))
         env = self.gcj("-o", os.path.join(self.tmp, "t.png"), "chart", "trend", "workout_time", "--by", "activity")
         self.assertEqual(env["data"]["periods"], env["data"]["activities"])
-        r = self.gca("chart", "activity", "last", "--series", "nothing")
-        self.assertEqual(r.code, 5, r)
+        r = self.gca("chart", "activity", "last", "--series", "watts,nothing")
+        self.assertEqual(r.code, 2, r)
+        self.assertIn(b"unknown series 'nothing'", r.err)
+        r = self.gca("chart", "pmc", "--from", "2024-01-01", "--to", "2023-01-01")
+        self.assertEqual(r.code, 2, r)
+        self.assertIn(b"after --to", r.err)
 
     def test_delete(self):
         env = self.gcj("import", MULTI_TCX)

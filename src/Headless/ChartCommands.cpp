@@ -41,6 +41,7 @@
 #include "HrZones.h"
 #include "Colors.h"
 #include "WPrime.h"
+#include "Units.h"
 
 #include <QFileInfo>
 #include <cmath>
@@ -97,8 +98,8 @@ plotSeries()
         { "watts", RideFile::watts, CPOWER, "Power (W)" },
         { "hr", RideFile::hr, CHEARTRATE, "Heart rate (bpm)" },
         { "cad", RideFile::cad, CCADENCE, "Cadence (rpm)" },
-        { "speed", RideFile::kph, CSPEED, "Speed (km/h)" },
-        { "alt", RideFile::alt, CALTITUDE, "Altitude (m)" },
+        { "speed", RideFile::kph, CSPEED, "Speed (%1)" },
+        { "alt", RideFile::alt, CALTITUDE, "Altitude (%1)" },
         { "nm", RideFile::nm, CTORQUE, "Torque (Nm)" },
         { "wbal", RideFile::wbal, CWBAL, "W' balance (kJ)" },
     };
@@ -138,14 +139,22 @@ activityChart(CommandEnvironment &env, const CommandRequest &request)
     if (!ride) return CommandResult::failure(Status::Failed, "can't open the activity file");
 
     QStringList wanted;
-    for (const QString &s : splitList(request.args.value("series"))) wanted << s.toLower();
+    for (const QString &s : splitList(request.args.value("series"))) {
+        if (!plotSeriesNames().contains(s.toLower()))
+            return CommandResult::failure(Status::Usage,
+                        QString("unknown series '%1', choose from: %2").arg(s).arg(plotSeriesNames().join(", ")));
+        wanted << s.toLower();
+    }
     bool automatic = wanted.isEmpty();
     int window = request.args.value("smooth").toInt(1);
     bool byDistance = request.args.value("distance").toBool(false);
+    // in the units the GUI is set to, as its charts
+    bool metricUnits = GlobalContext::context()->useMetricUnits;
+    double distanceScale = metricUnits ? 1.0 : MILES_PER_KM;
 
     ChartSpec spec;
     spec.title = QString("%1  %2").arg(item->sport).arg(activityStart(item).replace("T", " "));
-    spec.xLabel = byDistance ? "Distance (km)" : "Time";
+    spec.xLabel = byDistance ? (metricUnits ? "Distance (km)" : "Distance (mi)") : "Time";
 
     for (const SeriesInfo &info : plotSeries()) {
         if (!automatic && !wanted.contains(info.name)) continue;
@@ -154,8 +163,19 @@ activityChart(CommandEnvironment &env, const CommandRequest &request)
         } else if (!ride->isDataPresent(info.type)) continue;
         if (automatic && (info.type == RideFile::nm || info.type == RideFile::wbal)) continue;
 
+        // speed and altitude in the GUI's units
+        QString label = info.label;
+        double scale = 1.0;
+        if (info.type == RideFile::kph) {
+            label = label.arg(metricUnits ? "km/h" : "mph");
+            scale = distanceScale;
+        } else if (info.type == RideFile::alt) {
+            label = label.arg(metricUnits ? "m" : "ft");
+            scale = metricUnits ? 1.0 : FEET_PER_METER;
+        }
+
         ChartSeries s;
-        s.name = info.label;
+        s.name = label;
         s.color = GColor(info.color);
         s.style = info.type == RideFile::alt ? ChartSeries::Area : ChartSeries::Line;
         s.width = 1.2;
@@ -163,19 +183,19 @@ activityChart(CommandEnvironment &env, const CommandRequest &request)
         if (info.type == RideFile::wbal) {
             WPrime *wp = ride->wprimeData();
             if (!wp) continue;
-            s.x = wp->xdata(byDistance);
+            for (double x : wp->xdata(byDistance)) s.x << (byDistance ? x * distanceScale : x);
             for (double v : wp->ydata()) y << v / 1000.0;
         } else {
             for (RideFilePoint *p : ride->dataPoints()) {
-                s.x << (byDistance ? p->km : p->secs);
-                y << p->value(info.type);
+                s.x << (byDistance ? p->km * distanceScale : p->secs);
+                y << p->value(info.type) * scale;
             }
         }
         s.y = (info.type == RideFile::alt || info.type == RideFile::wbal) ? y : smooth(y, window);
         if (s.x.count() > s.y.count()) s.x.resize(s.y.count());
 
         ChartPanel panel;
-        panel.yLabel = info.label;
+        panel.yLabel = label;
         panel.xAxis = byDistance ? ChartPanel::Plain : ChartPanel::Duration;
         panel.series << s;
         panel.legend = false;
@@ -260,6 +280,8 @@ pmcChart(CommandEnvironment &env, const CommandRequest &request)
 
     QDate to = request.args.contains("to") ? QDate::fromString(request.args.value("to").toString(), Qt::ISODate) : QDate::currentDate();
     QDate from = request.args.contains("from") ? QDate::fromString(request.args.value("from").toString(), Qt::ISODate) : to.addDays(-180);
+    if (from > to)
+        return CommandResult::failure(Status::Usage, QString("--from %1 is after --to %2").arg(from.toString(Qt::ISODate), to.toString(Qt::ISODate)));
     if (from < pmc->start()) from = pmc->start();
     if (to > pmc->end()) to = pmc->end();
 
@@ -350,6 +372,8 @@ trendChart(CommandEnvironment &env, const CommandRequest &request)
     if (items.isEmpty()) return CommandResult::failure(Status::Failed, "no activities chosen");
 
     QString by = request.args.value("by").toString();
+    // in the units the GUI is set to, as Trends
+    bool metricUnits = GlobalContext::context()->useMetricUnits;
 
     // bucket by period start, by activity every activity is its own bucket
     QMap<QDateTime, QList<RideItem *>> buckets;
@@ -371,7 +395,7 @@ trendChart(CommandEnvironment &env, const CommandRequest &request)
     QJsonArray values;
     int i = 0;
     for (auto it = buckets.constBegin(); it != buckets.constEnd(); ++it, ++i) {
-        double v = RideCache::aggregate(m, it.value());
+        double v = m->value(RideCache::aggregate(m, it.value()), metricUnits);
         bars.x << i;
         bars.y << v;
         QDate day = it.key().date();
@@ -391,7 +415,8 @@ trendChart(CommandEnvironment &env, const CommandRequest &request)
     ChartPanel panel;
     panel.xAxis = ChartPanel::Categories;
     panel.categories = labels;
-    panel.yLabel = m->units(true).isEmpty() ? m->name() : QString("%1 (%2)").arg(m->name()).arg(m->units(true));
+    QString units = m->units(metricUnits);
+    panel.yLabel = units.isEmpty() ? m->name() : QString("%1 (%2)").arg(m->name()).arg(units);
     panel.yMin = 0;
     panel.legend = false;
     panel.series << bars;

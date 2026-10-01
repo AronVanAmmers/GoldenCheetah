@@ -291,8 +291,8 @@ main(int argc, char *argv[])
             fprintf(stderr, "--version           to print detailed version information and exit\n");
 #ifdef GC_WANT_HTTP
             fprintf(stderr, "--server            to run as an API server\n");
-            fprintf(stderr, "--cli               to run commands without a window, see --cli --help\n");
 #endif
+            fprintf(stderr, "--cli               to run commands without a window, see --cli --help\n");
 #ifdef GC_DEBUG
             fprintf(stderr, "--debug             to turn on redirection of messages to goldencheetah.log [debug build]\n");
 #else
