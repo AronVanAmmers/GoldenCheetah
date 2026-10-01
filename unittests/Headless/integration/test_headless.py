@@ -173,6 +173,21 @@ class TestBasics(Headless):
         self.assertTrue(shown("Kit")["summary"])
         self.gcj("field", "remove", "Kit")
 
+    def test_library_in_the_working_folder_like_the_gui(self):
+        # a library on a USB stick: ./Library/GoldenCheetah, found as main() finds it
+        stick = os.path.join(self.tmp, "stick")
+        library = os.path.join(stick, "Library", "GoldenCheetah")
+        os.makedirs(library)
+        r = subprocess.run([BINARY, "--cli", "--home", library, "athlete", "create", "Usb"],
+                           capture_output=True, timeout=60, env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = subprocess.run([BINARY, "--cli", "--format", "json", "athlete", "list"],
+                           capture_output=True, timeout=60, env=self.env, cwd=stick)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = json.loads(r.stdout)["data"]
+        self.assertEqual(os.path.realpath(data["home"]), os.path.realpath(library))
+        self.assertEqual([a["name"] for a in data["athletes"]], ["Usb"])
+
     def test_athlete_dir_with_a_trailing_slash(self):
         r = subprocess.run([BINARY, "--cli", "--athlete-dir", self.folder + os.sep, "--format", "json", "athlete", "show"],
                            capture_output=True, timeout=60, env=self.env)

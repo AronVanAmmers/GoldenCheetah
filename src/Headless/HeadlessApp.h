@@ -55,8 +55,12 @@ class HeadlessApp
 
         static bool isInitialised();
 
-        // the athletes folder GoldenCheetah would use: $GC_HOME, the configured
-        // library folder, or the platform default
+        // without an athletes folder: just the metrics, for the commands
+        // that list or describe them
+        static void initialiseMetrics();
+
+        // the athletes folder GoldenCheetah would use: $GC_HOME, or the one
+        // the GUI opens (GcStartup::libraryPath)
         static QString defaultHome();
 
         // the initialised athletes folder

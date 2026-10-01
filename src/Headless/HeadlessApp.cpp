@@ -19,11 +19,10 @@
 #include "HeadlessApp.h"
 
 #include "Settings.h"
-#include "Colors.h"
 #include "RideMetric.h"
-#include "PowerProfile.h"
 #include "TrainDB.h"
 #include "Context.h"
+#include "GcStartup.h"
 
 #ifdef GC_WANT_PYTHON
 #include "PythonEmbed.h"
@@ -36,14 +35,11 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QProgressDialog>
-#include <QStandardPaths>
 #include <QProcessEnvironment>
 #include <cstdio>
 
-#include <gsl/gsl_errno.h>
 
 // globals owned by main.cpp
-extern QString gcroot;
 extern QApplication *application;
 
 namespace Headless {
@@ -138,22 +134,8 @@ HeadlessApp::defaultHome()
     QString env = QProcessEnvironment::systemEnvironment().value("GC_HOME");
     if (!env.isEmpty()) return QDir::cleanPath(QFileInfo(env).absoluteFilePath());
 
-    // configured library folder
-    QString configured = appsettings->value(NULL, GC_HOMEDIR, "").toString();
-    if (!configured.isEmpty() && QDir(configured).exists()) return QDir(configured).canonicalPath();
-
-    // the same search as main()
-    QString old = QDir::home().canonicalPath() + "/Library/GoldenCheetah";
-    if (QDir(old).exists()) return old;
-
-#if defined(Q_OS_MACOS)
-    return QDir::home().canonicalPath() + "/Library/GoldenCheetah";
-#elif defined(Q_OS_WIN)
-    QStringList paths = QStandardPaths::standardLocations(QStandardPaths::AppLocalDataLocation);
-    return paths.value(0);
-#else
-    return QDir::home().canonicalPath() + "/.goldencheetah";
-#endif
+    // the folder the GUI would open (not created here)
+    return GcStartup::libraryPath(false);
 }
 
 QStringList
@@ -214,26 +196,13 @@ HeadlessApp::initialise(const QString &home, const Options &options, QString &er
         return true;
     }
 
-    // maths routines must not abort the process
-    gsl_set_error_handler_off();
-
-    // same order as main()
-    initPowerProfile();
-
+    // what main() does before it opens a window: maths routines must not
+    // abort the process, settings, colours, metrics and the workout
+    // database (the upgrade code consults it)
+    GcStartup::initProcess();
     rootFolder = canonical;
-    gcroot = canonical;
-    appsettings->initializeQSettingsGlobal(gcroot);
-
-    GCColor::setupColors();
-    QString powercolor = appsettings->value(NULL, "COLORPOWER", "").toString();
-    if (powercolor == "") GCColor::applyTheme(GSettings::defaultAppearanceSettings().theme);
-    appsettings->migrateQSettingsSystem();
-    GCColor::readConfig();
-
-    RideMetricFactory::instance().initialize();
-
-    // the upgrade code consults the workout database
-    trainDB = new TrainDB(QDir(gcroot));
+    GcStartup::initSettings(canonical);
+    GcStartup::initCore(canonical);
 
 #ifdef GC_WANT_PYTHON
     bool embed = appsettings->value(NULL, GC_EMBED_PYTHON, true).toBool();
@@ -248,6 +217,12 @@ HeadlessApp::initialise(const QString &home, const Options &options, QString &er
 
     initialised = true;
     return true;
+}
+
+void
+HeadlessApp::initialiseMetrics()
+{
+    RideMetricFactory::instance().initialize();
 }
 
 bool

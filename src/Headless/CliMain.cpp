@@ -29,7 +29,6 @@
 #include "ResultFormat.h"
 #include "RestServer.h"
 
-#include "RideMetric.h"
 
 #include <QApplication>
 #include <QDir>
@@ -170,7 +169,7 @@ cliMain(int argc, char **argv)
         }
     } else {
         // commands that don't need athletes still need the metric names
-        RideMetricFactory::instance().initialize();
+        HeadlessApp::initialiseMetrics();
     }
 
     AthleteSession::Options sessionOptions;
