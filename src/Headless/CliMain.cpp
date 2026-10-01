@@ -181,6 +181,11 @@ cliMain(int argc, char **argv)
     if (parsed.command == "serve") {
         QJsonObject serveArgs = parsed.args;
         QString error = CommandRegistry::validate(serveSpec, serveArgs);
+        // httpserver reads the size as an int of bytes
+        int port = serveArgs.value("port").toInt(), maxUpload = serveArgs.value("max-upload").toInt();
+        if (error.isEmpty() && (port < 1 || port > 65535)) error = QString("--port must be 1 to 65535, not %1").arg(port);
+        if (error.isEmpty() && (maxUpload < 1 || maxUpload > 2047))
+            error = QString("--max-upload must be 1 to 2047 (MB), not %1").arg(maxUpload);
         if (!error.isEmpty()) {
             writeErr(QString("error: %1\n").arg(error));
             return finish(int(Status::Usage));
