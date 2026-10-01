@@ -449,7 +449,7 @@ evalActivities(CommandEnvironment &env, const CommandRequest &request)
         o.insert("start", activityStart(item));
         if (r.isNumber) {
             double v = r.number();
-            o.insert("value", std::isfinite(v) ? QJsonValue(v) : QJsonValue());
+            o.insert("value", jsonNumber(v));
         } else {
             o.insert("value", r.string());
         }
