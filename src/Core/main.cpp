@@ -29,6 +29,7 @@
 #include "GcCrashDialog.h" // for versionHTML
 #include "OverviewItems.h"
 #include "CliMain.h"
+#include "GcStartup.h"
 
 #include <QApplication>
 #include <QtGui>
@@ -416,10 +417,6 @@ main(int argc, char *argv[])
     unsetenv("QT_SCALE_FACTOR");
 #endif
 
-    // we don't want program aborts when maths routines don't know
-    // what to do. We may add our own error handler later.
-    gsl_set_error_handler_off();
-
     // create the application -- only ever ONE regardless of restarts
     application = new QApplication(argc, argv);
 
@@ -433,8 +430,8 @@ main(int argc, char *argv[])
     //XXXIdleEventFilter idleFilter;
     //XXXapplication->installEventFilter(&idleFilter);
 
-    // read defaults
-    initPowerProfile();
+    // maths errors don't abort, read defaults
+    GcStartup::initProcess();
 
     // output colors as configured so we can cut and paste into Colors.cpp
     // uncomment when developers working on theme colors
@@ -511,59 +508,18 @@ main(int argc, char *argv[])
         }
 #endif
 
-        //this is the path within the current directory where GC will look for
-        //files to allow USB stick support
-        QString localLibraryPath="Library/GoldenCheetah";
+        // the athletes folder, as the command line finds it too
+        QString library = GcStartup::libraryPath(true);
+        if (library.isEmpty()) {
 
-        //this is the path that used to be used for all platforms
-        //now different platforms will use their own path
-        //this path is checked first to make things easier for long-time users
-        QString oldLibraryPath=QDir::home().canonicalPath()+"/Library/GoldenCheetah";
-
-        //these are the new platform-dependent library paths
-#if defined(Q_OS_MACOS)
-        QString libraryPath="Library/GoldenCheetah";
-#elif defined(Q_OS_WIN)
-        QStringList paths=QStandardPaths::standardLocations(QStandardPaths::AppLocalDataLocation);
-        QString libraryPath = paths.at(0); 
-#else // not windows or osx (must be Linux or OpenBSD)
-        // Q_OS_LINUX et al
-        QString libraryPath=".goldencheetah";
-#endif //
-
-        // or did we override in settings?
-        QString sh;
-        if ((sh=appsettings->value(NULL, GC_HOMEDIR, "").toString()) != QString("")) localLibraryPath = sh;
-
-        // lets try the local library we've worked out...
-        QDir home = QDir();
-        if(QDir(localLibraryPath).exists() || home.exists(localLibraryPath)) {
-
-            home.cd(localLibraryPath);
-
-        } else {
-
-            // YIKES !! The directory we should be using doesn't exist!
-            home = QDir::home();
-            if (home.exists(oldLibraryPath)) { // there is an old style path, lets fo there
-                home.cd(oldLibraryPath);
-            } else {
-
-                if (!home.exists(libraryPath)) {
-                    if (!home.mkpath(libraryPath)) {
-
-                        // tell user why we aborted !
-                        QMessageBox::critical(NULL, "Exiting", QString("Cannot create library directory (%1)").arg(libraryPath));
-                        exit(0);
-                    }
-                }
-                home.cd(libraryPath);
-            }
+            // tell user why we aborted !
+            QMessageBox::critical(NULL, "Exiting", QString("Cannot create library directory (%1)").arg(GcStartup::defaultLibraryPath()));
+            exit(0);
         }
+        QDir home(library);
 
         // set global root directory
-        gcroot = home.canonicalPath();
-        appsettings->initializeQSettingsGlobal(gcroot);
+        GcStartup::initSettings(home.canonicalPath());
 
 
         // now redirect stderr and set the log filter and format
@@ -590,28 +546,15 @@ main(int argc, char *argv[])
             qDebug()<<"Failed to load GC translator for "<<lang.toString();
         application->installTranslator(&gcTranslator);
 
-        // Now the translator is installed, set default colors with translated names
-        GCColor::setupColors();
-
-        // has a default theme been applied (first run) ?
-        QString powercolor = appsettings->value(NULL, "COLORPOWER", "").toString();
-        if (powercolor == "")  GCColor::applyTheme(defaults.theme);
-
-        // migration
-        appsettings->migrateQSettingsSystem(); // colors must be setup before migration can take place, but reading has to be from the migrated ones
-        GCColor::readConfig();
-
-        // Initialize metrics once the translator is installed
-        RideMetricFactory::instance().initialize();
+        // now the translator is installed: colors with translated names,
+        // settings migration, metrics and the workout database
+        GcStartup::initCore(home.canonicalPath());
 
         // Initialize global registry once the translator is installed
         GcWindowRegistry::initialize();
 
         // initialize Overview Items once the translator is installed
         OverviewItemConfig::registerItems();
-
-        // initialise the trainDB
-        trainDB = new TrainDB(home);
 
         // lets do what the command line says ...
         QVariant lastOpened;
