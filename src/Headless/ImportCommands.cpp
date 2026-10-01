@@ -19,10 +19,11 @@
 //
 // Importing activity files, headless.
 //
-// This follows the GUI import wizard (RideImportWizard) step by step so an
-// activity imported here is the same as one imported in the GUI: same file
-// name, a copy of the original in /imports, the same metadata set on import,
-// the automatic data processors run and planned activities linked.
+// The import itself is RideImporter, which the GUI import wizard
+// (RideImportWizard) uses too, so an activity imported here is the same as
+// one imported in the GUI: same file name, a copy of the original in
+// /imports, the same metadata set on import, the automatic data processors
+// run and planned activities linked. This file finds the files and reports.
 //
 
 #include "HeadlessCommands.h"
@@ -35,13 +36,14 @@
 #include "RideFile.h"
 #include "RideMetadata.h"
 #include "JsonRideFile.h"
-#include "DataProcessor.h"
-#include "ArchiveFile.h"
+#include "RideImporter.h"
 
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <QScopeGuard>
 #include <exception>
+#include <memory>
 
 namespace Headless {
 
@@ -72,61 +74,19 @@ struct ImportItem {
     }
 };
 
-// the file type suffix, ignoring .gz/.zip compression (as openRideFile does)
-static QString
-activitySuffix(const QString &path)
-{
-    QStringList parts = QFileInfo(path).fileName().split(".");
-    if (parts.count() > 1) {
-        QString last = parts.last().toLower();
-        if (last == "zip" || last == "gz") parts.removeLast();
-    }
-    return parts.count() > 1 ? parts.last().toLower() : QString();
-}
-
-static bool
-isImportable(const QString &path)
-{
-    return RideFileFactory::instance().suffixes().contains(activitySuffix(path));
-}
-
-// file names GoldenCheetah gives activities
-static QString
-targetName(const QDateTime &when)
-{
-    return when.toString("yyyy_MM_dd_HH_mm_ss");
-}
-
-static bool
-moveFile(const QString &source, const QString &target)
-{
-    if (QFile::rename(source, target)) return true;
-    if (QFile::copy(source, target)) {
-        QFile::remove(source);
-        return true;
-    }
-    return false;
-}
-
 class Importer
 {
     public:
 
         Importer(AthleteSession &session, const ImportOptions &options, const CommandEnvironment &env)
-            : session(session), options(options), env(env), context(session.context()) {
-            const AthleteDirectoryStructure *home = context->athlete->directoryStructure();
-            AthleteDirectoryStructure *dirs = const_cast<AthleteDirectoryStructure*>(home);
-            importsDir = dirs->imports();
-            activitiesDir = dirs->activities();
-            tmpActivitiesDir = dirs->tmpActivities();
-        }
+            : session(session), options(options), env(env), context(session.context()) {}
 
         ~Importer() {
             for (const QString &f : deleteMe) QFile::remove(f);
         }
 
         // turn the arguments into a list of files: folders are scanned,
-        // archives of many files are extracted
+        // archives are unpacked as the import window does
         QList<QPair<QString,QString>> expand(const QStringList &inputs, QList<ImportItem> &failures)
         {
             QList<QPair<QString,QString>> files; // label, path
@@ -149,7 +109,7 @@ class Importer
                     QStringList found;
                     while (it.hasNext()) {
                         QString f = it.next();
-                        if (isImportable(f) || isArchive(f)) found << f;
+                        if (RideImporter::isImportable(f) || isArchive(f)) found << f;
                     }
                     found.sort();
                     for (const QString &f : found) expandFile(f, f, files);
@@ -180,9 +140,9 @@ class Importer
                 return result;
             }
 
-            if (!isImportable(path)) {
+            if (!RideImporter::isImportable(path)) {
                 result.status = "failed";
-                result.message = QString("unsupported file type '%1'").arg(activitySuffix(path));
+                result.message = QString("unsupported file type '%1'").arg(RideImporter::activitySuffix(path).toLower());
                 return result;
             }
 
@@ -190,29 +150,24 @@ class Importer
             QStringList errors;
             QList<RideFile*> rides;
             QFile file(path);
-            RideFile *ride = RideFileFactory::instance().openRideFile(context, file, errors, &rides);
+            std::unique_ptr<RideFile> ride(RideFileFactory::instance().openRideFile(context, file, errors, &rides));
 
             if (rides.count() > 1) {
                 // as the wizard: write each one out as json and import those.
                 // the returned ride may be one of the list, delete it only once
-                if (!rides.contains(ride)) delete ride;
-                ride = nullptr;
+                if (rides.contains(ride.get())) ride.release();
+                auto cleanup = qScopeGuard([&rides]() { qDeleteAll(rides); });
+                for (RideFile *extracted : rides) extracted->context = context;
+                QStringList written = RideImporter::splitActivities(context, path, rides,
+                                                                    context->athlete->home->temp().absolutePath(), deleteMe);
+                cleanup.dismiss();
+                for (int i = 0; i < written.count(); i++)
+                    pending << qMakePair(QString("%1#%2").arg(label).arg(i + 1), written.at(i));
+
                 ImportItem summary;
                 summary.source = label;
                 summary.status = "expanded";
-                summary.message = QString("%1 activities").arg(rides.count());
-                int counter = 0;
-                for (RideFile *extracted : rides) {
-                    QString target = QDir(context->athlete->home->temp().absolutePath())
-                                     .absoluteFilePath(QFileInfo(path).baseName() + QString("-%1.json").arg(++counter));
-                    extracted->context = context;
-                    JsonFileReader writer;
-                    QFile out(target);
-                    writer.writeRideFile(context, extracted, out);
-                    delete extracted;
-                    deleteMe << target;
-                    pending << qMakePair(QString("%1#%2").arg(label).arg(counter), target);
-                }
+                summary.message = QString("%1 activities").arg(written.count());
                 return summary;
             }
 
@@ -226,8 +181,6 @@ class Importer
             result.warnings = errors;
 
             QDateTime start = ride->startTime();
-            delete ride;
-            ride = nullptr;
             if (!start.isValid()) {
                 result.status = "failed";
                 result.message = "the file has no start date and time";
@@ -236,26 +189,25 @@ class Importer
 
             // local time to the second, as the wizard's date and time columns
             QDateTime when(start.date(), QTime(start.time().hour(), start.time().minute(), start.time().second()));
-            QString target = targetName(when);
+            QString target = RideImporter::targetName(when);
             QString activitiesTarget = target + ".json";
-            QString finalTarget = activitiesDir.canonicalPath() + "/" + activitiesTarget;
-            QString tmpTarget = tmpActivitiesDir.canonicalPath() + "/" + activitiesTarget;
-
             result.start = when.toString("yyyy-MM-ddTHH:mm:ss");
             result.activity = target;
 
             // already imported?
-            if (QFileInfo(finalTarget).exists()) {
+            RideItem *existing = nullptr;
+            switch (RideImporter::conflict(context, when, &existing)) {
+            case RideImporter::Outcome::Exists:
                 result.status = "skipped";
                 result.message = QString("already imported as %1").arg(activitiesTarget);
                 return result;
-            }
-            RideItem *existing = context->athlete->rideCache->getRide(when.toUTC());
-            if (existing) {
+            case RideImporter::Outcome::SameStart:
                 result.status = "skipped";
                 result.message = QString("an activity with the same start time exists (%1)").arg(existing->fileName);
                 result.activity = QFileInfo(existing->fileName).completeBaseName();
                 return result;
+            default:
+                break;
             }
 
             if (options.dryRun) {
@@ -264,77 +216,33 @@ class Importer
                 return result;
             }
 
-            // keep a copy of the original in /imports, as the GUI does
-            QString importsTarget;
-            if (info.canonicalPath() != importsDir.canonicalPath()) {
-                importsTarget = info.baseName() + "_" + target + "." + info.suffix();
-                QString importsFull = importsDir.canonicalPath() + "/" + importsTarget;
-                QFile::remove(importsFull); // stale copy from an interrupted import
-                if (!QFile(path).copy(importsFull))
-                    result.warnings << QString("could not copy the original to %1").arg(importsFull);
-            } else {
-                importsTarget = info.fileName();
-            }
+            // the rest exactly as the import window, with the ride already read
+            RideImporter::Result saved = RideImporter::save(context, path, when, std::move(ride), errors, false,
+                                                            [&](RideImporter::Step step, const RideImporter::Result &now) {
+                if (step != RideImporter::Step::CopyFailed) return;
+                QString copy = context->athlete->home->imports().absoluteFilePath(now.importsName);
+                result.warnings << (QFile::exists(copy) ? QString("%1 is already in the imports folder, it was kept").arg(now.importsName)
+                                                        : QString("could not copy the original to %1").arg(copy));
+            });
 
-            // open again and prepare exactly as the wizard does
-            errors.clear();
-            QFile again(path);
-            ride = RideFileFactory::instance().openRideFile(context, again, errors);
-            if (!ride) {
+            switch (saved.outcome) {
+            case RideImporter::Outcome::Imported:
+                result.status = "imported";
+                if (saved.item) result.sport = saved.item->sport;
+                break;
+            case RideImporter::Outcome::WriteFailed:
                 result.status = "failed";
-                result.message = "could not read the file a second time";
-                return result;
-            }
-
-            ride->setStartTime(when);
-            ride->setTag("Source Filename", importsTarget);
-            ride->setTag("Filename", activitiesTarget);
-            if (errors.count() > 0) ride->setTag("Import errors", errors.join("\n"));
-
-            GlobalContext::context()->rideMetadata->setLinkedDefaults(ride);
-            DataProcessorFactory::instance().autoProcess(ride, "Auto", "Import");
-            ride->recalculateDerivedSeries();
-            DataProcessorFactory::instance().autoProcess(ride, "Save", "ADD");
-
-            // write to /tmpActivities, add to the cache, then move to /activities
-            JsonFileReader writer;
-            QFile out(tmpTarget);
-            bool written = writer.writeRideFile(context, ride, out);
-            delete ride;
-            ride = nullptr;
-
-            if (!written) {
-                result.status = "failed";
-                result.message = QString("could not write %1").arg(tmpTarget);
-                return result;
-            }
-
-            context->athlete->addRide(activitiesTarget, false, true, true);
-
-            if (!moveFile(tmpTarget, finalTarget)) {
+                result.message = QString("could not write %1 to the tmpActivities folder").arg(activitiesTarget);
+                break;
+            case RideImporter::Outcome::MoveFailed:
                 result.status = "failed";
                 result.message = QString("could not move %1 to the activities folder").arg(activitiesTarget);
-                return result;
+                break;
+            default:
+                result.status = "failed";
+                result.message = "could not import the file";
+                break;
             }
-
-            RideItem *item = context->ride;
-            if (item && item->fileName == activitiesTarget) {
-                item->setFileName(activitiesDir.canonicalPath(), activitiesTarget);
-
-                // link to a matching planned activity, as the wizard
-                RideItem *other = context->athlete->rideCache->findSuggestion(item);
-                RideCache::OperationPreCheck check = context->athlete->rideCache->checkLinkActivities(item, other);
-                if (other && check.canProceed && !check.requiresUserDecision) {
-                    RideCache::OperationResult linked = context->athlete->rideCache->linkActivities(item, other);
-                    if (linked.success) {
-                        QString error;
-                        context->athlete->rideCache->saveActivities(check.affectedItems, error);
-                    }
-                }
-                result.sport = item->sport;
-            }
-
-            result.status = "imported";
             return result;
         }
 
@@ -380,25 +288,19 @@ class Importer
 
         void expandFile(const QString &label, const QString &path, QList<QPair<QString,QString>> &files)
         {
-            // an archive of many files (not a compressed activity)
-            if (isArchive(path) && !isImportable(path)) {
-                QList<QString> contents = Archive::dir(path);
-                if (!contents.isEmpty()) {
-                    QStringList extracted = Archive::extract(path, contents, tmpActivitiesDir.absolutePath());
-                    deleteMe += extracted;
-                    for (const QString &e : extracted)
-                        files << qMakePair(QString("%1:%2").arg(label).arg(QFileInfo(e).fileName()), e);
-                    return;
-                }
+            QStringList expanded = RideImporter::expand(context, QStringList() << path, deleteMe);
+            if (expanded == QStringList() << path) {
+                files << qMakePair(label, path);
+                return;
             }
-            files << qMakePair(label, path);
+            for (const QString &e : expanded)
+                files << qMakePair(QString("%1:%2").arg(label).arg(QFileInfo(e).fileName()), e);
         }
 
         AthleteSession &session;
         ImportOptions options;
         const CommandEnvironment &env;
         Context *context;
-        QDir importsDir, activitiesDir, tmpActivitiesDir;
         QStringList deleteMe;
         QList<QPair<QString,QString>> pending;
 };

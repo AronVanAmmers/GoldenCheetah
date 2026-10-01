@@ -25,6 +25,7 @@
 #include "RideItem.h"
 #include "RideFile.h"
 #include "RideImportWizard.h"
+#include "RideImporter.h"
 #include "RideCache.h"
 
 #include "RideAutoImportConfig.h"
@@ -438,30 +439,8 @@ RideImportWizard::init(QList<QString> original, Context * /*mainWindow*/)
 QList<QString>
 RideImportWizard::expandFiles(QList<QString> files)
 {
-    // we keep a list of what we're returning
-    QList<QString> expanded;
-    QRegExp archives("^(zip|gzip)$",  Qt::CaseInsensitive);
-
-    foreach(QString file, files) {
-
-        if (archives.exactMatch(QFileInfo(file).suffix())) {
-            // its an archive so lets check - but only to one depth
-            // archives that contain archives can get in the sea
-            QList<QString> contents = Archive::dir(file);
-            if (contents.count() == 0) expanded << file;
-            else {
-                // we need to extract the contents and return those
-                QStringList ex = Archive::extract(file, contents, const_cast<AthleteDirectoryStructure*>(context->athlete->directoryStructure())->tmpActivities().absolutePath());
-                deleteMe += ex;
-                expanded += ex;
-            }
-
-        } else {
-            expanded << file;
-        }
-    }
-
-    return expanded;
+    // archives are unpacked, as the command line import does
+    return RideImporter::expand(context, files, deleteMe);
 }
 
 int
@@ -506,28 +485,10 @@ RideImportWizard::process()
         else if (thisfile.fileName().endsWith("json") && thisfile.fileName().startsWith("{"))  tableWidget->item(i,STATUS_COLUMN)->setText(tr("Error - Opendata summary."));
         else {
 
-            // is it one we understand ?
-            QStringList suffixList = RideFileFactory::instance().suffixes();
-            QRegExp suffixes(QString("^(%1)$").arg(suffixList.join("|")));
-            suffixes.setCaseSensitivity(Qt::CaseInsensitive);
+            // is it one we understand ? (gz or zip are stripped off, openRideFile sorts that)
+            QString suffix = RideImporter::activitySuffix(thisfile.fileName());
 
-            // strip off gz or zip as openRideFile will sort that for us
-            // since some file names contain "." as separator, not only for suffixes,
-            // find the file-type suffix in a 2 step approach
-            QStringList allNameParts = thisfile.fileName().split(".");
-            QString suffix = tr("undefined");
-            if (!allNameParts.isEmpty()) {
-                if (allNameParts.last().toLower() == "zip" ||
-                    allNameParts.last().toLower() == "gz") {
-                    // gz/zip are handled by openRideFile
-                    allNameParts.removeLast();
-                }
-                if (!allNameParts.isEmpty()) {
-                    suffix = allNameParts.last();
-                }
-            }
-
-            if (suffixes.exactMatch(suffix)) {
+            if (RideImporter::isImportable(thisfile.fileName())) {
 
                 // Woot. We know how to parse this baby
                 tableWidget->item(i,STATUS_COLUMN)->setText(tr("Queued"));
@@ -584,20 +545,12 @@ RideImportWizard::process()
                      (118 + ((willhave > 16 ? 17*20 : (willhave+1) * 20)))*dpiYFactor);
 
 
-                 // ok so create a temporary file and add to the tableWidget
-                 // we write as JSON to ensure we don't lose data e.g. XDATA.
+                 // ok so create a temporary file for each and add to the tableWidget
+                 QStringList extracted = RideImporter::splitActivities(context, QFileInfo(thisfile).filePath(), rides,
+                                                                       QDir::tempPath(), deleteMe);
                  int counter = 0;
-                 foreach(RideFile *extracted, rides) {
+                 foreach(QString fulltarget, extracted) {
 
-                     // write as a temporary file, using the original
-                     // filename with "-n" appended
-                     QString fulltarget = QDir::tempPath() + "/" + QFileInfo(thisfile).baseName() + QString("-%1.json").arg(counter+1);
-                     JsonFileReader reader;
-                     QFile target(fulltarget);
-                     reader.writeRideFile(context, extracted, target);
-                     deleteMe.append(fulltarget);
-                     delete extracted;
-                     
                      // now add each temporary file ...
                      filenames.insert(here, fulltarget);
                      blanks.insert(here, true); // by default editable
@@ -1023,130 +976,49 @@ RideImportWizard::abortClicked()
         this->repaint();
 
 
-        // SAVE STEP 3 - prepare the new file names for the next steps - basic name and .JSON in GC format
-
+        // SAVE STEP 3 - the start time, as the user may have edited it
         QDateTime ridedatetime = QDateTime(QDate().fromString(tableWidget->item(i,DATE_COLUMN)->text(), Qt::ISODate),
                                            QTime().fromString(tableWidget->item(i,TIME_COLUMN)->text(), "hh:mm:ss"));
-        QString targetnosuffix = QString ( "%1_%2_%3_%4_%5_%6" )
-                .arg ( ridedatetime.date().year(), 4, 10, zero )
-                .arg ( ridedatetime.date().month(), 2, 10, zero )
-                .arg ( ridedatetime.date().day(), 2, 10, zero )
-                .arg ( ridedatetime.time().hour(), 2, 10, zero )
-                .arg ( ridedatetime.time().minute(), 2, 10, zero )
-                .arg ( ridedatetime.time().second(), 2, 10, zero );
-        QString activitiesTarget = QString ("%1.%2" ).arg ( targetnosuffix ).arg ( "json" );
 
-        // create filenames incl. directory path for GC .JSON for both /tmpActivities and /activities directory
-        QString tmpActivitiesFulltarget = tmpActivities.canonicalPath() + "/" + activitiesTarget;
-        QString finalActivitiesFulltarget = homeActivities.canonicalPath() + "/" + activitiesTarget;
-
-        // check if a ride at this point of time already exists in /activities - if yes, skip import
-        if (QFileInfo(finalActivitiesFulltarget).exists()) { tableWidget->item(i,STATUS_COLUMN)->setText(tr("Error - Activity file exists")); continue; }
-
-        // in addition, also check the RideCache for a Ride with the same point in Time in UTC, which also indicates
-        // that there was already a ride imported - reason is that RideCache start time is in UTC, while the file Name is in "localTime"
-        // which causes problems when importing the same file (for files which do not have time/date in the file name),
-        // while the computer has been set to a different time zone
-        if (context->athlete->rideCache->getRide(ridedatetime.toUTC())) { tableWidget->item(i,STATUS_COLUMN)->setText(tr("Error - Activity file with same start date/time exists")); continue; };
-
-        // SAVE STEP 4 - copy the source file to "/imports" directory (if it's not taken from there as source)
-        // add the date/time of the target to the source file name (for identification)
-
-        // copy the sourceFile to /imports ONLY if the source is NOT coming from /imports itself
-        QFileInfo sourceFileInfo (filenames[i]);
-        QString importsTarget;
-        if (sourceFileInfo.canonicalPath() != homeImports.canonicalPath()) {
-
-            // add the GC file base name to create unique file names during import
-            // there should not be 2 ride files with exactly the same time stamp (as this is also not foreseen for the .json)
-            importsTarget = sourceFileInfo.baseName() + "_" + targetnosuffix + "." + sourceFileInfo.suffix();
-            QString importsFulltarget = homeImports.canonicalPath() + "/" + importsTarget;
-            // copy the source file to /imports with adjusted name
-            QFile source(filenames[i]);
-            if (!source.copy(importsFulltarget)) {
-                tableWidget->item(i,STATUS_COLUMN)->setText(tr("Error - copy of %1 to import directory failed").arg(importsTarget));
+        // SAVE STEPS 4 and 5 - copy the source file to "/imports", convert to .JSON in /tmpActivities,
+        // add to the RideCache, move to /activities and link a planned activity (the same for the
+        // command line import)
+        RideImporter::Result saved = RideImporter::save(context, filenames[i], ridedatetime, nullptr, QStringList(),
+                                                        tableWidget->rowCount() < 20 ? true : false, // don't signal if mass importing
+                                                        [&](RideImporter::Step step, const RideImporter::Result &now) {
+            switch (step) {
+            case RideImporter::Step::CopyFailed:
+                tableWidget->item(i,STATUS_COLUMN)->setText(tr("Error - copy of %1 to import directory failed").arg(now.importsName));
+                break;
+            case RideImporter::Step::Processing:
+                tableWidget->item(i,STATUS_COLUMN)->setText(tr("Processing..."));
+                break;
+            case RideImporter::Step::Saving:
+                tableWidget->item(i,STATUS_COLUMN)->setText(tr("Saving file..."));
+                break;
             }
-        } else {
-            // file is re-imported from /imports - keep the name for .JSON Source File Tag
-            importsTarget = sourceFileInfo.fileName();
-        }
+        });
 
-
-        // SAVE STEP 5 - open the file with the respective format reader and export as .JSON
-        // to track if addRideCache() has caused an error due to bad data we work with a interim directory for the activities
-        // -- first   export to /tmpactivities
-        // -- second  create RideCache() entry
-        // -- third   move file from /tmpactivities to /activities
-
-        // serialize the file to .JSON
-        QStringList errors;
-        QFile thisfile(filenames[i]);
-        RideFile *ride(RideFileFactory::instance().openRideFile(context, thisfile, errors));
-
-        // did the input file parse ok ? (should be fine here - since it was alrady checked before - but just in case)
-        if (ride) {
-
-            // update ridedatetime and set the Source File name
-            ride->setStartTime(ridedatetime);
-            ride->setTag("Source Filename", importsTarget);
-            ride->setTag("Filename", activitiesTarget);
-            if (errors.count() > 0)
-                ride->setTag("Import errors", errors.join("\n"));
-
-            // process linked defaults
-            GlobalContext::context()->rideMetadata->setLinkedDefaults(ride);
-
-            // run the processor first... import
-            tableWidget->item(i,STATUS_COLUMN)->setText(tr("Processing..."));
-            DataProcessorFactory::instance().autoProcess(ride, "Auto", "Import");
-            ride->recalculateDerivedSeries();
-            // now metrics have been calculated
-            DataProcessorFactory::instance().autoProcess(ride, "Save", "ADD");
-
-
-            tableWidget->item(i,STATUS_COLUMN)->setText(tr("Saving file..."));
-
-            // serialize
-            JsonFileReader reader;
-            QFile target(tmpActivitiesFulltarget);
-            if (reader.writeRideFile(context, ride, target)) {
-
-                // now try adding the Ride to the RideCache - since this may fail due to various reason, the activity file
-                // is stored in tmpActivities during this process to understand which file has create the problem when restarting GC
-                // - only after the step was successful the file is moved
-                // to the "clean" activities folder
-                context->athlete->addRide(QFileInfo(tmpActivitiesFulltarget).fileName(),
-                                          tableWidget->rowCount() < 20 ? true : false, // don't signal if mass importing
-                                          true, true);                                       // file is available only in /tmpActivities, so use this one please
-                // rideCache is successfully updated, let's move the file to the real /activities
-                if (moveFile(tmpActivitiesFulltarget, finalActivitiesFulltarget)) {
-                    tableWidget->item(i,STATUS_COLUMN)->setText(tr("File Saved"));
-                    // and correct the path locally stored in Ride Item
-                    context->ride->setFileName(homeActivities.canonicalPath(), activitiesTarget);
-
-                    // try autolinking to planned activity
-                    RideItem *other = context->athlete->rideCache->findSuggestion(context->ride);
-                    RideCache::OperationPreCheck check = context->athlete->rideCache->checkLinkActivities(context->ride, other);
-                    if (check.canProceed && ! check.requiresUserDecision) {
-                        RideCache::OperationResult result = context->athlete->rideCache->linkActivities(context->ride, other);
-                        if (result.success) {
-                            QString error;
-                            context->athlete->rideCache->saveActivities(check.affectedItems, error);
-                        }
-                    }
-                }  else {
-                    tableWidget->item(i,STATUS_COLUMN)->setText(tr("Error - Moving %1 to activities folder").arg(activitiesTarget));
-                }
-
-            }  else {
-                tableWidget->item(i,STATUS_COLUMN)->setText(tr("Error - .JSON creation failed"));
-            }
-        } else {
+        switch (saved.outcome) {
+        case RideImporter::Outcome::Exists:
+            tableWidget->item(i,STATUS_COLUMN)->setText(tr("Error - Activity file exists"));
+            continue;
+        case RideImporter::Outcome::SameStart:
+            tableWidget->item(i,STATUS_COLUMN)->setText(tr("Error - Activity file with same start date/time exists"));
+            continue;
+        case RideImporter::Outcome::ReadFailed:
             tableWidget->item(i,STATUS_COLUMN)->setText(tr("Error - Import of activitiy file failed"));
+            break;
+        case RideImporter::Outcome::WriteFailed:
+            tableWidget->item(i,STATUS_COLUMN)->setText(tr("Error - .JSON creation failed"));
+            break;
+        case RideImporter::Outcome::MoveFailed:
+            tableWidget->item(i,STATUS_COLUMN)->setText(tr("Error - Moving %1 to activities folder").arg(saved.activity));
+            break;
+        case RideImporter::Outcome::Imported:
+            tableWidget->item(i,STATUS_COLUMN)->setText(tr("File Saved"));
+            break;
         }
-
-        // clear
-        delete ride;
 
         QApplication::processEvents();
         if (aborted) { done(0); return; }
@@ -1178,30 +1050,6 @@ RideImportWizard::abortClicked()
     } else {
         if (!isActiveWindow()) activateWindow();
     }
-
-}
-
-
-bool
-RideImportWizard::moveFile(const QString &source, const QString &target) {
-
-    QFile r(source);
-
-    // first try it with a rename
-    if (r.rename(target)) return true; // job is done
-
-    // now the harder variant (copy & delete)
-    if (r.copy(target))
-      {
-        // try to remove - but if this fails, no problem, file has been copied at least
-        r.remove();
-        // even if remove failed, the copy was successful - so GC is fine
-        return true;
-      }
-
-    // more required ?
-
-    return false;
 
 }
 
