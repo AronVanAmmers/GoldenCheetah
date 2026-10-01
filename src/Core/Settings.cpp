@@ -881,3 +881,22 @@ breakout:
 
 // initialise with no athlete
 GSettings *appsettings = GetApplicationSettings();
+
+QStringList
+favouriteMetrics()
+{
+    QString s;
+    if (appsettings->contains(GC_SETTINGS_FAVOURITE_METRICS))
+        s = appsettings->value(nullptr, GC_SETTINGS_FAVOURITE_METRICS).toString();
+    else
+        s = GC_SETTINGS_FAVOURITE_METRICS_DEFAULT;
+    QStringList symbols;
+    for (const QString &symbol : s.split(",", Qt::SkipEmptyParts)) symbols << symbol.trimmed();
+    return symbols;
+}
+
+void
+setFavouriteMetrics(const QStringList &symbols)
+{
+    appsettings->setValue(GC_SETTINGS_FAVOURITE_METRICS, symbols.join(","));
+}

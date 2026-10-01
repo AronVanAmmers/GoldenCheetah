@@ -566,6 +566,11 @@ private:
 
 
 extern GSettings *appsettings;
+
+// the favourite metrics (the intervals sidebar's), in their order: the
+// default list until they are set, none when they are set to none
+QStringList favouriteMetrics();
+void setFavouriteMetrics(const QStringList &symbols);
 extern int OperatingSystem;
 
 #define WINDOWS 1
