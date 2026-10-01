@@ -107,6 +107,21 @@ private slots:
         r.text = "custom\n";
         QCOMPARE(ResultFormat::text(r), QString("custom\n"));
     }
+
+    void statusLines() {
+        QJsonObject done{ { "status", "imported" }, { "source", "a.fit" } };
+        QCOMPARE(ResultFormat::statusLine(done, "source", 8, "  -> x"), QString("imported  a.fit  -> x\n"));
+        QJsonObject failed{ { "status", "failed" }, { "name", "F" }, { "message", "why" } };
+        QCOMPARE(ResultFormat::statusLine(failed, "name", 9), QString("failed     F  why\n"));
+    }
+
+    void batchStatus() {
+        QCOMPARE(CommandResult::batch(QJsonObject(), 0, 3, "e").status, Status::Ok);
+        CommandResult some = CommandResult::batch(QJsonObject(), 1, 3, "1 failed");
+        QCOMPARE(some.status, Status::Partial);
+        QCOMPARE(some.error, QString("1 failed"));
+        QCOMPARE(CommandResult::batch(QJsonObject(), 3, 3, "e").status, Status::Failed);
+    }
 };
 
 QTEST_MAIN(TestResultFormat)

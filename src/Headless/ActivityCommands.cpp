@@ -385,12 +385,8 @@ setFields(CommandEnvironment &env, const CommandRequest &request)
     data.insert("activities", report);
     data.insert("updated", updated);
     data.insert("failed", failed);
-    CommandResult result = CommandResult::success(data);
-    if (failed) {
-        result.status = failed < items.count() ? Status::Partial : Status::Failed;
-        result.error = QString("%1 activit%2 not updated").arg(failed).arg(failed == 1 ? "y was" : "ies were");
-    }
-    return result;
+    return CommandResult::batch(data, failed, items.count(),
+                                QString("%1 activit%2 not updated").arg(failed).arg(failed == 1 ? "y was" : "ies were"));
 }
 
 static CommandResult
@@ -423,13 +419,9 @@ deleteActivities(CommandEnvironment &env, const CommandRequest &request)
     data.insert("deleted", deleted);
     data.insert("failed", failed);
     data.insert("backup", "activities are moved to the athlete's bak folder");
-    CommandResult result = CommandResult::success(data);
-    if (!failed.isEmpty()) {
-        result.status = deleted.isEmpty() ? Status::Failed : Status::Partial;
-        result.error = QString("%1 activit%2 could not be moved to the bak folder")
-                       .arg(failed.count()).arg(failed.count() == 1 ? "y" : "ies");
-    }
-    return result;
+    return CommandResult::batch(data, failed.count(), files.count(),
+                                QString("%1 activit%2 could not be moved to the bak folder")
+                                .arg(failed.count()).arg(failed.count() == 1 ? "y" : "ies"));
 }
 
 static CommandResult

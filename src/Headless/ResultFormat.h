@@ -59,6 +59,11 @@ class ResultFormat
 
         // a value in full precision for CSV
         static QString csvValue(const QJsonValue &v);
+
+        // a batch command's line for one item: its status (padded to width),
+        // its key field, anything after that, and the message if it has one
+        static QString statusLine(const QJsonObject &item, const QString &keyField, int width,
+                                  const QString &afterKey = QString());
 };
 
 } // namespace Headless

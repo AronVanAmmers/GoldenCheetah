@@ -98,6 +98,17 @@ CommandResult::failure(Status status, const QString &error)
     return r;
 }
 
+CommandResult
+CommandResult::batch(const QJsonObject &data, int failed, int total, const QString &error)
+{
+    CommandResult r = success(data);
+    if (failed) {
+        r.status = failed < total ? Status::Partial : Status::Failed;
+        r.error = error;
+    }
+    return r;
+}
+
 //
 // Registry
 //
