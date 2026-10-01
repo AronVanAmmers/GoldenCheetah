@@ -264,6 +264,30 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
         displayNames.insert(out.fileName(), name);
         return true;
     };
+    // httpserver's own temporary file, renamed into our folder; false with
+    // no error when it can't be (another file system), to copy it instead
+    auto moveUpload = [&](QTemporaryFile &file, const QString &name) -> bool {
+        if (!uploadDir) uploadDir.reset(new QTemporaryDir());
+        if (!uploadDir->isValid()) {
+            uploadError = QString("can't store the upload %1: %2").arg(name, uploadDir->errorString());
+            return false;
+        }
+        QString folder = uploadDir->filePath(QString::number(uploadedPaths.count() + 1));
+        if (!QDir().mkpath(folder)) {
+            uploadError = QString("can't store the upload %1: can't create %2").arg(name, folder);
+            return false;
+        }
+        QString target = QDir(folder).filePath(name);
+        if (!file.rename(target)) {
+            if (!file.isOpen()) file.open();
+            return false;
+        }
+        // ours now, the folder goes when the command is done
+        file.setAutoRemove(false);
+        uploadedPaths.append(target);
+        displayNames.insert(target, name);
+        return true;
+    };
     QMultiMap<QString, QString> query;
     QMultiMap<QByteArray, QByteArray> params = request.getParameterMap();
     for (auto it = params.constBegin(); it != params.constEnd(); ++it) {
@@ -272,7 +296,14 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
             QString name = QFileInfo(QString::fromUtf8(it.value())).fileName();
             if (name.isEmpty()) name = QString("upload-%1").arg(uploadedPaths.count() + 1);
             // keep the original name: the import takes the start time from
-            // file names like 2024_01_31_10_00_00.fit, as the GUI does
+            // file names like 2024_01_31_10_00_00.fit, as the GUI does.
+            // Moved rather than copied where it can be.
+            if (moveUpload(*file, name)) continue;
+            if (!uploadError.isEmpty()) {
+                sendError(response, 500, uploadError);
+                log(method, path, 500, timer.elapsed());
+                return;
+            }
             file->seek(0);
             if (!saveUpload(*file, name)) {
                 sendError(response, 500, uploadError);
@@ -298,15 +329,18 @@ RestHandler::service(HttpRequest &request, HttpResponse &response)
         return;
     }
 
-    // curl -d and --data-binary send x-www-form-urlencoded by default, and the
-    // http library then reads the body as form parameters too: undo that when
-    // the body is really JSON or a file
-    if (formLike && !body.isEmpty() && (looksJson || rawUpload)) {
+    // curl --data-binary sends x-www-form-urlencoded by default, and the
+    // http library then reads the body as form parameters too: undo that
+    // when the body is really a file. Each pair once, so the same pair in
+    // the URL stays.
+    if (formLike && rawUpload) {
         for (const QByteArray &part : body.split('&')) {
+            if (part.isEmpty()) continue;
             int eq = part.indexOf('=');
             QString name = QString::fromUtf8(HttpRequest::urlDecode(eq >= 0 ? part.left(eq).trimmed() : part));
             QString value = QString::fromUtf8(HttpRequest::urlDecode(eq >= 0 ? part.mid(eq + 1).trimmed() : QByteArray()));
-            query.remove(name, value);
+            auto it = query.find(name, value);
+            if (it != query.end()) query.erase(it);
         }
     }
 
@@ -427,7 +461,8 @@ RestServer::run(const Options &options)
     settings->setValue("host", options.host);
     settings->setValue("port", options.port);
     settings->setValue("minThreads", 1);
-    settings->setValue("maxThreads", 8);
+    // requests run one at a time, more threads only hold more bodies in memory
+    settings->setValue("maxThreads", 4);
     settings->setValue("cleanupInterval", 60000);
     settings->setValue("readTimeout", 120000);
     settings->setValue("maxRequestSize", qint64(options.maxUploadBytes));

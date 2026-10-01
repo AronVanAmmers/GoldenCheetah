@@ -271,7 +271,7 @@ This serves every command as JSON under `http://127.0.0.1:12022/v1` until interr
 Notes:
 
 - Query parameters and JSON body fields have the same names as the command line options. Send JSON bodies with `Content-Type: application/json`.
-- Options that read a file where the command runs (`--file` of `processor install`, `metric user` and `layout tile set`) are refused with 400: the server's files aren't the client's to read. Send the content instead (`source`, `program`). Activity files for `import` are uploaded.
+- Options that read a file where the command runs (`--file` of `processor install`, `metric user` and `layout tile set`) are refused with 400: the server's files aren't the client's to read. Send the content instead (`source`, `program`). Activity files for `import` are uploaded, as multipart form data or as the raw file. Send a raw file with `Content-Type: application/octet-stream` (curl's `--data-binary` alone sends it as a form, which the server has to take apart again), e.g. `curl --data-binary @ride.fit -H "Content-Type: application/octet-stream" "http://127.0.0.1:12022/v1/athletes/Joe/imports?filename=ride.fit"`.
 - Charts and exports come back as files. Add `?envelope=1` to get the JSON envelope instead.
 - Add `?format=csv` to get a result as CSV (`text/csv`), laid out as `--format csv` does. Errors are still JSON.
 - HTTP status codes follow the exit status: 400 bad arguments, 404 not found, 409 athlete in use, 422 failed.
