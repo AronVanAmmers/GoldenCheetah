@@ -2851,6 +2851,15 @@ def png_colours(data, limit=64):
     return len(seen)
 
 
+def keep_image(name, data):
+    """a copy of a drawn chart for CI to keep (GC_TEST_ARTIFACTS), to see what another platform drew"""
+    folder = os.environ.get("GC_TEST_ARTIFACTS")
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, re.sub(r"[^A-Za-z0-9_.-]+", "_", name)), "wb") as f:
+            f.write(data)
+
+
 class TestTrendsLibraryCharts(Headless):
     """chart library render and data: the Trends sidebar charts drawn by the GUI's own plot"""
 
@@ -2873,16 +2882,24 @@ class TestTrendsLibraryCharts(Headless):
     def test_every_built_in_chart_draws_in_every_format(self):
         names = self.charts()
         self.assertGreater(len(names), 30)
-        server, port = start_server(self.env, self.home, os.path.join(self.tmp, "render.log"))
+        log = os.path.join(self.tmp, "render.log")
+        server, port = start_server(self.env, self.home, log)
         try:
             for name in names:
                 path = "/athletes/%s/charts/%s/image" % (self.athlete, urllib.parse.quote(name, safe=""))
                 for fmt, magic in (("png", b"\x89PNG"), ("svg", b"<?xml"), ("pdf", b"%PDF")):
-                    status, body = call_server(port, "GET", path + "?as=" + fmt + "&width=800&height=400")
+                    try:
+                        status, body = call_server(port, "GET", path + "?as=" + fmt + "&width=800&height=400")
+                    except Exception as e:
+                        with open(log, errors="replace") as f:
+                            tail = f.read()[-3000:]
+                        self.fail("%s %s: %r, server %s, its log ends:\n%s"
+                                  % (name, fmt, e, "running" if server.poll() is None else "exited %s" % server.returncode, tail))
                     self.assertEqual(status, 200, (name, fmt, body[:300]))
                     self.assertTrue(body.startswith(magic), (name, fmt, body[:20]))
                     self.assertGreater(len(body), 2000, (name, fmt))
                     if fmt == "png":
+                        keep_image(name + ".png", body)
                         self.assertGreater(png_colours(body), 3, name)
                     if fmt == "svg":
                         self.assertIn(b"<svg", body[:2000])
@@ -3052,7 +3069,9 @@ class TestTrendsLibraryCharts(Headless):
         out = os.path.join(self.tmp, "banister.png")
         self.gcj("-o", out, "chart", "library", "render", "Banister", "--from", "2020-01-01", "--to", "2020-03-31")
         with open(out, "rb") as f:
-            self.assertGreater(png_colours(f.read()), 3)
+            image = f.read()
+        keep_image("banister.png", image)
+        self.assertGreater(png_colours(image), 3)
         rows = self.gcj("chart", "library", "data", "Banister", "--from", "2020-01-01", "--to", "2020-03-31",
                         "--by", "week")["data"]["rows"]
         self.assertGreater(len(rows), 0)
