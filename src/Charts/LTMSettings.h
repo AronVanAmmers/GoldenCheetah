@@ -259,6 +259,11 @@ class LTMSettings {
         LTMSettings() {
             bests = NULL;
             ltmTool = NULL;
+            // the chart window sets these from its controls; a chart read
+            // from charts.xml doesn't store events, nor stack in old versions
+            groupBy = 0;
+            shadeZones = legend = events = showData = stack = false;
+            stackWidth = 0;
         }
 
         bool writeChartXML(QDir, QList<LTMSettings>, QString *error = nullptr); // false: not saved
