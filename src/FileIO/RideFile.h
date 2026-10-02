@@ -216,6 +216,7 @@ class RideFile : public QObject // QObject to emit signals
         friend struct PwxFileReader;
         friend struct JsonFileReader;
         friend class ManualActivityWizard;
+        friend struct ManualActivity; // laps from the manual entry wizard
         friend class PolarFileReader;
         friend class Strava;
         friend class ErgFile; // access to intervals
