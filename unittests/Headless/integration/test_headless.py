@@ -3334,6 +3334,20 @@ class TestPlannedActivities(Headless, PlanHelpers):
         self.gcj("plan", "repeat", "--from", day(70), "--to", day(76), "--start", day(76), expect=2)
         self.gcj("plan", "repeat", "--from", day(200), "--to", day(201), "--start", day(210), expect=5)
 
+    def test_import_refuses_a_linked_conflict(self):
+        # the bundle's dates are compared once shifted to the target period
+        self.gcj("activity", "add", "--date", day(-21), "--time", "06:00", "--sport", "Bike")
+        self.plan("add", "--date", day(400), "--time", "06:00", "--sport", "Bike", "--title", "Bundled")
+        bundle = os.path.join(self.tmp, "linked.gcplan")
+        self.gcj("plan", "export", "--from", day(400), "--to", day(400), "--name", "Linked", "-o", bundle)
+        self.plan("add", "--date", day(410), "--time", "06:00", "--sport", "Bike", "--title", "Linked")
+        self.plan("link", ride_id(day(410), "06:00:00"), ride_id(day(-21), "06:00:00"))
+        self.plan("add", "--date", day(410), "--time", "09:00", "--sport", "Bike", "--title", "Unlinked")
+        r = self.gcj("plan", "import", bundle, "--start", day(410), "--no-gap-days", expect=5)
+        self.assertIn("linked planned activity", r["error"])
+        self.assertIn(ride_id(day(410), "09:00:00"), self.planned_files())
+        self.assertEqual(self.tags(ride_id(day(410), "06:00:00"), planned=True)["Route"], "Linked")
+
     def test_export_import(self):
         self.plan("add", "--date", day(100), "--sport", "Bike", "--title", "E0", "--duration", "3600", "--avg-power", "200")
         self.plan("add", "--date", day(102), "--sport", "Run", "--title", "E1", "--duration", "1800")

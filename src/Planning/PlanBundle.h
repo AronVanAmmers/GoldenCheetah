@@ -134,6 +134,8 @@ public:
     bool isIncludeGapDays() const;
     void setIncludeGapDays(bool includeGapDays);
     const QSet<QDateTime> &getExistingLinked() const;
+    // when an activity of the bundle starts once imported
+    QDateTime getTargetDateTime(const RideFileSelection &entry) const;
 
     PlanResult getLastValidationResult() const;
     PlanResult getLastImportResult() const;
