@@ -159,14 +159,15 @@ Seasons::deleteSeason(int index)
     writeSeasons();
 }
 
-void
-Seasons::writeSeasons()
+bool
+Seasons::writeSeasons(QString *error)
 {
     // update seasons.xml
     QString file = QString(home.canonicalPath() + "/seasons.xml");
-    SeasonParser::serialize(file, seasons);
+    bool saved = SeasonParser::serialize(file, seasons, error);
 
     seasonsChanged(); // signal!
+    return saved;
 }
 
 
@@ -222,17 +223,11 @@ SeasonParser::readSeasons
 
 
 bool
-SeasonParser::serialize(QString filename, QList<Season> Seasons)
+SeasonParser::serialize(QString filename, QList<Season> Seasons, QString *error)
 {
-    // open file - truncate contents
-    QFile file(filename);
-    if (!file.open(QFile::WriteOnly)) {
-        GcNotify::message(QMessageBox::Critical, QObject::tr("Problem Saving Seasons"),
-                          QObject::tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
-        return false;
-    };
-    file.resize(0);
-    QTextStream out(&file);
+    // written in one go (Utils::saveFile), so a failed write leaves the old file
+    QString text;
+    QTextStream out(&text);
 
     // begin document
     out << "<seasons>\n";
@@ -320,10 +315,13 @@ SeasonParser::serialize(QString filename, QList<Season> Seasons)
 
     // end document
     out << "</seasons>\n";
+    out.flush();
 
-    // close file
-    file.close();
-
+    if (!Utils::saveFile(filename, text.toUtf8(), error)) {
+        GcNotify::message(QMessageBox::Critical, QObject::tr("Problem Saving Seasons"),
+                          QObject::tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
+        return false;
+    }
     return true; // success
 }
 

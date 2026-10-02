@@ -38,7 +38,7 @@ class Seasons : public QObject
         int newSeason(QString name, QDate start, QDate end, int type);
         void updateSeason(int index, QString name, QDate start, QDate end, int type);
         void deleteSeason(int);
-        void writeSeasons();
+        bool writeSeasons(QString *error = nullptr); // false: not saved
         QList<Season> seasons;
 
     signals:
@@ -53,7 +53,7 @@ class SeasonParser
 {
 public:
     static QList<Season> readSeasons(QFile * const file, bool *idEnriched = nullptr);
-    static bool serialize(QString filename, QList<Season> seasons);
+    static bool serialize(QString filename, QList<Season> seasons, QString *error = nullptr); // false: not saved
 
 private:
     static Season parseSeason(QXmlStreamReader &reader, bool *idEnriched = nullptr);
