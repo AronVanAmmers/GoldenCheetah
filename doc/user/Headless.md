@@ -330,6 +330,69 @@ gc-cli -a Joe chart pmc --series expected --sport Bike -o expected.png
 gc-cli -a Joe pmc --filter 'isRun' --metric govss --season "This Year"
 ```
 
+### Manual entry
+
+`activity add` enters an activity by hand, as Activity > Manual entry does, and writes the same file: the fields go into tags, the numbers into metric overrides, as if each box had been ticked and typed in.
+
+```sh
+gc-cli -a Joe activity add --date 2026-10-01 --time 07:30 --sport Run --duration 0:45:00 --distance 9 \
+    --avg-hr 142 --rpe 4 --notes "easy, windy"
+```
+
+- `--date` is required; it can't be in the future (that's a plan) or before 2000, as in the wizard. `--time` is `hh:mm`; without it the activity starts four hours ago, as the wizard's default.
+- `--sport` is required. `--subsport`, `--workout-code`, `--notes` and `--title` (the Route field) are optional, as is `--rpe` (0 to 10).
+- `--duration` is `h:mm:ss` or seconds. `--distance` is in km for every sport, swims too: 1500 m is `--distance 1.5`. The wizard asks for swims in m or yd; the file holds km either way.
+- `--avg-hr`, `--avg-cadence`, `--avg-power`, `--work` (kJ), `--bikestress`, `--bikescore`, `--swimscore`, `--triscore`, `--elevation-gain` (m), `--isopower` and `--xpower` take whole numbers, within what the wizard's fields take (for example 0 to 250 bpm).
+- Work and stress are estimated as the wizard's Estimate by does: from the athlete's activities of the same sport in the last `--estimate-days` days (all of them when there are none), per hour (`--estimate time`) or per km (`--estimate distance`). The defaults are what the wizard was last used with (Preferences keep them); without that, nothing is estimated. Giving `--work` or a stress value enters them by hand, as the wizard's Manually, and can't be combined with `--estimate time` or `distance`. The command line reads these settings but doesn't change them.
+- The wizard's laps editor for runs and swims isn't offered: enter the totals.
+- A start another activity already has is refused. The wizard would overwrite that activity after a warning.
+
+The result is the new activity, as `activity list` shows it, with its fields and overrides.
+
+### Planned activities
+
+Planned activities are activity files in the athlete's `planned` folder. They have no samples, only the expected values as overrides. Activity commands work on them with `--planned`: `activity show --planned`, `activity export --planned`, `activity set --planned`, `activity delete --planned`, and the other commands that select activities (`activity list --planned`, `metric aggregate --planned` ...). With `--planned`, a date, a start time, `first` and `last` mean planned activities. A file name finds either kind; when a planned and a completed activity have the same file name, `--planned` chooses the planned one. `activity delete` refuses such a pair, because GoldenCheetah deletes by file name; move the planned one first.
+
+`plan add` plans an activity, as Activity > Plan activity does. It takes the same options as `activity add`, except `--rpe`, plus `--objective` and `--workout`. The date is today or later and the time defaults to 16:00, as in the wizard. The file records the day it was planned for (Original Date), which moving it keeps.
+
+```sh
+gc-cli -a Joe plan add --date 2026-10-12 --sport Bike --duration 1:30:00 --title "Tempo" --bikestress 85
+gc-cli -a Joe plan add --date 2026-10-14 --workout FTPCheckup
+```
+
+`--workout` is a workout of the workout library (the Train view's list): its file, its file name or its title. The activity is then a Bike activity named after the workout, its description is added to the notes, and an erg workout sets the duration, average power, IsoPower, xPower, BikeStress and BikeScore, as the wizard does. What the workout decides can't be given as well (`--duration` with an erg workout, `--distance` with a slope one, `--title`, `--sport` other than Bike).
+
+`plan list` is the agenda: the planned activities from today on, or `--from`/`--to`, or `--all`. Each has its day and time, sport, title and workout code, the expected duration, distance and BikeStress, the completed activity it is linked to (`linked`), and the day it was first planned for when it was moved (`original_date`). `--metric` adds metrics, as in `activity list`. Text, JSON and CSV as the other lists.
+
+The calendar's actions:
+
+| In the calendar | On the command line |
+|---|---|
+| drag a planned activity to another day | `plan move ID --to DATE [--time hh:mm]` |
+| copy, then paste on a day | `plan copy ID --to DATE [--time hh:mm]` |
+| link to an activity | `plan link PLANNED ACTUAL` |
+| unlink | `plan unlink ID` (either side) |
+| insert rest day / delete rest day | `plan shift --from DATE --days N` (N > 0 inserts N days, N < 0 deletes them) |
+| Repeat plan... | `plan repeat --from A --to B --start C` |
+| Export plan... | `plan export --from A --to B --name NAME -o plan.gcplan` |
+| Import plan... | `plan import plan.gcplan --start DATE` |
+
+They make the same checks and the same changes as the calendar:
+
+- A move or copy to a start that is taken is refused. A move keeps Original Date. A copy is a new plan, so its Original Date is its own day, and it isn't linked.
+- Linking is refused when either activity is already linked, or both are planned. Unlinking clears the link on both sides. Importing an activity links it to an unlinked planned activity of the same sport on the same day, as the GUI import does.
+- `plan shift` moves every planned activity from `--from` on. As deleting a rest day, it never moves anything to before `--from`: with `--days -5` and the first planned activity two days after `--from`, everything moves back two days. Linked activities keep their link.
+- `plan repeat` copies the planned activities of `--from` .. `--to` to the same days counted from `--start`, as the Repeat Plan wizard with its defaults: the activities as originally planned (`--current` takes them on their current day), keeping the days before the first and after the last (`--no-gaps` drops them). Unlinked planned activities already in the new period are deleted first; a copy that would start when a linked planned activity does is left out, and so is the second of two activities that would start at the same time. `--start` must come after `--to`.
+- `plan export` writes a plan bundle (`.gcplan`) of the period's planned activities and the workouts they use, as the Export Plan wizard does; power targets are stored relative to the athlete's CP, as there. `--name` is required, `--author` is the athlete's name unless given, and `--copyright` and `--description` (Markdown) are optional. In the description `$NAME`, `$AUTHOR`, `$SPORT` and `$COPYRIGHT` are filled in. Without `-o` the file is named after the plan; over REST the bundle is the response.
+- `plan import` adds a bundle's activities from `--start` on, scaled to the athlete's CP, and adds their workouts to the workout library. The bundle's leading days are kept unless `--no-gap-days`. As in the wizard, unlinked planned activities already in the plan's period are deleted.
+
+The calendar's weekly summary is `calendar summary`: per week from `--from` (or per `--days N`), the number of activities, distance, BikeStress and duration, or the `--metric` given. Planned activities count as the calendar's Include Planned setting says: `--planned always` (the default), `upcoming-or-missed` (those not linked), `upcoming` (not linked, from today) or `never`. Start `--from` on the first day of your calendar week to get the calendar's weeks.
+
+```sh
+gc-cli -a Joe calendar summary --from 2026-09-28 --to 2026-11-01
+gc-cli -a Joe --format csv calendar summary --from 2026-09-28 --to 2026-11-01 --planned never
+```
+
 ## Example: estimating power
 
 This is the job the command line was built for.
