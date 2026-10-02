@@ -2121,7 +2121,8 @@ RideItem*
 RideCache::copyPlannedRideFile
 (RideItem *sourceItem, const QDate &newDate, const QTime &newTime, QString &error)
 {
-    QDateTime newDateTime(newDate, newTime);
+    // no time given: the source's, as checkCopyPlannedActivities expects
+    QDateTime newDateTime(newDate, newTime.isValid() ? newTime : sourceItem->dateTime.time());
     QFileInfo oldInfo(sourceItem->fileName);
     QString newFileName = newDateTime.toString("yyyy_MM_dd_HH_mm_ss") + "." + oldInfo.suffix();
     QString newPath = plannedDirectory.canonicalPath() + "/" + newFileName;
@@ -2141,7 +2142,7 @@ RideCache::copyPlannedRideFile
         return nullptr;
     }
 
-    newRide->setStartTime(QDateTime(newDate, sourceItem->dateTime.time()));
+    newRide->setStartTime(newDateTime);
     newRide->setId(QUuid::createUuid().toString());
     newRide->setTag("Year", newDateTime.toString("yyyy"));
     newRide->setTag("Month", newDateTime.toString("MMMM"));
