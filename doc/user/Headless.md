@@ -68,14 +68,14 @@ gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > inte
 
 | Area | Commands |
 |---|---|
-| Athletes | `athlete list`, `athlete create`, `athlete show`, `athlete refresh [--rebuild]` |
+| Athletes | `athlete list`, `athlete create`, `athlete show`, `athlete set`, `athlete refresh [--rebuild]` |
 | Import | `import FILE-OR-FOLDER... [--recursive] [--dry-run]`, `formats` |
 | Activities | `activity list`, `activity show`, `activity overview [--tile NAME]`, `layout list`, `layout tile list|show|set`, `activity export --as tcx`, `activity set --set 'Field=value'`, `activity delete`, `activity eval --expression '...'`, `activity column list|add|remove` |
 | Intervals | `interval list ACTIVITY [--type user,effort] [--metric ...] [--display]`, `interval show ACTIVITY NUMBER-OR-NAME` |
 | Fields | `field list`, `field add NAME... --type double --tab TAB`, `field remove` |
 | Processors | `processor list`, `processor show`, `processor install NAME --file script.py`, `processor configure`, `processor remove`, `processor run NAME ...` |
 | Metrics | `metric list`, `metric user list|show|add|edit|remove`, `metric favourite list|add|remove|set`, `metric aggregate`, `pmc`, `meanmax`, `cp`, `cp estimates` |
-| Zones and measures | `zones show`, `zones set` (`--type power\|hr\|pace`), `measures list`, `measures add` |
+| Zones and measures | `zones show`, `zones set`, `zones remove` (`--type power\|hr\|pace`), `zones options`, `zones scheme show\|set`, `measures list`, `measures add`, `measures edit`, `measures remove` |
 | Charts | `chart activity`, `chart meanmax`, `chart pmc`, `chart zones [--type power\|hr\|pace\|fatigue]`, `chart trend` (`--as png\|svg\|pdf`, `--width`, `--height`, `--dark`), `chart library list\|show\|add\|edit\|remove`, `chart library curve add\|edit\|remove` |
 | Server | `serve` (see [REST API](#rest-api)) |
 
@@ -132,6 +132,27 @@ For raw numbers:
 
 Wherever a command takes `--metric`, a metric can be given by its symbol (`average_power`, `skiba_wprime_exp`) or by the name used in formulas and in the GUI's table definitions (`Average_Power`, `W'_Work`). `metric list` shows both, including this athlete's user metrics, and `--search` matches either. `--display` on `interval list` and `interval show` returns values as the GUI formats them rather than as numbers.
 
+### Athlete settings
+
+`athlete show` prints the athlete's About and Model settings: `nickname`, `dob`, `sex`, `height` (cm), `weight` (the default weight, kg), `crank_length` and `wheel_size` (mm), `wbal_tau` (s), `sts_days` and `lts_days` (the PMC's short and long term stress averages) and `sb_today` (the PMC shows today's stress balance). `weight_today` is the weight GoldenCheetah uses today, and `weight_source` says where it comes from: a Body `measure`, else the `setting`, else the `default` of 75 kg.
+
+`athlete set` changes the settings you pass and leaves the others, as the About and Model tabs of the athlete's settings do:
+
+```sh
+gc-cli -a Joe athlete set --weight 71.5 --height 178 --crank-length 172.5 --wheel-size 2096
+gc-cli -a Joe athlete set --nickname JJ --dob 1985-04-12 --sex male
+gc-cli -a Joe athlete set --sts-days 7 --lts-days 42 --sb-today true --wbal-tau 300
+```
+
+The values must be ones the GUI's fields allow: weight and height 0 to 999.9 (kept to one decimal, as the GUI), crank length one of the lengths the About tab lists (130 to 220 mm), wheel size 1 to 9999 mm, W'bal tau 30 to 1200 s, STS 1 to 21 days and LTS 7 to 56 days. A wrong value is refused and nothing is changed.
+
+What a change recomputes is what the GUI recomputes:
+
+- The default weight feeds every metric per kg, for activities without a Body measure or a weight of their own. Those activities are recomputed and `refreshed` says how many.
+- Height, wheel size and crank length start the refresh the GUI starts, which recomputes only activities that are out of date for another reason. As in the GUI, a new height doesn't by itself recompute GOVSS, which uses it; `athlete refresh --rebuild` does.
+- STS and LTS days change the PMC, which is worked out when it is asked for (`pmc`, `chart pmc`).
+- W'bal tau is the tau Train's real time W'bal uses. An activity's W' metrics work out their own tau from the ride (or its `Tau` field), so nothing is recomputed.
+
 ### User metrics, favourites and zones
 
 A user metric is a formula GoldenCheetah evaluates for the whole activity and again for every interval. `metric user add` writes it to the shared `usermetrics.xml` in the athletes folder, the same file as Preferences → Metrics → Custom, and rebuilds the metric cache. The formula is checked first. A program that does not parse, or has no `value` block, is refused and the file is left unchanged.
@@ -169,6 +190,37 @@ Heart rate, power and pace zones are date ranges. `zones show` prints them. `zon
 ```sh
 gc-cli -a Joe zones set --type hr --sport Bike --from 2026-01-01 --resthr 40
 gc-cli -a Joe zones set --type pace --sport Run --from 2026-01-01 --cv 12.5
+```
+
+`zones remove --from DATE` deletes the range that starts that day, as the Delete button under a zones page's ranges does: the range before it then covers its days. The only range of a sport can't be removed, change it with `zones set` instead. A sport without zones of its own (it uses Bike's, and the GUI's page shows no ranges for it) has nothing to remove. Every change to zones is written, read back and the activities it affects are recomputed, and the result says how many (`refreshed`).
+
+```sh
+gc-cli -a Joe zones remove --type hr --from 2026-01-01
+```
+
+The power zones page has two choices per sport, which `zones show` prints as `cp_model` and `coggan_metrics`, and `zones options` sets:
+
+- `--cp-model manual|cp2|cp3|ext`: Manual, or Semi-Automatic from the CP2, CP3 or Extended model, in which case the GUI offers new ranges from the estimates. The CLI only stores the choice.
+- `--coggan-metrics cp|ftp`: "Use CP for all metrics" or "Use FTP for Coggan metrics". It decides whether NP based metrics (IF, TSS ...) use the range's CP or its FTP, and the activities are recomputed.
+
+```sh
+gc-cli -a Joe zones options --sport Bike --coggan-metrics ftp
+```
+
+The Default tab of each zones page is the zone scheme: the zones' names, descriptions and lower bounds in % of CP, LT or CV, and for heart rate the Trimp k of each zone. `zones scheme show` prints it and `zones scheme set` replaces it, one `--zone NAME,DESCRIPTION,PERCENT` (`,TRIMPK` added for heart rate) per zone, sorted by the lower bound as the GUI sorts them. Every range whose zones come from the default follows the new scheme, existing ranges included, and so does every range added later; a range given zones of its own in the GUI keeps them. As with removing, a sport that uses Bike's zones is refused until it has a range of its own.
+
+```sh
+gc-cli -a Joe zones scheme set --type power --zone "Z1,Recovery,0" --zone "Z2,Endurance,56" \
+    --zone "Z3,Tempo,76" --zone "Z4,Threshold,91" --zone "Z5,VO2Max,106"
+gc-cli -a Joe zones scheme set --type hr --zone "Z1,Easy,0,1" --zone "Z2,Hard,85,2.5"
+```
+
+Body weight and other measures are dated readings. `measures add` records one, `measures edit` changes the values you pass of an existing one and keeps the others, and `measures remove` deletes one. `--when` is the time `measures list` prints, or just the date when there is only one reading on it. An edited reading becomes a manual entry (`source` in `measures list`), as in the GUI's measures table; adding a reading at the time of an existing one replaces its values and keeps its source, as the GUI's Add does. Values go from 0 to 9999.99, in metric units. Activities whose weight comes from the changed readings are recomputed.
+
+```sh
+gc-cli -a Joe measures add --when 2026-03-01T07:00:00 --set WEIGHTKG=71.5 --set FATPERCENT=14
+gc-cli -a Joe measures edit --when 2026-03-01 --set WEIGHTKG=71.2 --comment "after breakfast"
+gc-cli -a Joe measures remove --when 2026-03-01
 ```
 
 ### Trends charts
