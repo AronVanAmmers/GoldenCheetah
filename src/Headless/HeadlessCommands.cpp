@@ -48,6 +48,7 @@ buildRegistry()
     registerChartCommands(registry);
     registerChartLibraryCommands(registry);
     registerSeasonCommands(registry);
+    registerPlanCommands(registry);
     return registry;
 }
 
