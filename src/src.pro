@@ -463,6 +463,8 @@ SOURCES +=  Headless/AthleteLock.cpp Headless/CommandRegistry.cpp Headless/Headl
             Headless/IntervalCommands.cpp Headless/ZoneData.cpp Headless/OverviewCommands.cpp \
             Headless/UserMetricCommands.cpp Headless/ProgramArgs.cpp \
             Headless/MetricNames.cpp Headless/ActivityJson.cpp Headless/IntervalData.cpp Headless/NavigatorCommands.cpp
+HEADERS +=  Headless/SeasonDefinition.h Headless/SeasonRange.h
+SOURCES +=  Headless/SeasonDefinition.cpp Headless/SeasonRange.cpp Headless/SeasonCommands.cpp
 
 # the entry points: command line and REST
 HEADERS +=  Headless/CliParser.h Headless/CliMain.h Headless/RestRouter.h Headless/RestServer.h

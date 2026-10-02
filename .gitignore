@@ -92,6 +92,7 @@ unittests/Headless/cliParser/testCliParser
 unittests/Headless/commandRegistry/testCommandRegistry
 unittests/Headless/restRouter/testRestRouter
 unittests/Headless/resultFormat/testResultFormat
+unittests/Headless/seasonDefinition/testSeasonDefinition
 
 # Python bytecode from the headless integration tests
 __pycache__/
