@@ -18,7 +18,8 @@ equals(GC_UNITTESTS, active) {
 			   Headless/restRouter \
 			   Headless/resultFormat \
 			   Headless/athleteLock \
-			   Headless/chartRenderer
+			   Headless/chartRenderer \
+			   Headless/seasonDefinition
 	CONFIG += ordered
 } else {
 	message("Unittests are disabled; to enable copy unittests/unittests.pri.in to unittests/unittests.pri")

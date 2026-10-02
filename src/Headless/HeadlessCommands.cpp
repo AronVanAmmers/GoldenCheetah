@@ -47,6 +47,7 @@ buildRegistry()
     registerNavigatorCommands(registry);
     registerChartCommands(registry);
     registerChartLibraryCommands(registry);
+    registerSeasonCommands(registry);
     return registry;
 }
 
