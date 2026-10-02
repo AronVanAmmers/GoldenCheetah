@@ -23,6 +23,7 @@
 
 #include "HeadlessCommands.h"
 #include "ChartRenderer.h"
+#include "ChartImage.h"
 #include "MetricData.h"
 #include "ZoneData.h"
 #include "ActivitySelection.h"
@@ -49,40 +50,54 @@
 
 namespace Headless {
 
-static QList<ParamSpec>
-imageParams()
+QList<ParamSpec>
+imageParams(bool dark)
 {
     QList<ParamSpec> list;
     list << ParamSpec("as", ParamType::String, "image format").def("png").oneOf(ChartRenderer::formats());
     list << ParamSpec("width", ParamType::Int, "width in pixels").def(1200);
     list << ParamSpec("height", ParamType::Int, "height in pixels").def(600);
-    list << ParamSpec("dark", ParamType::Bool, "dark background");
+    if (dark) list << ParamSpec("dark", ParamType::Bool, "dark background");
     list << ParamSpec("title", ParamType::String, "chart title");
     return list;
+}
+
+QSize
+imageSize(const CommandRequest &request)
+{
+    return QSize(request.args.value("width").toInt(1200), request.args.value("height").toInt(600));
+}
+
+CommandResult
+imageResult(const QByteArray &bytes, const QString &error, const CommandRequest &request, const QString &name, QJsonObject data)
+{
+    if (bytes.isEmpty()) return CommandResult::failure(Status::Failed, error.isEmpty() ? QString("could not draw the chart") : error);
+
+    QString format = request.args.value("as").toString("png");
+    QSize size = imageSize(request);
+    CommandResult result;
+    result.payload = bytes;
+    result.payloadType = ChartRenderer::mimeType(format);
+    result.payloadName = name + "." + format;
+    data.insert("format", format);
+    data.insert("width", size.width());
+    data.insert("height", size.height());
+    data.insert("bytes", bytes.size());
+    result.data = data;
+    return result;
 }
 
 static CommandResult
 renderResult(ChartSpec spec, const CommandRequest &request, const QString &name, QJsonObject data)
 {
-    spec.size = QSize(request.args.value("width").toInt(1200), request.args.value("height").toInt(600));
+    spec.size = imageSize(request);
     spec.dark = request.args.value("dark").toBool(false);
     if (request.args.contains("title")) spec.title = request.args.value("title").toString();
 
     QString format = request.args.value("as").toString("png");
     QString error;
     QByteArray bytes = ChartRenderer::render(spec, format, error);
-    if (bytes.isEmpty()) return CommandResult::failure(Status::Failed, error.isEmpty() ? QString("could not draw the chart") : error);
-
-    CommandResult result;
-    result.payload = bytes;
-    result.payloadType = ChartRenderer::mimeType(format);
-    result.payloadName = name + "." + format;
-    data.insert("format", format);
-    data.insert("width", spec.size.width());
-    data.insert("height", spec.size.height());
-    data.insert("bytes", bytes.size());
-    result.data = data;
-    return result;
+    return imageResult(bytes, error, request, name, data);
 }
 
 struct SeriesInfo {

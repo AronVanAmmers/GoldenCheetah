@@ -23,6 +23,7 @@
 #include "TrainDB.h"
 #include "Context.h"
 #include "GcStartup.h"
+#include "Colors.h"
 
 #ifdef GC_WANT_PYTHON
 #include "PythonEmbed.h"
@@ -213,6 +214,12 @@ HeadlessApp::initialise(const QString &home, const Options &options, QString &er
     rootFolder = canonical;
     GcStartup::initSettings(canonical);
     GcStartup::initCore(canonical);
+
+    // the scale widgets and plots are drawn at (main() sets these), else
+    // charts drawn by the GUI's own plots get no line widths or symbols
+    AppearanceSettings defaults = GSettings::defaultAppearanceSettings();
+    dpiXFactor = defaults.xfactor;
+    dpiYFactor = defaults.yfactor;
 
 #ifdef GC_WANT_PYTHON
     bool embed = appsettings->value(NULL, GC_EMBED_PYTHON, true).toBool();
