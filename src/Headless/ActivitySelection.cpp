@@ -20,6 +20,7 @@
 #include "MetricNames.h"
 #include "ActivityJson.h"
 #include "AthleteSession.h"
+#include "SeasonRange.h"
 
 #include "Context.h"
 #include "Athlete.h"
@@ -41,7 +42,7 @@ bool
 ActivitySelection::isEmpty() const
 {
     return activities.isEmpty() && filter.isEmpty() && search.isEmpty() && named.isEmpty()
-        && !from.isValid() && !to.isValid() && sport.isEmpty() && limit == 0;
+        && !from.isValid() && !to.isValid() && season.isEmpty() && sport.isEmpty() && limit == 0;
 }
 
 QList<ParamSpec>
@@ -58,6 +59,7 @@ ActivitySelection::params(bool positionalActivities)
     list << ParamSpec("named", ParamType::String, "name of a search or filter saved in the GUI");
     list << ParamSpec("from", ParamType::Date, "only activities on or after this date");
     list << ParamSpec("to", ParamType::Date, "only activities on or before this date");
+    list << seasonParam();
     list << ParamSpec("sport", ParamType::String, "only activities of this sport (Bike, Run, Swim ...)");
     list << ParamSpec("planned", ParamType::Bool, "planned instead of completed activities");
     list << ParamSpec("limit", ParamType::Int, "only the most recent N activities");
@@ -74,6 +76,7 @@ ActivitySelection::fromArgs(const QJsonObject &args)
     s.named = args.value("named").toString();
     if (args.contains("from")) s.from = QDate::fromString(args.value("from").toString(), Qt::ISODate);
     if (args.contains("to")) s.to = QDate::fromString(args.value("to").toString(), Qt::ISODate);
+    s.season = args.value("season").toString();
     s.sport = args.value("sport").toString();
     s.planned = args.value("planned").toBool(false);
     s.limit = args.value("limit").toInt(0);
@@ -117,6 +120,20 @@ ActivitySelection::resolve(AthleteSession &session, QList<RideItem *> &result, Q
     Context *context = session.context();
     RideCache *cache = session.rideCache();
 
+    // --season stands for its dates
+    QDate first = from, last = to;
+    if (!season.isEmpty()) {
+        if (from.isValid() || to.isValid()) {
+            error = "--season stands for --from and --to: give one or the other";
+            status = Status::Usage;
+            return false;
+        }
+        DateRange range;
+        if (!seasonRange(session, season, range, error, &status)) return false;
+        first = range.from;
+        last = range.to;
+    }
+
     QList<RideItem *> candidates;
 
     if (!activities.isEmpty()) {
@@ -142,8 +159,8 @@ ActivitySelection::resolve(AthleteSession &session, QList<RideItem *> &result, Q
     QList<RideItem *> list;
     for (RideItem *item : candidates) {
         QDate d = item->dateTime.date();
-        if (from.isValid() && d < from) continue;
-        if (to.isValid() && d > to) continue;
+        if (first.isValid() && d < first) continue;
+        if (last.isValid() && d > last) continue;
         if (!sport.isEmpty() && item->sport.compare(sport, Qt::CaseInsensitive) != 0) continue;
         list << item;
     }
