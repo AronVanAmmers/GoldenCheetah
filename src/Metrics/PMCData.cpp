@@ -246,6 +246,9 @@ void PMCData::refresh()
     foreach(Season x, context->athlete->seasons->seasons) {
         if (x.getSeed()) {
             int offset = start_.daysTo(x.getStart());
+            // a seeded season after the end of the data (the earliest
+            // seed, or the last activity, plus a year) is out of range
+            if (offset < 0 || offset >= days_) continue;
             lts_[offset] = x.getSeed() * -1;
             sts_[offset] = x.getSeed() * -1;
 
@@ -500,6 +503,16 @@ PMCData::expectedSts(QDate date)
     int index=indexOf(date);
     if (index == -1) return 0.0f;
     else return expected_sts_[index];
+}
+
+double
+PMCData::expectedStress(QDate date)
+{
+    refresh();
+
+    int index=indexOf(date);
+    if (index == -1) return 0.0f;
+    else return expected_stress_[index];
 }
 
 double
