@@ -66,9 +66,9 @@ allDates(Context *context)
 }
 
 // The dates to draw. With none given, the sidebar's All Dates season: the
-// plot then starts at the first activity and ends today, or at the last
-// activity when that is later (LTMPlot::setData). The GUI opens on the season
-// picked last, Last 3 months when none was.
+// plot then runs from the first activity to the last one, planned ones
+// included (LTMPlot::setData crops the season to them). The GUI opens on the
+// season picked last, Last 3 months when none was.
 //
 // the dates the chart covers: a season (named, so the chart leaves it
 // unmarked as the GUI does), --from/--to, or all dates
@@ -305,7 +305,8 @@ registerTrendsChartCommands(CommandRegistry &registry)
     render.spec.description =
         "The chart is drawn by the GUI's own Trends plot, in the GUI's colours, with\n"
         "its curves, axes, legend, and season and event markers. With no dates, it\n"
-        "covers all dates, as the All Dates season: from the first activity to today.\n"
+        "covers all dates, as the All Dates season: from the first activity to the\n"
+        "last, planned ones included.\n"
         "--by changes the grouping for this drawing only.";
     render.spec.scope = Scope::Athlete;
     chartParams(render.spec);
