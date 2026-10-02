@@ -2912,6 +2912,24 @@ class TestTrendsLibraryCharts(Headless):
         self.gcj("chart", "library", "render", "PMC (Coggan)", "--by", "fortnight", expect=2)
         self.assertClosed()
 
+    def test_season_dates(self):
+        self.gcj("season", "add", "Winter20", "--from", "2020-01-01", "--to", "2020-03-31")
+        by_season = self.gcj("chart", "library", "data", "PMC (Coggan)", "--season", "winter20", "--by", "week")["data"]
+        by_dates = self.gcj("chart", "library", "data", "PMC (Coggan)", "--from", "2020-01-01", "--to", "2020-03-31",
+                            "--by", "week")["data"]
+        self.assertEqual(by_season["rows"], by_dates["rows"])
+        self.assertEqual(by_season["from"], "2019-12-30")
+
+        out = os.path.join(self.tmp, "winter.png")
+        self.gcj("-o", out, "chart", "library", "render", "PMC (Coggan)", "--season", "Winter20")
+        with open(out, "rb") as f:
+            self.assertGreater(png_colours(f.read()), 3)
+
+        self.gcj("chart", "library", "render", "PMC (Coggan)", "--season", "Winter20", "--from", "2020-01-01", expect=2)
+        self.gcj("chart", "library", "data", "PMC (Coggan)", "--season", "No such season", expect=3)
+        self.gcj("season", "remove", "Winter20")
+        self.assertClosed()
+
     def test_data_matches_metric_aggregate_per_week(self):
         self.gcj("chart", "library", "add", "--name", "Weekly", "--by", "week",
                  "--metric", "Average_Speed", "--metric", "total_distance")
