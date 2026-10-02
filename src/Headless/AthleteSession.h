@@ -111,6 +111,15 @@ class ActivityLookup
         QHash<QString, RideItem *> byFile;      // file name, and without its suffix
 };
 
+// the ride cache adds, replaces and deletes activities by file name, planned
+// or completed alike, so a planned and a completed activity of the same file
+// name get confused: the activity of the other kind called fileName, if any
+RideItem *otherKindNamed(RideCache *cache, const QString &fileName, bool planned);
+
+// refusing to make such a pair: a planned (or completed) activity would be
+// called fileName, which the other kind already is. Empty when it isn't
+QString sameNameRefusal(RideCache *cache, const QString &fileName, bool planned);
+
 // a plain folder name, no path separators and not hidden
 bool isAthleteName(const QString &name);
 

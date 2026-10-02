@@ -3334,6 +3334,27 @@ class TestPlannedActivities(Headless, PlanHelpers):
         self.gcj("plan", "repeat", "--from", day(70), "--to", day(76), "--start", day(76), expect=2)
         self.gcj("plan", "repeat", "--from", day(200), "--to", day(201), "--start", day(210), expect=5)
 
+    def test_repeat_refuses_before_deleting(self):
+        # every copy left out (a linked planned activity starts then): nothing is deleted
+        self.gcj("activity", "add", "--date", day(-20), "--time", "06:00", "--sport", "Bike")
+        self.plan("add", "--date", day(300), "--time", "06:00", "--sport", "Bike", "--title", "Source")
+        self.plan("add", "--date", day(310), "--time", "06:00", "--sport", "Bike", "--title", "Linked")
+        self.plan("link", ride_id(day(310), "06:00:00"), ride_id(day(-20), "06:00:00"))
+        self.plan("add", "--date", day(310), "--time", "09:00", "--sport", "Bike", "--title", "In the way")
+        r = self.gcj("plan", "repeat", "--from", day(300), "--to", day(300), "--start", day(310), expect=5)
+        self.assertIn("nothing to copy", r["error"])
+        self.assertIn(ride_id(day(310), "09:00:00"), self.planned_files())
+
+        # a source moved into the target period would be deleted to make room for its copy
+        self.plan("add", "--date", day(320), "--time", "06:00", "--sport", "Bike", "--title", "Moved on")
+        self.plan("move", ride_id(day(320), "06:00:00"), "--to", day(331))
+        r = self.gcj("plan", "repeat", "--from", day(320), "--to", day(325), "--start", day(330), expect=5)
+        self.assertIn("would be deleted", r["error"])
+        self.assertIn(ride_id(day(331), "06:00:00"), self.planned_files())
+        self.assertNotIn(ride_id(day(330), "06:00:00"), self.planned_files())
+        # by the current dates it isn't a source
+        self.gcj("plan", "repeat", "--from", day(320), "--to", day(325), "--start", day(330), "--current", expect=5)
+
     def test_import_refuses_a_linked_conflict(self):
         # the bundle's dates are compared once shifted to the target period
         self.gcj("activity", "add", "--date", day(-21), "--time", "06:00", "--sport", "Bike")
@@ -3430,14 +3451,37 @@ class TestPlannedActivities(Headless, PlanHelpers):
         self.assertTrue(os.path.exists(os.path.join(self.folder, "bak", rid + ".json.bak")))
 
     def test_same_name_planned_and_completed(self):
+        # the ride cache adds and deletes by file name: neither kind may take the other's
         when = day(-1)
         self.gcj("activity", "add", "--date", when, "--time", "05:30", "--sport", "Run")
-        self.gcj("plan", "add", "--date", day(0), "--time", "23:59", "--sport", "Run")
-        self.plan("move", ride_id(day(0), "23:59:00"), "--to", when, "--time", "05:30")
         rid = ride_id(when, "05:30:00")
-        self.assertIn(rid, self.planned_files())
+        self.gcj("plan", "add", "--date", day(0), "--time", "23:59", "--sport", "Run")
+        pid = ride_id(day(0), "23:59:00")
+        r = self.gcj("plan", "move", pid, "--to", when, "--time", "05:30", expect=5)
+        self.assertIn("already called", r["error"])
+        self.gcj("plan", "copy", pid, "--to", when, "--time", "05:30", expect=5)
+        r = self.gcj("activity", "add", "--date", day(0), "--time", "23:59", "--sport", "Run", expect=5)
+        self.assertIn("a planned activity is already called", r["error"])
+        self.gcj("activity", "add", "--date", day(0), "--time", "00:00:01", "--sport", "Run")
+        r = self.gcj("plan", "add", "--date", day(0), "--time", "00:00:01", "--sport", "Run", expect=5)
+        self.assertIn("a completed activity is already called", r["error"])
+        self.assertIn(pid, self.planned_files())
+        self.assertNotIn(rid, self.planned_files())
+        self.assertNotIn(ride_id(day(0), "00:00:01"), self.planned_files())
+
+        # such a pair made outside: nothing that would delete the planned one by name
+        shutil.copy(os.path.join(self.folder, "activities", rid + ".json"), os.path.join(self.folder, "planned", rid + ".json"))
         self.assertFalse(self.gcj("activity", "show", rid)["data"].get("planned", False))
         self.assertTrue(self.gcj("activity", "show", "--planned", rid)["data"]["planned"])
+        self.plan("move", pid, "--to", day(-8), "--time", "07:00")
+        r = self.gcj("plan", "repeat", "--from", day(-8), "--to", day(-8), "--start", when, "--current", expect=5)
+        self.assertIn("can't tell them apart", r["error"])
+        bundle = os.path.join(self.tmp, "pair.gcplan")
+        self.gcj("plan", "export", "--from", day(-8), "--to", day(-8), "--name", "Pair", "--current", "-o", bundle)
+        r = self.gcj("plan", "import", bundle, "--start", when, "--no-gap-days", expect=5)
+        self.assertIn("can't tell them apart", r["error"])
+        self.assertTrue(os.path.exists(os.path.join(self.folder, "activities", rid + ".json")))
+        self.assertIn(rid, self.planned_files())
         self.plan("link", rid, rid)
         r = self.gcj("activity", "delete", "--planned", rid, expect=5)
         self.assertIn("can't tell them apart", r["error"])

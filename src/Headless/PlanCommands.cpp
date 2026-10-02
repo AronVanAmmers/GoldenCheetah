@@ -373,6 +373,8 @@ addActivity(CommandEnvironment &env, const CommandRequest &request, bool plan)
                         .arg(activity.start.toString("yyyy-MM-dd HH:mm:ss")));
     if (QFile::exists(path))
         return CommandResult::failure(Status::Failed, QString("%1 already exists").arg(path));
+    QString refusal = sameNameRefusal(cache, ManualActivity::baseName(activity.start) + ".json", plan);
+    if (!refusal.isEmpty()) return CommandResult::failure(Status::Failed, refusal);
 
     if (!activity.save(context, plan)) {
         QFile::remove(path);    // nothing of it may be left
@@ -554,6 +556,13 @@ saveAffected(RideCache *cache, const QList<RideItem*> &items, QString &error)
     return cache->saveActivities(alive, error);
 }
 
+// the file name an activity gets when it starts at when, as the ride cache names it
+static QString
+targetName(const QDateTime &when, const RideItem *item)
+{
+    return when.toString("yyyy_MM_dd_HH_mm_ss") + "." + QFileInfo(item->fileName).suffix();
+}
+
 static CommandResult
 movePlanned(CommandEnvironment &env, const CommandRequest &request)
 {
@@ -570,6 +579,8 @@ movePlanned(CommandEnvironment &env, const CommandRequest &request)
     QDate fromDate = item->dateTime.date();
     RideCache::OperationPreCheck check = cache->checkMoveActivity(item, when);
     if (!checkPasses(check, error)) return CommandResult::failure(Status::Failed, error);
+    error = sameNameRefusal(cache, targetName(when, item), true);
+    if (!error.isEmpty()) return CommandResult::failure(Status::Failed, error);
     RideCache::OperationResult result = cache->moveActivity(item, when);
     if (!result.success) return CommandResult::failure(Status::Failed, result.error);
     QString saveError;
@@ -600,6 +611,8 @@ copyPlanned(CommandEnvironment &env, const CommandRequest &request)
     RideCache *cache = env.session->rideCache();
     RideCache::OperationPreCheck check = cache->checkCopyPlannedActivity(item, day, time);
     if (!checkPasses(check, error)) return CommandResult::failure(Status::Failed, error);
+    error = sameNameRefusal(cache, targetName(when, item), true);
+    if (!error.isEmpty()) return CommandResult::failure(Status::Failed, error);
     RideCache::OperationResult result = cache->copyPlannedActivity(item, day, time);
     if (!result.success) return CommandResult::failure(Status::Failed, result.error);
     QString saveError;
@@ -691,6 +704,11 @@ shiftPlanned(CommandEnvironment &env, const CommandRequest &request)
     QString error;
     RideCache::OperationPreCheck check = cache->checkShiftPlannedActivities(from, days);
     if (!checkPasses(check, error)) return CommandResult::failure(Status::Failed, error);
+    for (RideItem *item : items) {
+        if (effective == 0) break;
+        error = sameNameRefusal(cache, targetName(item->dateTime.addDays(effective), item), true);
+        if (!error.isEmpty()) return CommandResult::failure(Status::Failed, QString("%1 can't move: %2").arg(idOf(item)).arg(error));
+    }
 
     QList<QPair<RideItem*, QString>> before;
     for (RideItem *item : items) before << qMakePair(item, idOf(item));
@@ -759,6 +777,34 @@ repeatPlan(CommandEnvironment &env, const CommandRequest &request)
     for (RideItem *item : repeat.getDeletionList()) deleted.append(idOf(item));
     QDate targetEnd = repeat.getTargetRangeEnd();
 
+    // what would stop the copies, or delete what must stay, is refused
+    // before anything is deleted: the copies are made after the clean up
+    if (copies.isEmpty()) return CommandResult::failure(Status::Failed, "nothing to copy: every planned activity of the period was left out");
+    QSet<QString> deleting;
+    for (RideItem *item : repeat.getDeletionList()) {
+        deleting.insert(item->fileName);
+        for (const SourceRide &s : repeat.sourceRides)
+            if (s.rideItem == item)
+                return CommandResult::failure(Status::Failed,
+                            QString("%1, planned for %2, is now in %3 .. %4 and would be deleted to make room for its own copy; "
+                                    "move it out of that period first, or repeat by the current dates (--current)")
+                            .arg(idOf(item)).arg(s.sourceDate.toString(Qt::ISODate))
+                            .arg(start.toString(Qt::ISODate), targetEnd.toString(Qt::ISODate)));
+        if (otherKindNamed(cache, item->fileName, true))
+            return CommandResult::failure(Status::Failed,
+                        QString("the planned activity %1 would be deleted, and a completed activity has the same name; "
+                                "GoldenCheetah can't tell them apart when deleting, move the planned one first ('plan move')")
+                        .arg(idOf(item)));
+    }
+    QDir plannedDir(env.session->context()->athlete->home->planned());
+    for (const auto &copy : repeat.copies()) {
+        QString name = targetName(QDateTime(copy.second, copy.first->dateTime.time()), copy.first);
+        QString refusal = sameNameRefusal(cache, name, true);
+        if (!refusal.isEmpty()) return CommandResult::failure(Status::Failed, QString("%1 can't be copied: %2").arg(idOf(copy.first)).arg(refusal));
+        if (!deleting.contains(name) && plannedDir.exists(name))
+            return CommandResult::failure(Status::Failed, QString("%1 can't be copied: %2 already exists").arg(idOf(copy.first)).arg(name));
+    }
+
     RideCache::OperationPreCheck check;
     RideCache::OperationResult result;
     repeat.apply(check, result);
@@ -774,11 +820,9 @@ repeatPlan(CommandEnvironment &env, const CommandRequest &request)
     data.insert("count", result.affectedCount);
     CommandResult r = result.error.isEmpty() ? CommandResult::success(data)
                                              : CommandResult::batch(data, copies.count() - result.affectedCount, copies.count(), result.error);
-    if (copies.isEmpty()) r = CommandResult::failure(Status::Failed, "nothing to copy: every planned activity of the period was left out");
     r.text = QString("%1 planned activit%2 copied to %3 .. %4, %5 replaced, %6 left out\n")
              .arg(result.affectedCount).arg(result.affectedCount == 1 ? "y" : "ies")
              .arg(start.toString(Qt::ISODate), targetEnd.toString(Qt::ISODate)).arg(deleted.count()).arg(skipped.count());
-    (void) cache;
     return r;
 }
 
@@ -865,6 +909,20 @@ importPlan(CommandEnvironment &env, const CommandRequest &request)
     QStringList replaced = reader.getActivitiesToRemove();
     PlanMetadata metadata = reader.getMetadata();
     QDate end = reader.getTargetRangeEnd();
+
+    // the ride cache deletes and adds by file name: a completed activity of
+    // the same name as a planned one replaced or imported would be taken
+    for (const QString &f : replaced)
+        if (otherKindNamed(cache, f, true))
+            return CommandResult::failure(Status::Failed,
+                        QString("the planned activity %1 would be replaced, and a completed activity has the same name; "
+                                "GoldenCheetah can't tell them apart when deleting, move the planned one first ('plan move')")
+                        .arg(idOf(f)));
+    for (const RideFileSelection &entry : reader.rideFiles) {
+        if (!entry.selected) continue;
+        QString refusal = sameNameRefusal(cache, reader.getTargetDateTime(entry).toString("yyyy_MM_dd_HH_mm_ss") + ".json", true);
+        if (!refusal.isEmpty()) return CommandResult::failure(Status::Failed, QString("the plan can't be imported: %1").arg(refusal));
+    }
 
     PlanResult imported = reader.importBundle();
     env.session->refresh();
