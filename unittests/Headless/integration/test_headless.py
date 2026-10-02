@@ -2410,5 +2410,417 @@ class TestSeasonsRest(Headless):
         self.assertEqual(self.call("GET", "/seasons/Spring")[0], 404)
 
 
+
+def ini_values(path):
+    """a QSettings ini file as {"section/key": raw value}, General keys without a section"""
+    values, section = {}, "General"
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if line.startswith("[") and line.endswith("]"):
+                section = line[1:-1]
+            elif "=" in line:
+                key, value = line.split("=", 1)
+                values[key if section == "General" else section + "/" + key] = value
+    return values
+
+
+def ini_date(value):
+    """a QDate as QSettings writes it: @Variant(...), a type id and a julian day, Qt 4 data stream"""
+    import datetime
+    m = re.fullmatch(r"@Variant\((.*)\)", value)
+    text, raw, i = m.group(1), bytearray(), 0
+    while i < len(text):
+        if text[i] == "\\" and text[i + 1] == "x":
+            j = i + 2
+            while j < len(text) and text[j] in "0123456789abcdefABCDEF":
+                j += 1
+            raw.append(int(text[i + 2:j], 16))
+            i = j
+        elif text[i] == "\\":
+            raw.append(0 if text[i + 1] == "0" else ord(text[i + 1]))
+            i += 2
+        else:
+            raw.append(ord(text[i]))
+            i += 1
+    julian = int.from_bytes(raw[4:8], "big")
+    return datetime.date.fromordinal(julian - 1721425).isoformat()
+
+
+class TestAthleteSettings(Headless):
+    """athlete set writes what the About and Model tabs write, and recomputes as the GUI"""
+
+    imports = [RIDE_POWER]
+
+    def prefs(self):
+        return ini_values(os.path.join(self.folder, "config", "athlete-preferences.ini"))
+
+    def metrics(self):
+        return self.gcj("activity", "show", "last")["data"]["metrics"]
+
+    def test_every_property_round_trips(self):
+        shown = self.gcj("athlete", "show")["data"]
+        for key, value in (("nickname", ""), ("crank_length", 175), ("wheel_size", 2100), ("wbal_tau", 300),
+                           ("sts_days", 7), ("lts_days", 42), ("sb_today", False), ("weight", 70),
+                           ("weight_today", 70), ("weight_source", "setting")):
+            self.assertEqual(shown[key], value, key)
+
+        self.addCleanup(self.gc, "--athlete", self.athlete, "athlete", "set", "--weight", "70", "--height", "175",
+                        "--sts-days", "7", "--lts-days", "42", "--sb-today", "false", "--sex", "male")
+        env = self.gcj("athlete", "set", "--nickname", "Jojo", "--dob", "1975-05-05", "--sex", "female",
+                       "--height", "181.5", "--weight", "68.44", "--crank-length", "172.5", "--wheel-size", "2096",
+                       "--wbal-tau", "420", "--sts-days", "10", "--lts-days", "50", "--sb-today", "true")
+        data = env["data"]
+        self.assertGreaterEqual(data["refreshed"], 1)     # weight changed
+        expected = {"nickname": "Jojo", "dob": "1975-05-05", "sex": "female", "height": 181.5, "weight": 68.4,
+                    "crank_length": 172.5, "wheel_size": 2096, "wbal_tau": 420, "sts_days": 10, "lts_days": 50,
+                    "sb_today": True, "weight_today": 68.4, "weight_source": "setting"}
+        shown = self.gcj("athlete", "show")["data"]
+        for key, value in expected.items():
+            self.assertEqual(data[key], value, key)
+            self.assertEqual(shown[key], value, key)
+
+        # the keys, units and types the About and Model pages use
+        prefs = self.prefs()
+        self.assertEqual(prefs["nickname"], "Jojo")
+        self.assertEqual(ini_date(prefs["dob"]), "1975-05-05")
+        self.assertEqual(prefs["sex"], "1")
+        self.assertAlmostEqual(float(prefs["height"]), 1.815)
+        self.assertAlmostEqual(float(prefs["weight"]), 68.4)
+        self.assertEqual(prefs["crankLength"], "172.5")
+        self.assertEqual(prefs["wheelsize"], "2096")
+        self.assertEqual(prefs["wbaltau"], "420")
+        self.assertEqual(prefs["STSdays"], "10")
+        self.assertEqual(prefs["LTSdays"], "50")
+        self.assertEqual(prefs["PMshowSBtoday"], "1")
+
+        # only what is passed changes
+        self.gcj("athlete", "set", "--sb-today", "false")
+        prefs = self.prefs()
+        self.assertEqual(prefs["PMshowSBtoday"], "0")
+        self.assertEqual(prefs["STSdays"], "10")
+        self.assertClosed()
+
+    def test_weight_changes_per_kg_metrics_without_a_measure(self):
+        before = self.metrics()
+        self.assertEqual(before["athlete_weight"], 70)
+        self.addCleanup(self.gc, "--athlete", self.athlete, "athlete", "set", "--weight", "70")
+        env = self.gcj("athlete", "set", "--weight", "80")
+        self.assertEqual(env["data"]["refreshed"], 1)
+        after = self.metrics()
+        self.assertEqual(after["athlete_weight"], 80)
+        self.assertAlmostEqual(after["average_wpk"], before["average_wpk"] * 70 / 80, places=3)
+
+        # a Body measure for the day wins over the setting, as Athlete::getWeight
+        self.gcj("measures", "add", "--when", "2020-01-01", "--set", "WEIGHTKG=75")
+        self.addCleanup(self.gc, "--athlete", self.athlete, "measures", "remove", "--when", "2020-01-01")
+        self.assertEqual(self.metrics()["athlete_weight"], 75)
+        self.assertEqual(self.gcj("athlete", "set", "--weight", "90")["data"]["refreshed"], 0)
+        self.assertEqual(self.metrics()["athlete_weight"], 75)
+        shown = self.gcj("athlete", "show")["data"]
+        self.assertEqual((shown["weight"], shown["weight_today"], shown["weight_source"]), (90, 75, "measure"))
+
+    def test_wbal_tau_is_train_only(self):
+        # activity W' metrics work tau out from the ride, as in the GUI, so
+        # the setting recomputes nothing
+        before = self.metrics()
+        self.addCleanup(self.gc, "--athlete", self.athlete, "athlete", "set", "--wbal-tau", "300")
+        env = self.gcj("athlete", "set", "--wbal-tau", "900")
+        self.assertEqual(env["data"]["refreshed"], 0)
+        self.assertEqual(self.prefs()["wbaltau"], "900")
+        after = self.metrics()
+        for symbol in ("skiba_wprime_tau", "skiba_wprime_low", "skiba_wprime_exp"):
+            self.assertEqual(after[symbol], before[symbol], symbol)
+
+    def test_bad_values_refused(self):
+        path = os.path.join(self.folder, "config", "athlete-preferences.ini")
+        with open(path, "rb") as f:
+            saved = f.read()
+        for args in (("--weight", "-1"), ("--weight", "1000"), ("--height", "1000"), ("--crank-length", "171"),
+                     ("--wheel-size", "0"), ("--wheel-size", "10000"), ("--wbal-tau", "29"), ("--wbal-tau", "1201"),
+                     ("--sts-days", "0"), ("--sts-days", "22"), ("--lts-days", "6"), ("--lts-days", "57"),
+                     ("--sb-today", "maybe"), ("--sex", "other"), ("--dob", "1975-13-01"),
+                     ("--nickname", "ok", "--weight", "-5"), ()):
+            self.gcj("athlete", "set", *args, expect=2)
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), saved)
+
+
+class TestZoneEditing(Headless):
+    """zone ranges removed, the power options and the default zones, as the zones pages"""
+
+    imports = [RIDE_POWER]
+
+    def config(self, name):
+        return os.path.join(self.folder, "config", name)
+
+    def starts(self, kind, sport="Bike"):
+        data = self.gcj("zones", "show", "--sport", sport)["data"]
+        if kind == "pace":
+            return [r["from"] for r in data["pace"] if r["sport"] == sport]
+        return [r["from"] for r in data[kind]["ranges"]]
+
+    def test_range_added_then_removed(self):
+        first = self.starts("power")
+        with open(self.config("power.zones"), "rb") as f:
+            original = f.read()
+        before = self.gcj("activity", "show", "last")["data"]["metrics"]["coggan_if"]
+
+        # a range covering the ride changes its metrics, removing it puts them back
+        self.gcj("zones", "set", "--from", "2020-01-01", "--cp", "320", "--ftp", "320")
+        self.assertNotEqual(self.gcj("activity", "show", "last")["data"]["metrics"]["coggan_if"], before)
+        env = self.gcj("zones", "remove", "--from", "2020-01-01")
+        self.assertEqual(env["data"]["status"], "removed")
+        self.assertEqual(env["data"]["ranges"], first)
+        self.assertEqual(env["data"]["refreshed"], 1)
+        self.assertEqual(self.starts("power"), first)
+        self.assertEqual(self.gcj("activity", "show", "last")["data"]["metrics"]["coggan_if"], before)
+        with open(self.config("power.zones"), "rb") as f:
+            self.assertEqual(f.read(), original)
+
+        # none that day, the only range, and a sport without zones of its own
+        self.gcj("zones", "remove", "--from", "2020-01-02", expect=3)
+        self.gcj("zones", "remove", "--from", first[0], expect=2)
+        self.gcj("zones", "remove", "--sport", "Run", "--from", first[0], expect=3)
+        self.gcj("zones", "remove", "--type", "pace", "--from", first[0], expect=2)
+
+        for kind, args in (("hr", ["--lthr", "170"]), ("pace", ["--sport", "Run", "--cv", "13"])):
+            sport = "Run" if kind == "pace" else "Bike"
+            first = self.starts(kind, sport)
+            self.gcj("zones", "set", "--type", kind, "--from", "2026-01-01", *args)
+            self.assertEqual(self.starts(kind, sport), first + ["2026-01-01"])
+            self.gcj("zones", "remove", "--type", kind, "--sport", sport, "--from", "2026-01-01")
+            self.assertEqual(self.starts(kind, sport), first)
+        self.assertClosed()
+
+    def test_power_options(self):
+        power = self.gcj("zones", "show")["data"]["power"]
+        self.assertEqual((power["cp_model"], power["coggan_metrics"]), ("manual", "cp"))
+        self.gcj("zones", "options", expect=2)
+        self.gcj("zones", "options", "--cp-model", "cp4", expect=2)
+        self.gcj("zones", "options", "--sport", "Nope", "--cp-model", "cp2", expect=3)
+
+        # FTP below CP: the Coggan metrics follow the choice
+        self.keep(self.config("power.zones"))
+        start = self.starts("power")[0]
+        self.gcj("zones", "set", "--from", start, "--ftp", "200")
+        self.addCleanup(self.gc, "--athlete", self.athlete, "zones", "options", "--cp-model", "manual",
+                        "--coggan-metrics", "cp")
+        with_cp = self.gcj("activity", "show", "last")["data"]["metrics"]["coggan_if"]
+        env = self.gcj("zones", "options", "--cp-model", "ext", "--coggan-metrics", "ftp")
+        self.assertEqual((env["data"]["cp_model"], env["data"]["coggan_metrics"]), ("ext", "ftp"))
+        self.assertEqual(env["data"]["refreshed"], 1)
+        self.assertAlmostEqual(self.gcj("activity", "show", "last")["data"]["metrics"]["coggan_if"],
+                               with_cp * 250 / 200, places=3)
+        prefs = ini_values(self.config("athlete-preferences.ini"))
+        self.assertEqual((prefs["cp/useModel"], prefs["cp/useforftp"]), ("3", "1"))
+        power = self.gcj("zones", "show")["data"]["power"]
+        self.assertEqual((power["cp_model"], power["coggan_metrics"]), ("ext", "ftp"))
+
+        # per sport, with the sport in the key as the page saves it
+        self.addCleanup(self.gc, "--athlete", self.athlete, "zones", "options", "--sport", "Run", "--cp-model", "manual")
+        self.gcj("zones", "options", "--sport", "Run", "--cp-model", "cp2")
+        self.assertEqual(ini_values(self.config("athlete-preferences.ini"))["cp/useModelrun"], "1")
+        self.assertEqual(self.gcj("zones", "show", "--sport", "Run")["data"]["power"]["cp_model"], "cp2")
+
+    def test_default_zones(self):
+        self.keep(self.config("power.zones"))
+        self.keep(self.config("hr.zones"))
+        shown = self.gcj("zones", "scheme", "show")["data"]
+        self.assertEqual(shown["of"], "CP")
+        self.assertEqual(shown["zones"][0]["percent"], 0)
+        self.assertGreater(len(shown["zones"]), 3)
+
+        # sorted by the lower bound; the ranges using the default follow
+        env = self.gcj("zones", "scheme", "set", "--zone", "Z3,Hard,100", "--zone", "Z1,Easy,0", "--zone", "Z2,Steady,60%")
+        self.assertEqual([z["name"] for z in env["data"]["zones"]], ["Z1", "Z2", "Z3"])
+        self.assertEqual(env["data"]["refreshed"], 1)
+        with open(self.config("power.zones")) as f:
+            self.assertIn("DEFAULTS:\nZ1,Easy,0%\nZ2,Steady,60%\nZ3,Hard,100%\n", f.read())
+        zones = self.gcj("zones", "show")["data"]["power"]["ranges"][0]["zones"]
+        self.assertEqual([(z["name"], z["low"]) for z in zones], [("Z1", 0), ("Z2", 150), ("Z3", 250)])
+        self.assertEqual(len(self.gcj("activity", "show", "last")["data"]["zones"]["power"]["zones"]), 3)
+
+        env = self.gcj("zones", "scheme", "set", "--type", "hr", "--zone", "Z1,Easy,0,1", "--zone", "Z2,Hard,90,2.5")
+        self.assertEqual(env["data"]["zones"][1], {"name": "Z2", "description": "Hard", "percent": 90, "trimp_k": 2.5})
+
+        with open(self.config("power.zones"), "rb") as f:
+            saved = f.read()
+        for args in (("--zone", "Z1,Easy"), ("--zone", "Z1,Easy,abc"), ("--zone", "Z1,Easy,1001"),
+                     ("--zone", ",Easy,0"), ("--zone", "Z1#,Easy,0"), ("--type", "hr", "--zone", "Z1,Easy,0"),
+                     ("--type", "hr", "--zone", "Z1,Easy,0,11"), ("--type", "pace", "--zone", "Z1,Easy,0")):
+            self.gcj("zones", "scheme", "set", *args, expect=2)
+        self.gcj("zones", "scheme", "set", "--sport", "Run", "--zone", "Z1,Easy,0", expect=3)
+        with open(self.config("power.zones"), "rb") as f:
+            self.assertEqual(f.read(), saved)
+        self.assertEqual(self.gcj("zones", "scheme", "show", "--sport", "Run")["data"]["uses"], "Bike")
+
+
+class TestMeasureEditing(Headless):
+    """a reading edited or removed as in the GUI's measures table, and what depends on it recomputed"""
+
+    imports = [RIDE_POWER]     # starts 2020-01-26
+
+    def readings(self):
+        return self.gcj("measures", "list", "--group", "Body")["data"]["measures"]
+
+    def weight(self):
+        return self.gcj("activity", "show", "last")["data"]["metrics"]["athlete_weight"]
+
+    def test_add_edit_remove(self):
+        self.gcj("measures", "add", "--when", "2020-01-20", "--set", "WEIGHTKG=72", "--set", "FATKG=9", "--comment", "scale")
+        self.assertEqual(self.weight(), 72)
+
+        env = self.gcj("measures", "edit", "--when", "2020-01-20", "--set", "WEIGHTKG=74")
+        self.assertEqual(env["data"]["refreshed"], 1)
+        self.assertEqual(self.weight(), 74)
+        reading = self.readings()[0]
+        self.assertEqual((reading["WEIGHTKG"], reading["FATKG"], reading["comment"]), (74, 9, "scale"))
+        self.gcj("measures", "edit", "--when", "2020-01-20T00:00:00", "--comment", "new scale")
+        self.assertEqual(self.readings()[0]["comment"], "new scale")
+        with open(os.path.join(self.folder, "config", "bodymeasures.json")) as f:
+            stored = json.load(f)["measures"]
+        self.assertEqual((stored[0]["weightkg"], stored[0]["fatkg"], stored[0]["comment"]), (74, 9, "new scale"))
+
+        # two on a day: the time is needed
+        self.gcj("measures", "add", "--when", "2020-01-20T08:00:00", "--set", "WEIGHTKG=73")
+        self.gcj("measures", "edit", "--when", "2020-01-20", "--set", "WEIGHTKG=70", expect=2)
+        self.gcj("measures", "remove", "--when", "2020-01-20", expect=2)
+        self.gcj("measures", "edit", "--when", "2020-01-20T09:00:00", "--set", "WEIGHTKG=70", expect=3)
+        self.gcj("measures", "edit", "--when", "2020-01-20T08:00:00", expect=2)
+        self.gcj("measures", "edit", "--when", "2020-01-20T08:00:00", "--set", "NOPE=1", expect=2)
+        self.gcj("measures", "edit", "--when", "2020-01-20T08:00:00", "--set", "WEIGHTKG=10000", expect=2)
+        self.gcj("measures", "remove", "--group", "Nope", "--when", "2020-01-20", expect=3)
+        self.assertEqual(self.weight(), 73)
+
+        env = self.gcj("measures", "remove", "--when", "2020-01-20T08:00:00")
+        self.assertEqual(env["data"]["refreshed"], 1)
+        self.assertEqual(self.weight(), 74)
+        self.gcj("measures", "remove", "--when", "2020-01-20")
+        self.assertEqual(self.readings(), [])
+        self.assertEqual(self.weight(), 70)       # the setting again
+        self.gcj("measures", "remove", "--when", "2020-01-20", expect=3)
+        self.assertClosed()
+
+    def test_source(self):
+        path = os.path.join(self.folder, "config", "bodymeasures.json")
+        self.keep(path)
+        self.gcj("measures", "add", "--when", "2021-03-01T07:00:00", "--set", "WEIGHTKG=70")
+        self.assertEqual(self.readings()[-1]["source"], "manual")
+
+        # as if downloaded from Withings
+        with open(path) as f:
+            content = json.load(f)
+        content["measures"][-1]["source"] = 1
+        content["measures"][-1]["originalsource"] = "scale"
+        with open(path, "w") as f:
+            json.dump(content, f)
+        self.assertEqual(self.readings()[-1]["source"], "withings")
+
+        # added again at the same time it keeps its source, as the GUI's Add
+        self.gcj("measures", "add", "--when", "2021-03-01T07:00:00", "--set", "WEIGHTKG=71")
+        self.assertEqual(self.readings()[-1]["source"], "withings")
+
+        # edited, it becomes a manual entry
+        self.gcj("measures", "edit", "--when", "2021-03-01", "--set", "WEIGHTKG=72")
+        self.assertEqual(self.readings()[-1]["source"], "manual")
+        with open(path) as f:
+            stored = json.load(f)["measures"][-1]
+        self.assertEqual((stored["source"], stored["originalsource"], stored["weightkg"]), (0, "scale", 72))
+
+
+@unittest.skipIf(os.name == "nt" or running_as_root(), "file permissions don't stop Windows or root")
+class TestAthleteSettingsReadOnly(Headless):
+    """athlete, zone and measure changes in a config folder that can't be written fail promptly and change nothing"""
+
+    imports = [RIDE_POWER]
+
+    def test_read_only_config(self):
+        self.gcj("zones", "set", "--from", "2026-01-01", "--cp", "260")
+        self.gcj("measures", "add", "--when", "2026-01-01", "--set", "WEIGHTKG=70")
+        config = os.path.join(self.folder, "config")
+        before = {f: open(os.path.join(config, f), "rb").read() for f in os.listdir(config)}
+        for root, dirs, files in os.walk(config, topdown=False):
+            for name in files + dirs:
+                full = os.path.join(root, name)
+                mode = os.stat(full).st_mode
+                os.chmod(full, mode & ~0o222)
+                self.addCleanup(os.chmod, full, mode)
+        mode = os.stat(config).st_mode
+        os.chmod(config, mode & ~0o222)
+        self.addCleanup(os.chmod, config, mode)
+
+        for args, mentions in ((("athlete", "set", "--weight", "60"), "athlete-preferences.ini"),
+                               (("athlete", "set", "--wbal-tau", "500"), "athlete-preferences.ini"),
+                               (("zones", "options", "--coggan-metrics", "ftp"), "athlete-preferences.ini"),
+                               (("zones", "remove", "--from", "2026-01-01"), "power.zones"),
+                               (("zones", "scheme", "set", "--zone", "Z1,Easy,0"), "power.zones"),
+                               (("measures", "edit", "--when", "2026-01-01", "--set", "WEIGHTKG=60"), "bodymeasures.json"),
+                               (("measures", "remove", "--when", "2026-01-01"), "bodymeasures.json")):
+            started = time.time()
+            r = self.gca(*args, timeout=60)
+            self.assertEqual(r.code, 5, r)
+            self.assertIn(mentions.encode(), r.err + r.out, r)
+            self.assertLess(time.time() - started, 30)
+        self.assertEqual({f: open(os.path.join(config, f), "rb").read() for f in os.listdir(config)}, before)
+        shown = self.gcj("athlete", "show")["data"]
+        self.assertEqual((shown["weight"], shown["wbal_tau"]), (70, 300))
+        self.assertEqual(self.gcj("zones", "show")["data"]["power"]["coggan_metrics"], "cp")
+        self.assertIn("2026-01-01", [r["from"] for r in self.gcj("zones", "show")["data"]["power"]["ranges"]])
+
+
+
+class TestAthleteSettingsRest(Headless):
+    """the athlete, zone and measure changes over REST"""
+
+    imports = [RIDE_POWER]
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.server, cls.port = start_server(cls.env, cls.home, os.path.join(cls.tmp, "server.log"))
+
+    @classmethod
+    def tearDownClass(cls):
+        stop_server(cls.server)
+        super().tearDownClass()
+
+    def jcall(self, method, path, body=None, expect=200):
+        url = "http://127.0.0.1:%d/v1/athletes/%s%s" % (self.port, self.athlete, path)
+        data, headers = None, {}
+        if body is not None:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                status, out = resp.status, resp.read()
+        except urllib.error.HTTPError as e:
+            status, out = e.code, e.read()
+        self.assertEqual(status, expect, out[:500])
+        return json.loads(out)
+
+    def test_changes_over_rest(self):
+        data = self.jcall("PUT", "", {"weight": 72, "sb-today": "true", "wheel-size": 2105})["data"]
+        self.assertEqual((data["weight"], data["sb_today"], data["wheel_size"]), (72, True, 2105))
+        self.assertEqual(self.jcall("GET", "")["data"]["weight"], 72)
+        self.jcall("PUT", "", {"sts-days": 30}, expect=400)
+
+        data = self.jcall("PUT", "/zones/options", {"coggan-metrics": "ftp"})["data"]
+        self.assertEqual(data["coggan_metrics"], "ftp")
+        self.assertEqual(self.jcall("GET", "/zones/scheme?type=hr")["data"]["of"], "LT")
+        self.jcall("PUT", "/zones/scheme", {"type": "pace", "sport": "Run", "zone": ["Z1,Easy,0", "Z2,Fast,90"]})
+        self.assertEqual(len(self.jcall("GET", "/zones/scheme?type=pace&sport=Run")["data"]["zones"]), 2)
+
+        self.jcall("PUT", "/zones", {"type": "power", "from": "2026-01-01", "cp": 280})
+        self.assertEqual(self.jcall("DELETE", "/zones?from=2026-01-01")["data"]["status"], "removed")
+
+        self.jcall("POST", "/measures", {"when": "2026-01-01", "set": ["WEIGHTKG=70"]})
+        self.jcall("PUT", "/measures", {"when": "2026-01-01", "comment": "rest"})
+        self.assertEqual(self.jcall("GET", "/measures?group=Body")["data"]["measures"][0]["comment"], "rest")
+        self.jcall("DELETE", "/measures?when=2026-01-01")
+        self.jcall("DELETE", "/measures?when=2026-01-01", expect=404)
+
+
 if __name__ == "__main__":
     unittest.main()
