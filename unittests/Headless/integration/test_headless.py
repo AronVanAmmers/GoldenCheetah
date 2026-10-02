@@ -18,6 +18,7 @@
 
 import base64
 import csv
+import datetime
 import html
 import io
 import json
@@ -1889,7 +1890,7 @@ class TestChartLibrary(Headless):
 
         self.gcj("chart", "library", "add", "--name", "Two",
                  "--metric", "average_power", "--metric", "average_speed", "--style", "dots", expect=2)
-        refused = self.gcj("chart", "library", "add", "--name", "PMC", "--pmc", expect=2)
+        refused = self.gcj("chart", "library", "add", "--name", "Banister", "--banister", expect=2)
         self.assertIn("not supported", refused["error"])
         refused = self.gcj("chart", "library", "add", "--name", "Bad",
                            "--estimate", "ftp", "--model", "cp2", expect=2)
@@ -2820,6 +2821,224 @@ class TestAthleteSettingsRest(Headless):
         self.assertEqual(self.jcall("GET", "/measures?group=Body")["data"]["measures"][0]["comment"], "rest")
         self.jcall("DELETE", "/measures?when=2026-01-01")
         self.jcall("DELETE", "/measures?when=2026-01-01", expect=404)
+
+
+def png_colours(data, limit=64):
+    """how many different pixel values a PNG has (up to limit): a blank image has one"""
+    import struct
+    import zlib
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    pos, idat, width, height, kind = 8, b"", 0, 0, 0
+    while pos < len(data):
+        n, tag = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + n]
+        if tag == b"IHDR":
+            width, height, depth, kind = struct.unpack(">IIBB", body[:10])
+        elif tag == b"IDAT":
+            idat += body
+        pos += 12 + n
+    raw = zlib.decompress(idat)
+    bpp = {2: 3, 6: 4}[kind]
+    stride = width * bpp + 1
+    # unfiltered or not, rows of a drawn chart differ; count raw row bytes
+    seen = set()
+    for y in range(0, height, max(1, height // 50)):
+        row = raw[y * stride + 1:(y + 1) * stride]
+        for x in range(0, len(row) - bpp, bpp * 7):
+            seen.add(row[x:x + bpp])
+            if len(seen) >= limit:
+                return len(seen)
+    return len(seen)
+
+
+class TestTrendsLibraryCharts(Headless):
+    """chart library render and data: the Trends sidebar charts drawn by the GUI's own plot"""
+
+    imports = [RIDE_POWER, RIDE_GPS, RUN_STRYD]
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # the GPS ride into the power ride's week (Monday 20 to Sunday 26 January 2020)
+        r = cls.gc_class("--athlete", cls.athlete, "activity", "set", "2012_01_11_11_51_01",
+                         "--set", "Start Date=2020-01-20")
+        assert r.code == 0, r
+
+    def setUp(self):
+        self.keep(os.path.join(self.folder, "config", "charts.xml"))
+
+    def charts(self):
+        return [c["name"] for c in self.gcj("chart", "library", "list")["data"]["charts"]]
+
+    def test_every_built_in_chart_draws_in_every_format(self):
+        names = self.charts()
+        self.assertGreater(len(names), 30)
+        server, port = start_server(self.env, self.home, os.path.join(self.tmp, "render.log"))
+        try:
+            for name in names:
+                path = "/athletes/%s/charts/%s/image" % (self.athlete, urllib.parse.quote(name, safe=""))
+                for fmt, magic in (("png", b"\x89PNG"), ("svg", b"<?xml"), ("pdf", b"%PDF")):
+                    status, body = call_server(port, "GET", path + "?as=" + fmt + "&width=800&height=400")
+                    self.assertEqual(status, 200, (name, fmt, body[:300]))
+                    self.assertTrue(body.startswith(magic), (name, fmt, body[:20]))
+                    self.assertGreater(len(body), 2000, (name, fmt))
+                    if fmt == "png":
+                        self.assertGreater(png_colours(body), 3, name)
+                    if fmt == "svg":
+                        self.assertIn(b"<svg", body[:2000])
+        finally:
+            stop_server(server)
+        self.assertClosed()
+
+    def test_render_on_the_command_line(self):
+        out = os.path.join(self.tmp, "pmc.png")
+        env = self.gcj("-o", out, "chart", "library", "render", "PMC (Coggan)", "--from", "2020-01-01",
+                       "--to", "2020-03-31", "--by", "week", "--width", "900", "--height", "500")
+        self.assertEqual(env["data"]["name"], "PMC (Coggan)")
+        self.assertEqual(env["data"]["by"], "week")
+        self.assertEqual((env["data"]["width"], env["data"]["height"]), (900, 500))
+        # a weekly chart starts on a Monday
+        self.assertEqual(env["data"]["from"], "2019-12-30")
+        with open(out, "rb") as f:
+            image = f.read()
+        self.assertTrue(image.startswith(b"\x89PNG"))
+        self.assertGreater(png_colours(image), 3)
+
+        refused = self.gcj("chart", "library", "render", "No such chart", expect=3)
+        self.assertIn("no chart called", refused["error"])
+        self.gcj("chart", "library", "data", "No such chart", expect=3)
+        self.gcj("chart", "library", "render", "PMC (Coggan)", "--from", "2020-02-01", "--to", "2020-01-01", expect=2)
+        self.gcj("chart", "library", "render", "PMC (Coggan)", "--filter", "this is not a filter !!!", expect=2)
+        self.gcj("chart", "library", "render", "PMC (Coggan)", "--by", "fortnight", expect=2)
+        self.assertClosed()
+
+    def test_data_matches_metric_aggregate_per_week(self):
+        self.gcj("chart", "library", "add", "--name", "Weekly", "--by", "week",
+                 "--metric", "Average_Speed", "--metric", "total_distance")
+        data = self.gcj("chart", "library", "data", "Weekly", "--from", "2020-01-01", "--to", "2020-02-29")["data"]
+        self.assertEqual(data["by"], "week")
+        self.assertEqual([c["detail"] for c in data["columns"]], ["average_speed", "total_distance"])
+        # as the GUI's table: from the first week with data to the last
+        self.assertGreater(len(data["rows"]), 0)
+        busy = 0
+        for row in data["rows"]:
+            start = row["date"]
+            self.assertRegex(start, r"^\d{4}-\d\d-\d\d$")
+            to = (datetime.date.fromisoformat(start) + datetime.timedelta(days=6)).isoformat()
+            agg = self.gcj("metric", "aggregate", "--metric", "Average_Speed,total_distance",
+                           "--from", start, "--to", to)["data"]
+            if agg["activities"] == 0:
+                self.assertEqual(row["values"], [0, 0], start)
+                continue
+            busy += 1
+            self.assertEqual(agg["activities"], 2, start)
+            # aggregate rounds to the metric's precision, the table has it unrounded and as text
+            self.assertAlmostEqual(row["values"][0], agg["values"]["average_speed"], delta=0.051)
+            self.assertAlmostEqual(row["values"][1], agg["values"]["total_distance"], delta=0.0051)
+            self.assertEqual(float(row["text"][0]), agg["values"]["average_speed"])
+        self.assertEqual(busy, 1)
+
+        # text and CSV are the same table, a column per curve
+        rows = self.csv_rows("chart", "library", "data", "Weekly", "--from", "2020-01-01", "--to", "2020-02-29")
+        self.assertEqual(rows[0][0], "Date")
+        self.assertEqual(len(rows), len(data["rows"]) + 1)
+        self.assertEqual(len(rows[0]), 3)
+        text = self.gca("chart", "library", "data", "Weekly", "--from", "2020-01-20", "--to", "2020-01-26")
+        self.assertEqual(text.code, 0, text)
+        self.assertIn(b"2020-01-20", text.out)
+
+        # an extra filter, as the filter box: the run is in no week here
+        filtered = self.gcj("chart", "library", "data", "Weekly", "--from", "2020-01-01", "--to", "2020-02-29",
+                            "--filter", "isRun")["data"]
+        self.assertTrue(all(r["values"] == [0, 0] for r in filtered["rows"]), filtered["rows"])
+        # REST gives the same rows
+        server, port = start_server(self.env, self.home, os.path.join(self.tmp, "data.log"))
+        try:
+            status, body = call_server(port, "GET", "/athletes/%s/charts/Weekly/data?from=2020-01-01&to=2020-02-29" % self.athlete)
+        finally:
+            stop_server(server)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)["data"]["rows"], data["rows"])
+
+    def test_pmc_chart_made_here_matches_pmc(self):
+        self.gcj("chart", "library", "add", "--name", "My PMC", "--by", "day", "--pmc", "lts")
+        self.gcj("chart", "library", "curve", "add", "My PMC", "--pmc", "sts", "--stress", "BikeStress")
+        self.gcj("chart", "library", "curve", "add", "My PMC", "--pmc", "sb")
+        shown = self.gcj("chart", "library", "curve", "add", "My PMC", "--pmc", "expected-sts")["data"]["metrics"]
+        self.assertEqual([m["type"] for m in shown], ["stress"] * 4)
+        self.assertEqual([m["pmc"] for m in shown], ["lts", "sts", "sb", "expected-sts"])
+        self.assertEqual({m["stress"] for m in shown}, {"coggan_tss"})
+        self.assertEqual([m["name"] for m in shown], ["BikeStress"] * 4)
+        self.assertEqual([m["units"] for m in shown], ["Stress"] * 4)
+        # read back from the file
+        again = self.gcj("chart", "library", "show", "My PMC")["data"]["metrics"]
+        self.assertEqual([m["detail"] for m in again],
+                         ["lts coggan_tss", "sts coggan_tss", "sb coggan_tss", "expected-sts coggan_tss"])
+
+        out = os.path.join(self.tmp, "mypmc.svg")
+        self.gcj("-o", out, "chart", "library", "render", "My PMC", "--as", "svg", "--from", "2020-01-01", "--to", "2020-03-31")
+        with open(out, "rb") as f:
+            self.assertIn(b"<svg", f.read(2000))
+
+        data = self.gcj("chart", "library", "data", "My PMC", "--from", "2020-01-20", "--to", "2020-02-20")["data"]
+        self.assertEqual([c["name"] for c in data["columns"]], ["CTL", "ATL", "TSB", "Expected ATL"])
+        pmc = {d["date"]: d for d in self.gcj("pmc", "--from", "2020-01-20", "--to", "2020-02-20")["data"]["days"]}
+        # grouped by day the GUI's table leaves out days whose values are all below 1
+        self.assertGreater(len(data["rows"]), 5)
+        for row in data["rows"]:
+            day = pmc[row["date"]]
+            self.assertAlmostEqual(row["values"][0], day["ctl"], places=3)
+            self.assertAlmostEqual(row["values"][1], day["atl"], places=3)
+            self.assertAlmostEqual(row["values"][2], day["tsb"], places=3)
+
+        refused = self.gcj("chart", "library", "curve", "add", "My PMC", "--pmc", "lts", "--stress", "nope", expect=2)
+        self.assertIn("nope", refused["error"])
+        self.gcj("chart", "library", "curve", "add", "My PMC", "--stress", "coggan_tss", "--metric", "average_power", expect=2)
+        self.gcj("chart", "library", "curve", "add", "My PMC", "--pmc", "lts", "--metric", "average_power", expect=2)
+
+    def test_measure_curves(self):
+        shown = self.gcj("chart", "library", "add", "--name", "Weight", "--by", "day",
+                         "--measure", "WEIGHTKG")["data"]["metrics"]
+        self.assertEqual((shown[0]["type"], shown[0]["detail"], shown[0]["units"]), ("measure", "Body - Weight", "kg"))
+        self.gcj("measures", "add", "--when", "2020-01-22", "--set", "WEIGHTKG=71.5")
+        data = self.gcj("chart", "library", "data", "Weight", "--from", "2020-01-20", "--to", "2020-01-24")["data"]
+        values = {r["date"]: r["values"][0] for r in data["rows"]}
+        self.assertAlmostEqual(values["2020-01-22"], 71.5, places=3)
+        self.gcj("chart", "library", "curve", "add", "Weight", "--measure", "nope", expect=2)
+        self.gcj("chart", "library", "curve", "add", "Weight", "--measure", "weight", "--group", "nope", expect=2)
+        self.gcj("chart", "library", "curve", "add", "Weight", "--metric", "average_power", "--group", "Body", expect=2)
+
+    def test_a_gui_made_banister_chart_draws(self):
+        # a chart with a Banister curve, as Curve Settings saves one: the
+        # command line can't make it, so a PMC curve is made and its type
+        # changed in the file to METRIC_BANISTER (11)
+        self.gcj("chart", "library", "add", "--name", "Banister", "--by", "day", "--pmc", "lts")
+        path = os.path.join(self.folder, "config", "charts.xml")
+        with open(path, encoding="utf-8") as f:
+            xml = f.read()
+        found = False
+        for chart, blob in re.findall(r'<chart name="(.*?)">"(.*?)"</chart>', xml):
+            if html.unescape(chart) != "Banister":
+                continue
+            data = base64.b64decode(blob)
+            marker = b"\xff\xff\xff\xff\x00\x00\x00\x16\x00\x00\x00\x01\x00\x00\x00\x07"
+            self.assertIn(marker, data)
+            data = data.replace(marker, marker[:-1] + b"\x0b")
+            xml = xml.replace(blob, base64.b64encode(data).decode())
+            found = True
+        self.assertTrue(found)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(xml)
+        self.assertEqual(self.gcj("chart", "library", "show", "Banister")["data"]["metrics"][0]["type"], "banister")
+
+        out = os.path.join(self.tmp, "banister.png")
+        self.gcj("-o", out, "chart", "library", "render", "Banister", "--from", "2020-01-01", "--to", "2020-03-31")
+        with open(out, "rb") as f:
+            self.assertGreater(png_colours(f.read()), 3)
+        rows = self.gcj("chart", "library", "data", "Banister", "--from", "2020-01-01", "--to", "2020-03-31",
+                        "--by", "week")["data"]["rows"]
+        self.assertGreater(len(rows), 0)
+        self.assertClosed()
 
 
 if __name__ == "__main__":

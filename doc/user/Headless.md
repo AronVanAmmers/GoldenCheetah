@@ -76,7 +76,7 @@ gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > inte
 | Processors | `processor list`, `processor show`, `processor install NAME --file script.py`, `processor configure`, `processor remove`, `processor run NAME ...` |
 | Metrics | `metric list`, `metric user list|show|add|edit|remove`, `metric favourite list|add|remove|set`, `metric aggregate`, `pmc`, `meanmax`, `cp`, `cp estimates` |
 | Zones and measures | `zones show`, `zones set`, `zones remove` (`--type power\|hr\|pace`), `zones options`, `zones scheme show\|set`, `measures list`, `measures add`, `measures edit`, `measures remove` |
-| Charts | `chart activity`, `chart meanmax`, `chart pmc`, `chart zones [--type power\|hr\|pace\|fatigue]`, `chart trend` (`--as png\|svg\|pdf`, `--width`, `--height`, `--dark`), `chart library list\|show\|add\|edit\|remove`, `chart library curve add\|edit\|remove` |
+| Charts | `chart activity`, `chart meanmax`, `chart pmc`, `chart zones [--type power\|hr\|pace\|fatigue]`, `chart trend` (`--as png\|svg\|pdf`, `--width`, `--height`, `--dark`), `chart library list\|show\|add\|edit\|remove`, `chart library curve add\|edit\|remove`, `chart library render\|data` |
 | Server | `serve` (see [REST API](#rest-api)) |
 
 ### Choosing activities
@@ -227,7 +227,7 @@ gc-cli -a Joe measures remove --when 2026-03-01
 
 `chart library` reads and writes the charts in the Trends sidebar, the athlete's `config/charts.xml`. `chart library list` shows the same charts the sidebar shows. Until a chart is added, edited or removed, that file is not created and the list is the built-in set.
 
-`chart library add` appends a chart. A curve is one of three kinds. `--metric` is a metric from `metric list` (a symbol such as `p_v`, or a formula name such as `Average_Power`). `--best` is a peak over a duration: `--best 45 --unit min --series power` is the 45-minute peak power on CP Analysis. `--estimate` is a value from a critical-power model, `--model cp2`, `cp3` or `ext`, such as `--estimate cp`. A model that does not offer that value is refused. `--wpk` makes an estimate per kilogram, as Curve Settings' Per Kilogram, and `curve edit` keeps it unless `--wpk` is given again. PMC, Banister, performance, formula and measure curves are refused.
+`chart library add` appends a chart. A curve is one of three kinds. `--metric` is a metric from `metric list` (a symbol such as `p_v`, or a formula name such as `Average_Power`). `--best` is a peak over a duration: `--best 45 --unit min --series power` is the 45-minute peak power on CP Analysis. `--estimate` is a value from a critical-power model, `--model cp2`, `cp3` or `ext`, such as `--estimate cp`. A model that does not offer that value is refused. `--wpk` makes an estimate per kilogram, as Curve Settings' Per Kilogram, and `curve edit` keeps it unless `--wpk` is given again. `--pmc` is a PMC curve of a stress metric (`--stress`, default `coggan_tss`): `sts` (ATL), `lts` (CTL), `sb` (TSB) or `rr` (ramp rate), and the same with `planned-` or `expected-` in front, the planned and expected PMC the Plan view's Expected PMC chart draws. It is named `ATL`, `CTL`, `TSB`, `Ramp Rate` (`Planned ATL`, `Expected ATL` ...) on a `Stress` axis. `--measure` is a daily measure, a field of `measures list` such as `WEIGHTKG` or `Weight`, from `--group` (default `Body`, or `Hrv` ...), named as Curve Settings names it (`Body - Weight`). Banister, performance and formula curves are refused.
 
 Curves with the same units share an axis. A best or an estimate gets the units the built-in charts use: `Watts` for every kind of power, `Joules` for W', `ml/min/kg` for VO2max (`Watts/kg` and `Joules/kg` per kilogram), so a best and CP go on one axis. `--units` sets them for any curve. Flags that belong to another kind of curve (`--series` without `--best`, `--wpk` without `--estimate` ...) are refused, on `chart library edit` too.
 
@@ -248,6 +248,20 @@ gc-cli -a Joe chart library show "CP Analysis"
 gc-cli -a Joe chart library curve edit "CP Analysis" 1 --style line
 gc-cli -a Joe chart library edit "P v" --name "Power and speed" --metric average_power --metric average_speed --by week
 gc-cli -a Joe chart library remove "Power and speed"
+```
+
+`chart library render NAME` draws a chart the way the Trends view draws it: the GUI's own plot draws the curves, axes, legend, zone shading, and season, event and today markers, in the GUI's colours and chart fonts (there is no `--dark`). `--as png|svg|pdf`, `--width` and `--height` (default 1200x600) and `--title` are those of the other `chart` commands. `chart library data NAME` gives the chart's numbers: the rows of the chart's Data Table and of Export Chart Data, a column per curve (with the units the table shows: hours for seconds), one row per group from the first group with data to the last; grouped by day, days whose values are all below 1 are left out, as the GUI's table does. JSON has each row's `date` (ISO, or the label for `all` and `tod`), its `label` as the table shows it, the `values` and their `text` at the metric's precision; text and CSV are the table.
+
+Both take the same options. With no dates the chart covers all dates, like the sidebar's All Dates season: from the first activity to today, or to the last activity when that is later. `--from` and `--to` set the dates, as Chart Setup's custom dates; a weekly chart starts on the Monday before. The GUI opens on the season picked last (Last 3 months the first time), so give the dates to match it. `--by` groups for this command only, and defaults to the chart's own grouping (a few built-in charts were saved without one; those are grouped by week). `--filter` adds a filter, as the GUI's filter box adds one to a chart: only activities that pass it count, for every curve, on top of each curve's own filter. Estimates and performance curves are computed first when the chart has any. An unknown chart is exit 3. The REST routes are `GET /v1/athletes/<athlete>/charts/<chart>/image` (the body is the image) and `.../data`, with the options as query parameters.
+
+```sh
+gc-cli -a Joe chart library add --name "Expected PMC" --by day --pmc expected-lts
+gc-cli -a Joe chart library curve add "Expected PMC" --pmc expected-sts
+gc-cli -a Joe chart library curve add "Expected PMC" --pmc expected-sb
+gc-cli -a Joe chart library add --name Weight --by day --measure WEIGHTKG
+gc-cli -a Joe -o pmc.png chart library render "PMC (Coggan)" --from 2026-01-01 --to 2026-06-30
+gc-cli -a Joe -o cp.svg chart library render "CP Analysis" --as svg --by month --filter 'isRun = 0'
+gc-cli -a Joe --format csv chart library data "PMC (Coggan)" --by week --from 2026-01-01
 ```
 
 Clicking the chart in the Trends sidebar applies its curves and keeps the view's current grouping and date range. The saved grouping is what `chart library show` reports, and what Chart Setup applies.
