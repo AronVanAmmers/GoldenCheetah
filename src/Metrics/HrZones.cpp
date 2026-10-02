@@ -849,6 +849,26 @@ QColor hrZoneColor(int z, int) {
 // delete a range, extend an adjacent (prior if available, otherwise next)
 // range to cover the same time period, then return the number of the new range
 // covering the date range of the deleted range or -1 if none left
+HrZoneScheme
+HrZones::schemeFromRows(QList<HrZoneSchemeRow> rows)
+{
+    // sort the list into ascending order
+    std::sort(rows.begin(), rows.end());
+
+    // now update the results
+    HrZoneScheme results;
+    results.nzones_default = 0;
+    foreach(HrZoneSchemeRow zone, rows) {
+        results.nzones_default++;
+        results.zone_default.append(zone.lo);
+        results.zone_default_is_pct.append(true);
+        results.zone_default_name.append(zone.name);
+        results.zone_default_desc.append(zone.desc);
+        results.zone_default_trimp.append(zone.trimp);
+    }
+    return results;
+}
+
 int HrZones::deleteRange(int rnum) {
 
     // check bounds - silently fail, don't assert
