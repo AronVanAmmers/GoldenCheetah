@@ -40,6 +40,24 @@
 
 namespace Headless {
 
+RideItem *
+otherKindNamed(RideCache *cache, const QString &fileName, bool planned)
+{
+    if (!cache) return nullptr;
+    for (RideItem *item : cache->rides())
+        if (item->planned != planned && item->fileName == fileName) return item;
+    return nullptr;
+}
+
+QString
+sameNameRefusal(RideCache *cache, const QString &fileName, bool planned)
+{
+    if (!otherKindNamed(cache, fileName, planned)) return QString();
+    return QString("%1 activity is already called %2, and GoldenCheetah can't tell a planned and a completed "
+                   "activity of the same name apart; choose another start time")
+           .arg(planned ? "a completed" : "a planned").arg(QFileInfo(fileName).completeBaseName());
+}
+
 bool
 isAthleteName(const QString &name)
 {

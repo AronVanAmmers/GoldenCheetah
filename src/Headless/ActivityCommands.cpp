@@ -409,8 +409,7 @@ deleteActivities(CommandEnvironment &env, const CommandRequest &request)
         if (!item) return CommandResult::failure(Status::NotFound, error);
         if (files.contains(item->fileName)) continue;
         // the ride cache deletes by file name
-        for (const RideItem *other : env.session->rideCache()->rides())
-            if (other != item && other->fileName == item->fileName)
+        if (otherKindNamed(env.session->rideCache(), item->fileName, item->planned))
                 return CommandResult::failure(Status::Failed,
                             QString("a planned and a completed activity are both called %1, and GoldenCheetah "
                                     "can't tell them apart when deleting; move the planned one first ('plan move')")
