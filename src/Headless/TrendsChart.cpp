@@ -30,6 +30,7 @@
 #include "ChartImage.h"
 #include "ChartRenderer.h"
 #include "ResultFormat.h"
+#include "SeasonRange.h"
 
 #include "Athlete.h"
 #include "Context.h"
@@ -69,12 +70,21 @@ allDates(Context *context)
 // activity when that is later (LTMPlot::setData). The GUI opens on the season
 // picked last, Last 3 months when none was.
 //
-// TODO(season): --season NAME, through the seasons stream's resolver, gives
-// the range (and its name, which the chart leaves unmarked) here
+// the dates the chart covers: a season (named, so the chart leaves it
+// unmarked as the GUI does), --from/--to, or all dates
 static bool
-chartRange(Context *context, const QJsonObject &args, DateRange &range, QString &error)
+chartRange(CommandEnvironment &env, const QJsonObject &args, DateRange &range, QString &error, Status &status)
 {
-    DateRange all = allDates(context);
+    if (args.contains("season")) {
+        if (args.contains("from") || args.contains("to")) {
+            error = "--season stands for --from and --to: give one or the other";
+            status = Status::Usage;
+            return false;
+        }
+        return seasonRange(*env.session, args.value("season").toString(), range, error, &status);
+    }
+
+    DateRange all = allDates(env.session->context());
     if (!args.contains("from") && !args.contains("to")) {
         range = all;
         return true;
@@ -85,6 +95,7 @@ chartRange(Context *context, const QJsonObject &args, DateRange &range, QString 
     QDate to = args.contains("to") ? QDate::fromString(args.value("to").toString(), Qt::ISODate) : all.to;
     if (from > to) {
         error = QString("--from %1 is after --to %2").arg(from.toString(Qt::ISODate), to.toString(Qt::ISODate));
+        status = Status::Usage;
         return false;
     }
     range = DateRange(from, to, QString());
@@ -120,7 +131,8 @@ prepareChart(CommandEnvironment &env, const QJsonObject &args, TrendsChart &char
 
     status = Status::Usage;
     DateRange range;
-    if (!chartRange(context, args, range, error)) return false;
+    if (!chartRange(env, args, range, error, status)) return false;
+    status = Status::Usage;
     // a few built-in charts were saved with no valid grouping: the sidebar
     // never applies it (it keeps the view's), so group those by week
     if (args.contains("by")) chart.settings.groupBy = groups().value(args.value("by").toString());
@@ -277,6 +289,7 @@ chartParams(CommandSpec &spec)
     spec.params << ParamSpec("name", ParamType::String, "chart name, from 'chart library list'").req().pos();
     spec.params << ParamSpec("from", ParamType::Date, "first day (default: all dates)");
     spec.params << ParamSpec("to", ParamType::Date, "last day (default: all dates)");
+    spec.params << seasonParam();
     ParamSpec by("by", ParamType::String, "group by " + groups().either() + " (default: the chart's own)");
     by.oneOf(groups().names);
     spec.params << by;
