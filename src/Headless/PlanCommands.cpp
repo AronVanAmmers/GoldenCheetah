@@ -586,11 +586,13 @@ movePlanned(CommandEnvironment &env, const CommandRequest &request)
     QString saveError;
     bool saved = saveAffected(cache, check.affectedItems, saveError);
     env.session->refresh();
+    if (!saved)
+        return CommandResult::failure(Status::Failed, QString("%1 was moved to %2, but the change could not be saved everywhere: %3")
+                                      .arg(from).arg(idOf(item)).arg(saveError));
 
     QJsonObject data = plannedJson(cache, item);
     data.insert("moved_from", from);
     CommandResult r = CommandResult::success(data);
-    if (!saved) r.warnings << saveError;
     r.text = QString("moved %1 from %2 to %3 %4\n").arg(idOf(item)).arg(fromDate.toString(Qt::ISODate))
              .arg(when.date().toString(Qt::ISODate)).arg(when.time().toString("HH:mm:ss"));
     return r;
@@ -618,15 +620,33 @@ copyPlanned(CommandEnvironment &env, const CommandRequest &request)
     QString saveError;
     bool saved = saveAffected(cache, check.affectedItems, saveError);
     env.session->refresh();
+    if (!saved)
+        return CommandResult::failure(Status::Failed, QString("%1 was copied, but the change could not be saved everywhere: %2")
+                                      .arg(idOf(item)).arg(saveError));
 
     RideItem *copy = cache->getRide(when.toString("yyyy_MM_dd_HH_mm_ss") + "." + QFileInfo(item->fileName).suffix(), true);
     if (!copy) return CommandResult::failure(Status::Internal, "the copy was made but not loaded");
     QJsonObject data = plannedJson(cache, copy);
     data.insert("copied_from", idOf(item));
     CommandResult r = CommandResult::success(data);
-    if (!saved) r.warnings << saveError;
     r.text = QString("copied %1 to %2\n").arg(idOf(item)).arg(idOf(copy));
     return r;
+}
+
+// a link is in both files or in neither: a change that could not be saved
+// is undone in memory, and in the file of the side that was saved already
+static QString
+undoLinkChange(RideCache *cache, const QList<RideItem*> &items, const std::function<void()> &undo, const QString &saveError)
+{
+    QList<RideItem*> saved;
+    for (RideItem *item : items) if (!item->isDirty()) saved << item;
+    undo();
+    QString restoreError;
+    bool restored = cache->saveActivities(saved, restoreError);
+    // the others are as on disk again
+    for (RideItem *item : items) if (!saved.contains(item)) item->setDirty(false);
+    if (restored) return QString("%1; nothing was changed").arg(saveError);
+    return QString("%1, and the link could not be put back as it was: %2").arg(saveError, restoreError);
 }
 
 static CommandResult
@@ -643,7 +663,8 @@ linkPlanned(CommandEnvironment &env, const CommandRequest &request)
     if (!checkPasses(check, error)) return CommandResult::failure(Status::Failed, error);
     RideCache::OperationResult result = cache->linkActivities(planned, actual);
     if (!result.success) return CommandResult::failure(Status::Failed, result.error);
-    if (!cache->saveActivities(check.affectedItems, error)) return CommandResult::failure(Status::Failed, error);
+    if (!cache->saveActivities(check.affectedItems, error))
+        return CommandResult::failure(Status::Failed, undoLinkChange(cache, check.affectedItems, [&]() { cache->unlinkActivity(planned); }, error));
     env.session->refresh();
 
     QJsonObject data;
@@ -668,7 +689,8 @@ unlinkPlanned(CommandEnvironment &env, const CommandRequest &request)
     RideItem *other = cache->getLinkedActivity(item);
     RideCache::OperationResult result = cache->unlinkActivity(item);
     if (!result.success) return CommandResult::failure(Status::Failed, result.error);
-    if (!cache->saveActivities(check.affectedItems, error)) return CommandResult::failure(Status::Failed, error);
+    if (!cache->saveActivities(check.affectedItems, error))
+        return CommandResult::failure(Status::Failed, undoLinkChange(cache, check.affectedItems, [&]() { cache->linkActivities(item, other); }, error));
     env.session->refresh();
 
     RideItem *planned = item->planned ? item : other;
@@ -718,6 +740,9 @@ shiftPlanned(CommandEnvironment &env, const CommandRequest &request)
     QString saveError;
     bool saved = saveAffected(cache, check.affectedItems, saveError);
     env.session->refresh();
+    if (!saved)
+        return CommandResult::failure(Status::Failed, QString("%1 planned activit%2 moved, but the change could not be saved everywhere: %3")
+                                      .arg(result.affectedCount).arg(result.affectedCount == 1 ? "y was" : "ies were").arg(saveError));
 
     QJsonArray moved;
     for (const auto &p : before) {
@@ -735,7 +760,6 @@ shiftPlanned(CommandEnvironment &env, const CommandRequest &request)
     data.insert("count", result.affectedCount);
     CommandResult r = result.error.isEmpty() ? CommandResult::success(data)
                                              : CommandResult::batch(data, items.count() - result.affectedCount, items.count(), result.error);
-    if (!saved) r.warnings << saveError;
     r.text = QString("%1 planned activit%2 from %3 moved %4 day%5\n").arg(result.affectedCount)
              .arg(result.affectedCount == 1 ? "y" : "ies").arg(from.toString(Qt::ISODate))
              .arg(items.isEmpty() ? 0 : effective).arg(std::abs(effective) == 1 ? "" : "s");
