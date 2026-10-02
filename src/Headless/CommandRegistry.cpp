@@ -223,7 +223,7 @@ CommandRegistry::coerce(const ParamSpec &param, const QJsonValue &value, QString
         else if (isString) {
             bool ok = false;
             double v = text.trimmed().toDouble(&ok);
-            if (!ok) error = QString("expected a number, got '%1'").arg(text);
+            if (!ok || !std::isfinite(v)) error = QString("expected a number, got '%1'").arg(text);
             else result = v;
         } else error = QString("expected a number");
         break;

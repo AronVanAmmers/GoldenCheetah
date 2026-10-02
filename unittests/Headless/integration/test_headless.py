@@ -2539,7 +2539,7 @@ class TestAthleteSettings(Headless):
                      ("--wheel-size", "0"), ("--wheel-size", "10000"), ("--wbal-tau", "29"), ("--wbal-tau", "1201"),
                      ("--sts-days", "0"), ("--sts-days", "22"), ("--lts-days", "6"), ("--lts-days", "57"),
                      ("--sb-today", "maybe"), ("--sex", "other"), ("--dob", "1975-13-01"),
-                     ("--nickname", "ok", "--weight", "-5"), ()):
+                     ("--nickname", "ok", "--weight", "-5"), ("--weight", "nan"), ("--height", "inf"), ()):
             self.gcj("athlete", "set", *args, expect=2)
         with open(path, "rb") as f:
             self.assertEqual(f.read(), saved)
@@ -2688,6 +2688,8 @@ class TestMeasureEditing(Headless):
         self.gcj("measures", "edit", "--when", "2020-01-20T09:00:00", "--set", "WEIGHTKG=70", expect=3)
         self.gcj("measures", "edit", "--when", "2020-01-20T08:00:00", expect=2)
         self.gcj("measures", "edit", "--when", "2020-01-20T08:00:00", "--set", "NOPE=1", expect=2)
+        self.gcj("measures", "edit", "--when", "2020-01-20T08:00:00", "--set", "WEIGHTKG=nan", expect=2)
+        self.gcj("measures", "add", "--when", "2020-01-21", "--set", "WEIGHTKG=NaN", expect=2)
         self.gcj("measures", "edit", "--when", "2020-01-20T08:00:00", "--set", "WEIGHTKG=10000", expect=2)
         self.gcj("measures", "remove", "--group", "Nope", "--when", "2020-01-20", expect=3)
         self.assertEqual(self.weight(), 73)
@@ -3191,6 +3193,8 @@ class TestManualEntry(Headless, PlanHelpers):
                      ("--date", day(-1), "--sport", "Bike", "--rpe", "11"),
                      ("--date", day(-1), "--sport", "Bike", "--avg-hr", "300"),
                      ("--date", day(-1), "--sport", "Bike", "--distance", "-1"),
+                     ("--date", day(-1), "--sport", "Bike", "--distance", "nan"),
+                     ("--date", day(-1), "--sport", "Bike", "--distance", "inf"),
                      ("--date", day(-1), "--sport", "Bike", "--estimate", "time", "--bikestress", "50"),
                      ("--date", day(-1), "--sport", "Bike", "--estimate", "sometimes"),
                      ("--date", day(-1), "--sport", "Bike", "--estimate-days", "0")):

@@ -257,8 +257,8 @@ storedText(const FieldDefinition &field, const QString &value, QString &text, QS
     } else if (isMetric || field.name == "Recording Interval" || field.type == GcFieldType::FIELD_INTEGER
                || field.type == GcFieldType::FIELD_DOUBLE) {
         bool ok = false;
-        v.toDouble(&ok);
-        if (!ok) {
+        double d = v.toDouble(&ok);
+        if (!ok || !std::isfinite(d)) {
             error = QString("field '%1' is numeric, '%2' is not a number").arg(field.name, value);
             return false;
         }
