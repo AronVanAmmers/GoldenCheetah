@@ -78,8 +78,9 @@ class AthleteSession
         // wait for the model estimates (CP, W' ...) to be computed
         void waitForEstimates();
 
-        // find an activity by file name, base name, start date-time or index
-        RideItem *findActivity(const QString &id, QString &error) const;
+        // find an activity by file name, base name, start date-time or index;
+        // planned ones with planned
+        RideItem *findActivity(const QString &id, QString &error, bool planned = false) const;
 
     private:
 
@@ -94,15 +95,19 @@ class AthleteSession
 
 // finds activities by id as findActivity does, with the rides indexed
 // once, for looking up many. Valid while the rides don't change.
+// With planned, dates, start times, 'first' and 'last' are planned
+// activities, and a planned activity wins over a completed one of the same
+// file name (the two are kept in different folders).
 class ActivityLookup
 {
     public:
-        explicit ActivityLookup(RideCache *cache);
+        explicit ActivityLookup(RideCache *cache, bool planned = false);
         RideItem *find(const QString &id, QString &error) const;
 
     private:
         bool open = false;
-        QList<RideItem *> actual;               // not planned, in date order
+        bool planned = false;
+        QList<RideItem *> actual;               // of the kind looked for, in date order
         QHash<QString, RideItem *> byFile;      // file name, and without its suffix
 };
 
