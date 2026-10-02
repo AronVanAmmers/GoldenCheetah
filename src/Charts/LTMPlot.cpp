@@ -148,6 +148,11 @@ LTMPlot::LTMPlot(LTMWindow *parent, Context *context, int position) :
 
 LTMPlot::~LTMPlot()
 {
+    // the plot owns these, the curves and markers are deleted with it
+    qDeleteAll(models);
+    qDeleteAll(stackX);
+    qDeleteAll(stackY);
+    delete curveColors;
 }
 
 void
@@ -1383,8 +1388,8 @@ LTMPlot::setData(LTMSettings *set)
     // update colours etc for plot chrome will also save state
     configChanged(CONFIG_APPEARANCE);
 
-    // we have banister?
-    parent->showBanister(haveBanister);
+    // we have banister? (a plot drawn without a window has no helper)
+    if (parent) parent->showBanister(haveBanister);
 
     // plot
     replot();
@@ -3984,6 +3989,13 @@ LTMPlot::replot() {
     QwtPlot::replot();
 }
 
+// comparing date ranges is the window's mode, a plot without one never does
+bool
+LTMPlot::isCompare() const
+{
+    return parent && parent->isCompare();
+}
+
 int
 LTMPlot::groupForDate(QDate date, int groupby)
 {
@@ -4016,7 +4028,7 @@ LTMPlot::pointHover(QwtPlotCurve *curve, int index)
         int precision = 0;
         QString datestr;
 
-        if (!parent->isCompare()) {
+        if (!isCompare()) {
             LTMScaleDraw *lsd = new LTMScaleDraw(settings->start, groupForDate(settings->start.date(), settings->groupBy), settings->groupBy);
             QwtText startText = lsd->label((int)(curve->sample(index).x()+0.5));
 
@@ -4074,7 +4086,7 @@ LTMPlot::pointHover(QwtPlotCurve *curve, int index)
 
         // output the tooltip
         QString text;
-        if (!parent->isCompare()) {
+        if (!isCompare()) {
             text = QString("%1\n%2\n%3 %4")
                         .arg(datestr)
                         .arg(curve->title().text())
@@ -4098,8 +4110,8 @@ LTMPlot::pointHover(QwtPlotCurve *curve, int index)
 void
 LTMPlot::pointClicked(QwtPlotCurve *curve, int index)
 {
-    // do nothing on a compare chart
-    if (parent->isCompare()) return;
+    // do nothing on a compare chart, nor without a window to show the popup
+    if (!parent || isCompare()) return;
 
     if (index >= 0 && curve != highlighter) {
         // setup the popup
@@ -4150,8 +4162,8 @@ class LTMPlotBackground: public QwtPlotItem
                       const QwtScaleMap &xMap, const QwtScaleMap &yMap,
                       const QRectF &rect) const
     {
-        const Zones *zones      = parent->parent->context->athlete->zones("Bike");
-        int zone_range_size     = parent->parent->context->athlete->zones("Bike")->getRangeSize();
+        const Zones *zones      = parent->context->athlete->zones("Bike");
+        int zone_range_size     = parent->context->athlete->zones("Bike")->getRangeSize();
 
         if (zone_range_size >= 0) { //parent->shadeZones() &&
             for (int i = 0; i < zone_range_size; i ++) {
@@ -4207,7 +4219,7 @@ class LTMPlotZoneLabel: public QwtPlotItem
             parent = _parent;
             zone_number = _zone_number;
 
-            const Zones *zones = parent->parent->context->athlete->zones("Bike");
+            const Zones *zones = parent->context->athlete->zones("Bike");
             int zone_range     = zones->whichRange(settings->start.addDays((settings->end.date().toJulianDay()-settings->start.date().toJulianDay())/2).date());
 
             // which axis has watts?

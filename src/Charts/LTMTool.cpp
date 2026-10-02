@@ -2277,16 +2277,8 @@ EditMetricDetailDialog::stressName()
     // only for bests!
     if (chooseStress->isChecked() == false) return;
 
-    // re-use bestSymbol
-    metricDetail->bestSymbol = metricDetail->symbol;
-
-    // append type
-    switch(stressTypeSelect->currentIndex()) {
-    case 0: metricDetail->bestSymbol += "_lts"; break;
-    case 1: metricDetail->bestSymbol += "_sts"; break;
-    case 2: metricDetail->bestSymbol += "_sb"; break;
-    case 3: metricDetail->bestSymbol += "_rr"; break;
-    }
+    // re-use bestSymbol, append type (as the command line does)
+    metricDetail->bestSymbol = MetricDetail::stressSymbol(metricDetail->symbol, stressTypeSelect->currentIndex());
 
 }
 
@@ -2342,10 +2334,9 @@ EditMetricDetailDialog::measureName()
     // when widget destroyed we get negative indexes so ignore
     if (measureGroup < 0 || measureField < 0) return;
 
-    // set uname from current parms
-    QString desc = QString(tr("%1 - %2"))
-        .arg(context->athlete->measures->getGroupNames().value(measureGroup))
-        .arg(context->athlete->measures->getFieldNames(measureGroup).value(measureField));
+    // set uname from current parms (as the command line does)
+    QString desc = MetricDetail::measureName(context->athlete->measures->getGroupNames().value(measureGroup),
+                                             context->athlete->measures->getFieldNames(measureGroup).value(measureField));
     userName->setText(desc);
     userUnits->setText(context->athlete->measures->getFieldUnits(measureGroup, measureField));
     metricDetail->symbol = desc.replace(" ", "_");

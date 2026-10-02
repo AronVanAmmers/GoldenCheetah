@@ -23,6 +23,7 @@
 #include "Colors.h" //dpixfactor
 #include "Context.h"
 #include "LTMChartParser.h"
+#include "RideFileCache.h"
 #include "Utils.h"
 
 #include <QtGui>
@@ -203,6 +204,26 @@ MetricDetail::bestName(int duration, int units, RideFile::SeriesType series)
     }
     desc += RideFile::seriesName(series);
     return desc;
+}
+
+QString
+MetricDetail::stressSymbol(const QString &symbol, int stressType)
+{
+    // as Curve Settings has always named them, the first two swapped
+    QString key = symbol;
+    switch(stressType) {
+    case 0: key += "_lts"; break;
+    case 1: key += "_sts"; break;
+    case 2: key += "_sb"; break;
+    case 3: key += "_rr"; break;
+    }
+    return key;
+}
+
+QString
+MetricDetail::measureName(const QString &group, const QString &field)
+{
+    return QString(QCoreApplication::translate("EditMetricDetailDialog", "%1 - %2")).arg(group).arg(field);
 }
 
 QString
@@ -559,4 +580,31 @@ while(counter-- && !in.atEnd()) {
     }
 
     return in;
+}
+
+void
+LTMSettings::prepare(Context *context, const DateRange &range, bool thruToday,
+                     const FilterSet &filters, QList<RideBest> &bests)
+{
+    start = QDateTime(range.from, QTime(0,0));
+    end   = QDateTime(range.to, QTime(24,0,0));
+
+    if (thruToday) {
+        QDate today = QDate::currentDate();
+        if (end.date() > today) end = QDateTime(today, QTime(24,0,0));
+    }
+
+    // Set the specification
+    specification.setFilterSet(filters);
+    specification.setDateRange(DateRange(start.date(), end.date()));
+
+    // if we want weeks and start is not a monday go back to the monday
+    int dow = start.date().dayOfWeek();
+    if (groupBy == LTM_WEEK && dow >1 && start != QDateTime(QDate(), QTime(0,0)))
+        start = start.addDays(-1*(dow-1));
+
+    // we need to get data again and apply filter
+    bests.clear();
+    bests = RideFileCache::getAllBestsFor(context, metrics, specification);
+    this->bests = &bests;
 }
