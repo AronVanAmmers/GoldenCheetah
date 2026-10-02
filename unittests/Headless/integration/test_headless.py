@@ -2003,5 +2003,412 @@ class TestChartLibrary(Headless):
         self.assertEqual((shown[0]["type"], shown[0]["detail"]), ("best", "5 min heartrate"))
 
 
+
+def seasons_xml(folder):
+    """the athlete's seasons.xml as the GUI's parser sees it: name -> element"""
+    import xml.etree.ElementTree as ET
+    path = os.path.join(folder, "config", "seasons.xml")
+    if not os.path.exists(path):
+        return {}
+    return {e.findtext("name").strip(): e for e in ET.parse(path).getroot().findall("season")}
+
+
+def day(offset=0):
+    import datetime
+    return (datetime.date.today() + datetime.timedelta(days=offset)).isoformat()
+
+
+class TestSeasons(Headless):
+    """season, phase and event commands write seasons.xml as the Trends sidebar does"""
+
+    imports = [RIDE_POWER, RUN_STRYD]   # bike 2020-01-26, run 2024-07-09
+
+    def setUp(self):
+        self.keep(os.path.join(self.folder, "config", "seasons.xml"))
+
+    def seasons(self):
+        return {s["name"]: s for s in self.gcj("season", "list")["data"]["seasons"] if s["kind"] == "season"}
+
+    def test_add_list_show_absolute_and_relative(self):
+        env = self.gcj("season", "add", "2020 Season", "--from", "2020-01-01", "--to", "2020-12-31",
+                       "--seed", "40", "--low", "-30")
+        self.assertEqual(env["data"]["status"], "added")
+        self.assertTrue(env["data"]["file"].endswith("seasons.xml"))
+        self.gcj("season", "add", "Rolling", "--start-ago", "3", "--start-unit", "months", "--length", "2m")
+        self.gcj("season", "add", "Block", "--type", "cycle", "--from", "2024-07-01", "--to", "2024-07-31")
+        self.gcj("season", "add", "So far", "--from", "2026-01-01", "--ytd")
+        self.gcj("season", "add", "Taper", "--end-ago", "0", "--length", "10d")
+
+        xml = seasons_xml(self.folder)
+        self.assertEqual(xml["2020 Season"].findtext("startdate"), "2020-01-01")
+        self.assertEqual(xml["2020 Season"].findtext("enddate"), "2020-12-31")
+        self.assertEqual((xml["2020 Season"].findtext("seed"), xml["2020 Season"].findtext("low")), ("40", "-30"))
+        self.assertEqual(xml["Rolling"].findtext("startoffset"), "1-3")     # months, 3 ago
+        self.assertEqual(xml["Rolling"].findtext("length"), "0-2-0")
+        self.assertIsNone(xml["Rolling"].find("startdate"))
+        self.assertEqual(xml["Block"].findtext("type"), "1")
+        self.assertIsNotNone(xml["So far"].find("ytd"))
+        self.assertEqual(xml["Taper"].findtext("endoffset"), "2-0")         # weeks, 0 ago
+        self.assertEqual(xml["Taper"].findtext("length"), "0-0-10")
+
+        # read back by the GUI's parser in a new process; the sidebar adds at the top
+        listed = self.gcj("season", "list")["data"]["seasons"]
+        self.assertEqual(listed[0]["name"], "Taper")
+        seasons = self.seasons()
+        self.assertEqual((seasons["2020 Season"]["start"], seasons["2020 Season"]["end"]), ("2020-01-01", "2020-12-31"))
+        self.assertFalse(seasons["2020 Season"]["builtin"])
+        self.assertTrue(seasons["This Year"]["builtin"])
+        self.assertEqual(seasons["Taper"]["end"], day())
+        self.assertEqual(seasons["Taper"]["start"], day(-9))
+        self.assertEqual(seasons["Block"]["type"], "cycle")
+
+        shown = self.gcj("season", "show", "rolling")["data"]   # names are case-insensitive
+        self.assertEqual(shown["definition"]["start"], {"kind": "ago", "ago": 3, "unit": "months"})
+        self.assertEqual(shown["definition"]["end"], {"kind": "length after start", "length": "2m"})
+        self.assertFalse(shown["absolute"])
+        self.assertEqual(self.gcj("season", "show", shown["id"])["data"]["name"], "Rolling")
+        self.assertEqual(self.gcj("season", "show", shown["id"].strip("{}"))["data"]["name"], "Rolling")
+        self.assertEqual(self.gcj("season", "show", "Taper")["data"]["definition"]["start"],
+                         {"kind": "length before end", "length": "10d"})
+        r = self.gca("season", "show", "2020 Season")
+        self.assertIn(b"seed   40", r.out)
+        self.gcj("season", "show", "Nope", expect=3)
+        self.assertClosed()
+
+    def test_refusals(self):
+        for args in (("X", "--from", "2020-01-01"),                              # no end
+                     ("X", "--to", "2020-01-01"),                                # no start
+                     ("X", "--from", "2020-03-01", "--to", "2020-02-01"),        # backwards
+                     ("X", "--from", "2020-01-01", "--to", "2020-02-01", "--length", "1m"),
+                     ("X", "--start-ago", "2", "--from", "2020-01-01", "--to", "2020-02-01"),
+                     ("X", "--length", "1m", "--ytd"),
+                     ("X", "--length", "13m", "--from", "2020-01-01"),
+                     ("X", "--start-ago", "60", "--length", "1m"),
+                     ("X", "--type", "adhoc", "--start-ago", "2", "--length", "1m"),
+                     ("X", "--from", "2020-01-01", "--to", "2020-02-01", "--seed", "301"),
+                     ("This Year", "--from", "2020-01-01", "--to", "2020-02-01"),  # the name is taken
+                     ("", "--from", "2020-01-01", "--to", "2020-02-01")):
+            self.gcj("season", "add", *args, expect=2)
+        self.assertFalse(os.path.exists(os.path.join(self.folder, "config", "seasons.xml")))
+
+        # built-in ranges can't be changed
+        self.gcj("season", "edit", "This Year", "--name", "Mine", expect=2)
+        self.gcj("season", "remove", "Last 6 weeks", expect=2)
+        self.gcj("season", "phase", "add", "This Year", "Base", expect=2)
+        self.gcj("event", "add", "This Year", "Race", expect=2)
+        self.assertFalse(os.path.exists(os.path.join(self.folder, "config", "seasons.xml")))
+
+    def test_edit_and_remove(self):
+        self.gcj("season", "add", "Spring", "--from", "2026-03-01", "--to", "2026-05-31")
+        env = self.gcj("season", "edit", "Spring", "--name", "Early", "--to", "2026-06-30", "--seed", "20")
+        self.assertEqual((env["data"]["name"], env["data"]["start"], env["data"]["end"], env["data"]["seed"]),
+                         ("Early", "2026-03-01", "2026-06-30", 20))
+        # --length alone replaces the end, a new start keeps the end
+        self.assertEqual(self.gcj("season", "edit", "Early", "--length", "1m")["data"]["end"], "2026-03-31")
+        self.assertEqual(seasons_xml(self.folder)["Early"].findtext("length"), "0-1-0")
+        env = self.gcj("season", "edit", "Early", "--from", "2026-03-10")
+        self.assertEqual((env["data"]["start"], env["data"]["end"]), ("2026-03-10", "2026-04-09"))
+        env = self.gcj("season", "edit", "Early", "--type", "adhoc", "--to", "2026-04-30")
+        self.assertEqual(env["data"]["type"], "adhoc")
+        self.gcj("season", "edit", "Early", "--start-ago", "2", expect=2)     # adhoc has fixed dates
+        self.gcj("season", "edit", "Early", expect=2)                         # nothing to change
+        self.assertEqual(seasons_xml(self.folder)["Early"].findtext("type"), "2")
+
+        self.gcj("season", "add", "Other", "--from", "2026-03-01", "--to", "2026-05-31")
+        self.gcj("season", "edit", "Other", "--name", "early", expect=2)      # taken
+        self.assertEqual(self.gcj("season", "remove", "Early")["data"]["status"], "removed")
+        self.assertEqual(list(seasons_xml(self.folder)), ["Other"])
+        self.gcj("season", "remove", "Early", expect=3)
+
+    def test_ambiguous_names_list_the_ids(self):
+        # two seasons with one name, as the GUI allows
+        self.gcj("season", "add", "Twin", "--from", "2026-01-01", "--to", "2026-02-01")
+        path = os.path.join(self.folder, "config", "seasons.xml")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        block = text[text.index("\t<season>"):text.index("</season>") + len("</season>")]
+        twin = re.sub(r"\{[0-9a-f-]+\}", "{11111111-2222-3333-4444-555555555555}", block)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text.replace("</seasons>", twin + "\n</seasons>"))
+        r = self.gcj("season", "show", "twin", expect=2)
+        self.assertIn("{11111111-2222-3333-4444-555555555555}", r["error"])
+        self.assertEqual(self.gcj("season", "show", "{11111111-2222-3333-4444-555555555555}")["data"]["name"], "Twin")
+        self.gcj("activity", "list", "--season", "Twin", expect=2)
+
+    def test_phases(self):
+        self.gcj("season", "add", "2020", "--from", "2020-01-01", "--to", "2020-06-30")
+        env = self.gcj("season", "phase", "add", "2020", "Base", "--type", "base", "--to", "2020-02-29", "--seed", "10")
+        self.assertEqual((env["data"]["start"], env["data"]["end"], env["data"]["type"]), ("2020-01-01", "2020-02-29", "base"))
+        self.gcj("season", "phase", "add", "2020", "Whole")                   # the season's dates
+        for args in (("Late", "--from", "2020-06-01", "--to", "2020-07-31"),  # outside the season
+                     ("Short", "--from", "2020-02-01", "--to", "2020-02-01"), # no day long
+                     ("Peaky", "--type", "peak"),                             # the dialog doesn't offer it
+                     ("base",)):                                              # taken
+            self.gcj("season", "phase", "add", "2020", *args, expect=2)
+
+        phases = seasons_xml(self.folder)["2020"].findall("phase")
+        self.assertEqual([(p.findtext("name"), p.findtext("type"), p.findtext("startdate"), p.findtext("enddate"))
+                          for p in phases],
+                         [("Base", "102", "2020-01-01", "2020-02-29"), ("Whole", "100", "2020-01-01", "2020-06-30")])
+
+        listed = [s for s in self.gcj("season", "list")["data"]["seasons"] if s["season"] == "2020"]
+        self.assertEqual([(s["kind"], s["name"]) for s in listed], [("phase", "Base"), ("phase", "Whole")])
+        env = self.gcj("season", "phase", "edit", "2020", "base", "--name", "Build", "--type", "build", "--from", "2020-02-01")
+        self.assertEqual((env["data"]["name"], env["data"]["start"]), ("Build", "2020-02-01"))
+        self.gcj("season", "phase", "edit", "2020", "Build", "--to", "2020-12-31", expect=2)
+
+        # the activities and the PMC of a phase
+        self.assertEqual(len(self.gcj("activity", "list", "--season", "2020/Whole")["data"]["activities"]), 1)
+        self.assertEqual(len(self.gcj("activity", "list", "--season", "2020/Build")["data"]["activities"]), 0)
+        days = self.gcj("pmc", "--season", "2020/build")["data"]["days"]
+        self.assertEqual((days[0]["date"], days[-1]["date"]), ("2020-02-01", "2020-02-29"))
+
+        # a season with phases can't move with today
+        self.gcj("season", "edit", "2020", "--start-ago", "4", expect=2)
+        self.gcj("season", "edit", "2020", "--ytd", expect=2)
+        self.gcj("season", "phase", "remove", "2020", "Build")
+        self.gcj("season", "phase", "remove", "2020", "Build", expect=3)
+        self.assertEqual([p.findtext("name") for p in seasons_xml(self.folder)["2020"].findall("phase")], ["Whole"])
+
+        # phases go on seasons with fixed dates
+        self.gcj("season", "add", "Rolling", "--start-ago", "3", "--length", "1m")
+        self.gcj("season", "phase", "add", "Rolling", "Base", expect=2)
+
+    def test_events(self):
+        self.gcj("season", "add", "2026", "--from", "2026-01-01", "--to", "2026-12-31")
+        self.gcj("season", "add", "2027", "--from", "2027-01-01", "--to", "2027-12-31")
+        env = self.gcj("event", "add", "2026", "Club race", "--date", "2026-05-01", "--priority", "b",
+                       "--description", "local <crit> & \"sprint\"")
+        race = env["data"]
+        self.assertEqual((race["priority"], race["season"]), ("B", "2026"))
+        self.assertRegex(race["id"], r"^\{[0-9a-f-]{36}\}$")
+        last = self.gcj("event", "add", "2026", "Goal")["data"]                # the season's last day
+        self.assertEqual((last["date"], last["priority"]), ("2026-12-31", ""))
+        self.gcj("event", "add", "2027", "Club race", "--date", "2027-05-01", "--priority", "C")
+        self.gcj("event", "add", "2026", "Out", "--date", "2027-01-05", expect=2)
+        self.gcj("event", "add", "2026", "Bad", "--priority", "F", expect=2)
+
+        xml = seasons_xml(self.folder)["2026"].findall("event")
+        self.assertEqual([(e.get("date"), e.get("priority"), e.get("id")) for e in xml],
+                         [("2026-05-01", "2", race["id"]), ("2026-12-31", "0", last["id"])])
+        listed = self.gcj("event", "list")["data"]["events"]
+        self.assertEqual([(e["date"], e["name"]) for e in listed],
+                         [("2026-05-01", "Club race"), ("2026-12-31", "Goal"), ("2027-05-01", "Club race")])
+        self.assertEqual(listed[0]["description"], "local <crit> & \"sprint\"")
+        self.assertEqual(len(self.gcj("event", "list", "--season", "2027")["data"]["events"]), 1)
+        self.assertEqual(len(self.gcj("event", "list", "--from", "2026-06-01", "--to", "2027-01-01")["data"]["events"]), 1)
+
+        # one name in two seasons: give the id or the season
+        self.assertIn(race["id"], self.gcj("event", "edit", "Club race", "--priority", "A", expect=2)["error"])
+        env = self.gcj("event", "edit", "Club race", "--season", "2026", "--priority", "A", "--date", "2026-05-02")
+        self.assertEqual((env["data"]["priority"], env["data"]["date"]), ("A", "2026-05-02"))
+        self.gcj("event", "edit", race["id"], "--date", "2027-05-02", expect=2)   # outside its season
+        self.gcj("event", "edit", race["id"], "--name", "Crit")
+        self.assertEqual(self.gcj("season", "show", "2026")["data"]["events"][0]["name"], "Crit")
+        self.gcj("event", "remove", race["id"])
+        self.gcj("event", "remove", race["id"], expect=3)
+        self.assertEqual([e["name"] for e in self.gcj("event", "list")["data"]["events"]], ["Goal", "Club race"])
+
+    def test_season_option(self):
+        self.gcj("season", "add", "Bike year", "--from", "2020-01-01", "--to", "2020-12-31")
+        self.gcj("season", "add", "Run year", "--from", "2024-01-01", "--to", "2024-12-31")
+        acts = self.gcj("activity", "list", "--season", "bike year")["data"]["activities"]
+        self.assertEqual([a["id"] for a in acts], ["2020_01_26_13_00_38"])
+        acts = self.gcj("activity", "list", "--season", "Run year")["data"]["activities"]
+        self.assertEqual([a["sport"] for a in acts], ["Run"])
+        self.assertEqual(self.gcj("activity", "list", "--season", "Last 7 days")["data"]["activities"], [])
+        self.gcj("activity", "list", "--season", "Bike year", "--from", "2020-01-01", expect=2)
+        self.gcj("activity", "list", "--season", "No such", expect=3)
+
+        days = self.gcj("pmc", "--season", "Bike year")["data"]["days"]
+        # the PMC starts the day before the first activity
+        self.assertEqual((days[0]["date"], days[-1]["date"]), ("2020-01-25", "2020-12-31"))
+        self.gcj("pmc", "--season", "Bike year", "--to", "2020-02-01", expect=2)
+        env = self.gcj("chart", "pmc", "--season", "Bike year", "-o", os.path.join(self.tmp, "season-pmc.png"))
+        self.assertEqual((env["data"]["from"], env["data"]["to"]), ("2020-01-25", "2020-12-31"))
+        self.gcj("cp", "estimates", "--season", "Bike year")
+        self.gcj("cp", "estimates", "--season", "Bike year", "--from", "2020-01-01", expect=2)
+        self.gcj("measures", "list", "--season", "Bike year")
+        self.assertEqual(self.gcj("metric", "aggregate", "--metric", "workout_time", "--season", "Run year")
+                         ["data"]["activities"], 1)
+
+    def test_seed_changes_the_pmc(self):
+        def ctl(on):
+            days = self.gcj("pmc", "--from", on, "--to", on)["data"]["days"]
+            return days[0]["ctl"] if days else None
+        self.assertIsNone(ctl("2020-01-01"))       # before the first activity: no PMC yet
+        self.gcj("season", "add", "Seeded", "--from", "2020-01-01", "--to", "2020-12-31", "--seed", "50")
+        self.assertEqual(ctl("2020-01-01"), 50)
+        self.assertGreater(ctl("2020-01-20"), 30)
+        self.gcj("season", "edit", "Seeded", "--seed", "0")
+        self.assertIsNone(ctl("2020-01-01"))
+
+        # a seeded season after the end of the data doesn't break the PMC
+        self.gcj("season", "add", "Far", "--from", "2040-01-01", "--to", "2040-12-31", "--seed", "50")
+        self.gcj("season", "edit", "Seeded", "--seed", "50")
+        self.assertEqual(ctl("2020-01-01"), 50)
+
+
+class TestExpectedPMC(Headless):
+    """pmc and chart pmc --series planned and expected, with --sport and --filter"""
+
+    imports = [RIDE_POWER, RUN_STRYD]
+    bike = "2020_01_26_13_00_38"
+
+    @classmethod
+    def plan(cls, offset, stress, linked=None):
+        import datetime
+        when = datetime.date.today() + datetime.timedelta(days=offset)
+        tags = {"Sport": "Bike ", "Workout Code": "Plan "}
+        if linked:
+            tags["Linked Filename"] = linked + " "
+        ride = {"RIDE": {"STARTTIME": when.strftime("%Y/%m/%d") + " 12:00:00 UTC ", "RECINTSECS": 1,
+                         "DEVICETYPE": "Manual ", "IDENTIFIER": " ", "TAGS": tags,
+                         "OVERRIDES": [{"coggan_tss": {"value": str(stress)}}, {"workout_time": {"value": "3600"}}]}}
+        folder = os.path.join(cls.home, cls.athlete, "planned")
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, when.strftime("%Y_%m_%d") + "_12_00_00.json"), "w") as f:
+            json.dump(ride, f)
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # the plan stream adds 'plan add'; written here as the GUI writes a plan
+        cls.plan(5, 100)
+        cls.plan(10, 80, linked=cls.bike + ".json")    # already done: not expected again
+
+    def days(self, *args):
+        return {d["date"]: d for d in self.gcj("pmc", *args)["data"]["days"]}
+
+    def test_expected_after_today(self):
+        actual = self.days("--from", day(-1))
+        self.assertEqual(max(actual), day())                       # actual stops today
+        expected = self.days("--series", "expected", "--from", day(-1))
+        self.assertEqual(max(expected), day(10))                   # expected runs to the last plan
+        self.assertEqual(expected[day(5)]["stress"], 100)
+        self.assertEqual(expected[day(10)]["stress"], 0)           # the linked plan isn't counted
+        self.assertGreater(expected[day(6)]["ctl"], actual[day()]["ctl"])
+        self.assertEqual(expected[day()]["ctl"], actual[day()]["ctl"])
+
+        planned = self.days("--series", "planned", "--from", day(1))
+        self.assertEqual((planned[day(5)]["stress"], planned[day(10)]["stress"]), (100, 80))
+        self.assertEqual(self.days("--from", day(1), "--to", day(10))[day(5)]["stress"], 0)
+
+        # the past is what was done
+        past = self.days("--series", "expected", "--from", "2020-01-26", "--to", "2020-01-26")
+        self.assertGreater(past["2020-01-26"]["stress"], 0)
+
+    def test_all_series(self):
+        env = self.gcj("pmc", "--series", "all", "--from", day(4), "--to", day(6))
+        row = env["data"]["days"][1]
+        self.assertEqual((row["stress"], row["planned"]["stress"], row["expected"]["stress"]), (0, 100, 100))
+        rows = self.csv_rows("pmc", "--series", "all", "--from", day(4), "--to", day(6))
+        self.assertEqual(rows[0][:7], ["date", "stress", "ctl", "atl", "tsb", "rr", "planned.stress"])
+        self.assertEqual(len(rows), 4)
+        self.gcj("chart", "pmc", "--series", "all", expect=2)
+
+    def test_sport_and_filter(self):
+        on = ("--from", "2020-01-26", "--to", "2020-01-26")
+        self.assertGreater(self.days(*on)["2020-01-26"]["stress"], 0)
+        self.assertEqual(self.days("--sport", "Run", *on)["2020-01-26"]["stress"], 0)
+        self.assertGreater(self.days("--sport", "bike", *on)["2020-01-26"]["stress"], 0)
+        self.assertEqual(self.days("--filter", "isRun", *on)["2020-01-26"]["stress"], 0)
+        run = self.days("--filter", "isRun", "--from", "2024-07-09", "--to", "2024-07-09")["2024-07-09"]
+        self.assertEqual(run["stress"], self.days("--from", "2024-07-09", "--to", "2024-07-09")["2024-07-09"]["stress"])
+        # planned activities pass the same filter
+        self.assertEqual(self.days("--series", "planned", "--sport", "Bike", "--from", day(5))[day(5)]["stress"], 100)
+        self.assertEqual(self.days("--series", "planned", "--sport", "Run", "--from", day(5), "--to", day(5))[day(5)]["stress"], 0)
+        self.gcj("pmc", "--filter", "this is not a filter (", expect=2)
+
+    def test_chart(self):
+        out = os.path.join(self.tmp, "expected.png")
+        env = self.gcj("chart", "pmc", "--series", "expected", "-o", out)
+        self.assertEqual((env["data"]["series"], env["data"]["to"]), ("expected", day(10)))
+        self.assertTrue(env["data"]["today"])
+        with open(out, "rb") as f:
+            self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
+        env = self.gcj("chart", "pmc", "--series", "planned", "--sport", "Bike", "--as", "svg", "-o", out + ".svg")
+        self.assertEqual(env["data"]["format"], "svg")
+        # an athlete without recent activities still gets the half year up to the end of its data
+        env = self.gcj("chart", "pmc", "--sport", "Run", "-o", out)
+        self.assertEqual(env["data"]["to"], day())
+
+
+@unittest.skipIf(os.name == "nt" or running_as_root(), "file permissions don't stop Windows or root")
+class TestSeasonsReadOnly(Headless):
+    """a seasons.xml that can't be written: the command fails promptly, names it, and changes nothing"""
+
+    def test_read_only_config(self):
+        self.gcj("season", "add", "Kept", "--from", "2026-01-01", "--to", "2026-02-01")
+        config = os.path.join(self.folder, "config")
+        path = os.path.join(config, "seasons.xml")
+        with open(path, "rb") as f:
+            before = f.read()
+        for name in (path, config):
+            mode = os.stat(name).st_mode
+            os.chmod(name, mode & ~0o222)
+            self.addCleanup(os.chmod, name, mode)
+        started = time.time()
+        for args in (("season", "add", "New", "--from", "2026-01-01", "--to", "2026-02-01"),
+                     ("season", "edit", "Kept", "--name", "Renamed"),
+                     ("season", "phase", "add", "Kept", "Base"),
+                     ("event", "add", "Kept", "Race"),
+                     ("season", "remove", "Kept")):
+            r = self.gca(*args, timeout=60)
+            self.assertEqual(r.code, 5, r)
+            self.assertIn(b"seasons.xml", r.err, r)
+        self.assertLess(time.time() - started, 60)
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+
+class TestSeasonsRest(Headless):
+    """the season routes, with ids in the path"""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.server, cls.port = start_server(cls.env, cls.home, os.path.join(cls.tmp, "server.log"))
+
+    @classmethod
+    def tearDownClass(cls):
+        stop_server(cls.server)
+        super().tearDownClass()
+
+    def call(self, method, path, body=None):
+        url = "http://127.0.0.1:%d/v1/athletes/%s%s" % (self.port, self.athlete, path)
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method,
+                                     headers={"Content-Type": "application/json"} if data else {})
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    def test_routes(self):
+        status, env = self.call("POST", "/seasons", {"name": "Spring", "from": "2026-03-01", "to": "2026-05-31"})
+        self.assertEqual(status, 200, env)
+        sid = urllib.parse.quote(env["data"]["id"])
+        status, env = self.call("POST", "/seasons/Spring/phases", {"name": "Base", "type": "base", "to": "2026-03-31"})
+        self.assertEqual(status, 200, env)
+        status, env = self.call("POST", "/seasons/%s/events" % sid, {"name": "Race", "date": "2026-05-01", "priority": "A"})
+        self.assertEqual(status, 200, env)
+        eid = urllib.parse.quote(env["data"]["id"])
+        status, env = self.call("GET", "/seasons/" + sid)
+        self.assertEqual((status, env["data"]["phases"][0]["name"], env["data"]["events"][0]["name"]), (200, "Base", "Race"))
+        status, env = self.call("PUT", "/events/" + eid, {"priority": "C"})
+        self.assertEqual((status, env["data"]["priority"]), (200, "C"))
+        status, env = self.call("GET", "/events?season=Spring")
+        self.assertEqual(len(env["data"]["events"]), 1)
+        status, env = self.call("GET", "/activities?season=Spring")
+        self.assertEqual(status, 200, env)
+        self.assertEqual(self.call("DELETE", "/seasons/This%20Year")[0], 400)
+        self.assertEqual(self.call("DELETE", "/seasons/Spring/phases/Base")[0], 200)
+        self.assertEqual(self.call("DELETE", "/events/" + eid)[0], 200)
+        self.assertEqual(self.call("DELETE", "/seasons/" + sid)[0], 200)
+        self.assertEqual(self.call("GET", "/seasons/Spring")[0], 404)
+
+
 if __name__ == "__main__":
     unittest.main()
