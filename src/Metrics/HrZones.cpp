@@ -846,9 +846,6 @@ QColor hrZoneColor(int z, int) {
     }
 }
 
-// delete a range, extend an adjacent (prior if available, otherwise next)
-// range to cover the same time period, then return the number of the new range
-// covering the date range of the deleted range or -1 if none left
 HrZoneScheme
 HrZones::schemeFromRows(QList<HrZoneSchemeRow> rows)
 {
@@ -869,6 +866,9 @@ HrZones::schemeFromRows(QList<HrZoneSchemeRow> rows)
     return results;
 }
 
+// delete a range, extend an adjacent (prior if available, otherwise next)
+// range to cover the same time period, then return the number of the new range
+// covering the date range of the deleted range or -1 if none left
 int HrZones::deleteRange(int rnum) {
 
     // check bounds - silently fail, don't assert
