@@ -262,6 +262,22 @@ GSettings::setCValue(QString athleteName, QString key, QVariant value) {
     }
 }
 
+void
+GSettings::removeCValue(QString athleteName, QString key) {
+
+    QString keyVar = QString(key);
+    if (newFormat) {
+        int store;
+        int file;
+        keyVar = DetermineKey(keyVar, store, file);
+        QHash<QString, AthleteQSettings*>::const_iterator i = athlete.find(athleteName);
+        if (i != athlete.end() && store == SETTINGS_ATHLETE) i.value()->getQSettings(file)->remove(keyVar);
+    } else {
+        keyVar.remove(QRegularExpression("^<.*>"));
+        systemsettings->remove(athleteName + "/" + keyVar);
+    }
+}
+
 // other functions unsed from QSettings which GSettings needs to implement
 QStringList
 GSettings::allKeys() const {

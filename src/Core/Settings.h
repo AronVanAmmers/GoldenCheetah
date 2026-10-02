@@ -522,6 +522,7 @@ public:
     QVariant cvalue(QString athleteName, QString key, QVariant def = 0);
 
     void setCValue(QString athleteName, QString key, QVariant value);
+    void removeCValue(QString athleteName, QString key);
 
     // add QSettings methods - which cannot be inherited since not a single, but multiple QSettings make GSettings
     QStringList allKeys() const;
