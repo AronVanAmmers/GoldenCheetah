@@ -395,7 +395,7 @@ IndicatorDelegate::sizeHint
 
 RepeatPlanWizard::RepeatPlanWizard
 (Context *context, const QDate &when, QWidget *parent)
-: QWizard(parent), context(context), targetRangeStart(when), targetRangeEnd(when)
+: QWizard(parent), repeat(context, when), sourceRides(repeat.sourceRides), context(context)
 {
     setWindowTitle(tr("Repeat Plan"));
     setMinimumSize(800 * dpiXFactor, 750 * dpiYFactor);
@@ -419,7 +419,7 @@ QDate
 RepeatPlanWizard::getTargetRangeStart
 () const
 {
-    return targetRangeStart;
+    return repeat.getTargetRangeStart();
 }
 
 
@@ -427,7 +427,7 @@ QDate
 RepeatPlanWizard::getTargetRangeEnd
 () const
 {
-    return targetRangeEnd;
+    return repeat.getTargetRangeEnd();
 }
 
 
@@ -435,7 +435,7 @@ const QList<RideItem*>&
 RepeatPlanWizard::getDeletionList
 () const
 {
-    return deletionList;
+    return repeat.getDeletionList();
 }
 
 
@@ -443,7 +443,8 @@ void
 RepeatPlanWizard::updateTargetRange
 ()
 {
-    updateTargetRange(sourceRangeStart, sourceRangeEnd, keepGap, preferOriginal);
+    repeat.update();
+    emit targetRangeChanged();
 }
 
 
@@ -451,133 +452,7 @@ void
 RepeatPlanWizard::updateTargetRange
 (QDate sourceStart, QDate sourceEnd, bool keepGap, bool preferOriginal)
 {
-    if (   sourceRangeStart != sourceStart
-        || sourceRangeEnd != sourceEnd
-        || keepGap != this->keepGap
-        || preferOriginal != this->preferOriginal) {
-
-        sourceRangeStart = sourceStart;
-        sourceRangeEnd = sourceEnd;
-        this->keepGap = keepGap;
-        this->preferOriginal = preferOriginal;
-
-        sourceRides.clear();
-        for (RideItem *rideItem : context->athlete->rideCache->rides()) {
-            if (   rideItem == nullptr
-                || ! rideItem->planned) {
-                continue;
-            }
-            QDate rideDate = PlanBundle::getRideDate(rideItem, preferOriginal);
-            if (   rideDate < sourceStart
-                || rideDate > sourceEnd) {
-                continue;
-            }
-            sourceRides << SourceRide { rideItem, rideDate, QDate(), true, -1, false };
-        }
-        std::sort(sourceRides.begin(), sourceRides.end(),
-            [](const SourceRide &a, const SourceRide &b) { return a.sourceDate < b.sourceDate; });
-
-        // Assume all planned activities from the range will be copied
-        int prelimFrontGap = 0;
-        if (! keepGap && ! sourceRides.isEmpty()) {
-            prelimFrontGap = sourceStart.daysTo(sourceRides.first().sourceDate);
-        }
-        for (SourceRide &sourceRide : sourceRides) {
-            sourceRide.targetDate = targetRangeStart.addDays(
-                sourceRangeStart.daysTo(sourceRide.sourceDate) - prelimFrontGap);
-        }
-
-        // QDateTime of any planned RideItem must be unique
-        QHash<QDateTime, int> targetKeyCount;
-        for (const SourceRide &sourceRide : sourceRides) {
-            QDateTime key(sourceRide.targetDate, sourceRide.rideItem->dateTime.time());
-            targetKeyCount[key]++;
-        }
-        QHash<QDateTime, int> keyToGroup;
-        int nextGroup = 0;
-        for (SourceRide &sourceRide : sourceRides) {
-            QDateTime key(sourceRide.targetDate, sourceRide.rideItem->dateTime.time());
-            if (targetKeyCount[key] > 1) {
-                if (! keyToGroup.contains(key)) {
-                    keyToGroup[key] = nextGroup++;
-                }
-                sourceRide.conflictGroup = keyToGroup[key];
-            } else {
-                sourceRide.conflictGroup = -1;
-            }
-        }
-
-        QHash<int, bool> groupHasSelection;
-        for (SourceRide &sourceRide : sourceRides) {
-            if (sourceRide.conflictGroup < 0) {
-                continue;
-            }
-            if (! groupHasSelection.value(sourceRide.conflictGroup, false)) {
-                sourceRide.selected = true;
-                groupHasSelection[sourceRide.conflictGroup] = true;
-            } else {
-                sourceRide.selected = false;
-            }
-        }
-    }
-
-    // Calculate frontGap and rangeLength
-    frontGap = 0;
-    int rangeLength = 0;
-    if (! sourceRides.isEmpty()) {
-        QDate firstSelectedDate;
-        QDate lastSelectedDate;
-        for (const SourceRide &sourceRide : sourceRides) {
-            if (! sourceRide.selected) {
-                continue;
-            }
-            if (firstSelectedDate.isNull()) {
-                firstSelectedDate = sourceRide.sourceDate;
-                if (! keepGap) {
-                    frontGap = sourceStart.daysTo(firstSelectedDate);
-                }
-            }
-            lastSelectedDate = sourceRide.sourceDate;
-        }
-
-        for (SourceRide &sourceRide : sourceRides) {
-            sourceRide.targetDate = targetRangeStart.addDays(
-                sourceRangeStart.daysTo(sourceRide.sourceDate) - frontGap);
-        }
-
-        if (firstSelectedDate.isValid()) {
-            rangeLength = sourceStart.daysTo(sourceEnd);
-            if (! keepGap) {
-                rangeLength -= (frontGap + lastSelectedDate.daysTo(sourceEnd));
-            }
-        }
-    }
-    targetRangeEnd = targetRangeStart.addDays(rangeLength);
-
-    // Find conflicting planned and linked activities (they wont be autodeleted)
-    deletionList.clear();
-    QSet<QDateTime> blockedKeys;
-    for (RideItem *rideItem : context->athlete->rideCache->rides()) {
-        if (   rideItem == nullptr
-            || ! rideItem->planned) {
-            continue;
-        }
-        QDate rideDate = rideItem->dateTime.date();
-        if (   rideDate < targetRangeStart
-            || rideDate > targetRangeEnd) {
-            continue;
-        }
-        if (rideItem->hasLinkedActivity()) {
-            blockedKeys.insert(QDateTime(rideDate, rideItem->dateTime.time()));
-        } else {
-            deletionList << rideItem;
-        }
-    }
-    for (SourceRide &sourceRide : sourceRides) {
-        QDateTime key(sourceRide.targetDate, sourceRide.rideItem->dateTime.time());
-        sourceRide.targetBlocked = blockedKeys.contains(key);
-    }
-
+    repeat.update(sourceStart, sourceEnd, keepGap, preferOriginal);
     emit targetRangeChanged();
 }
 
@@ -588,24 +463,12 @@ RepeatPlanWizard::done
 {
     if (result == QDialog::Accepted) {
         QApplication::setOverrideCursor(QCursor(Qt::WaitCursor));
-        const QList<RideItem*> &deletionList = getDeletionList();
-        QList<std::pair<RideItem*, QDate>> planList;
-        for (const SourceRide &sourceRide : sourceRides) {
-            if (! sourceRide.selected || sourceRide.targetBlocked) {
-                continue;
-            }
-            planList << std::pair<RideItem*, QDate> { sourceRide.rideItem, sourceRide.targetDate };
-        }
         context->tab->setNoSwitch(true);
-        for (RideItem *rideItem : deletionList) {
-            context->athlete->rideCache->removeRide(rideItem->fileName);
-        }
-        RideCache::OperationPreCheck check = context->athlete->rideCache->checkCopyPlannedActivities(planList);
-        if (check.canProceed) {
-            RideCache::OperationResult result = context->athlete->rideCache->copyPlannedActivities(planList);
-            if (! result.success) {
-                QMessageBox::warning(this, "Failed", result.error);
-            }
+        RideCache::OperationPreCheck check;
+        RideCache::OperationResult copied;
+        repeat.apply(check, copied);
+        if (check.canProceed && ! copied.success) {
+            QMessageBox::warning(this, "Failed", copied.error);
         }
         context->tab->setNoSwitch(false);
         QApplication::restoreOverrideCursor();
@@ -1162,55 +1025,7 @@ ExportPlanWizard::updateRange
         _description.rangeEnd = sourceEnd;
         _description.preferOriginal = preferOriginal;
 
-        sourceRides.clear();
-        for (RideItem *rideItem : context->athlete->rideCache->rides()) {
-            if (   rideItem == nullptr
-                || ! rideItem->planned) {
-                continue;
-            }
-            QDate rideDate = PlanBundle::getRideDate(rideItem, preferOriginal);
-            if (   rideDate < sourceStart
-                || rideDate > sourceEnd) {
-                continue;
-            }
-            sourceRides << SourceRide { rideItem, rideDate, QDate(), true, -1, false };
-        }
-        std::sort(sourceRides.begin(), sourceRides.end(), [](const SourceRide &a, const SourceRide &b) {
-            return a.sourceDate < b.sourceDate;
-        });
-
-        // QDateTime of any planned RideItem must be unique
-        QHash<QDateTime, int> targetKeyCount;
-        for (const SourceRide &sourceRide : sourceRides) {
-            QDateTime key(sourceRide.sourceDate, sourceRide.rideItem->dateTime.time());
-            targetKeyCount[key]++;
-        }
-        QHash<QDateTime, int> keyToGroup;
-        int nextGroup = 0;
-        for (SourceRide &sourceRide : sourceRides) {
-            QDateTime key(sourceRide.sourceDate, sourceRide.rideItem->dateTime.time());
-            if (targetKeyCount[key] > 1) {
-                if (! keyToGroup.contains(key)) {
-                    keyToGroup[key] = nextGroup++;
-                }
-                sourceRide.conflictGroup = keyToGroup[key];
-            } else {
-                sourceRide.conflictGroup = -1;
-            }
-        }
-
-        QHash<int, bool> groupHasSelection;
-        for (SourceRide &sourceRide : sourceRides) {
-            if (sourceRide.conflictGroup < 0) {
-                continue;
-            }
-            if (! groupHasSelection.value(sourceRide.conflictGroup, false)) {
-                sourceRide.selected = true;
-                groupHasSelection[sourceRide.conflictGroup] = true;
-            } else {
-                sourceRide.selected = false;
-            }
-        }
+        sourceRides = PlanBundle::sourceRides(context, sourceStart, sourceEnd, preferOriginal);
     }
 
     emit rangeChanged();
@@ -1221,12 +1036,7 @@ QString
 ExportPlanWizard::expandedDescription
 () const
 {
-    QString text = _description.description.trimmed();
-    text.replace("$NAME", _description.name);
-    text.replace("$AUTHOR", _description.author);
-    text.replace("$SPORT", _description.sport);
-    text.replace("$COPYRIGHT", _description.copyright);
-    return text;
+    return _description.expandedDescription();
 }
 
 
@@ -1948,26 +1758,7 @@ QString
 ExportPlanPageSummary::sanitizeFilename
 (QString input) const
 {
-    QString name = input.trimmed();
-    name.replace(' ', '_');
-    QRegularExpression invalid(R"([^\p{L}\p{N}._-])");
-    name.replace(invalid, "_");
-    name.replace(QRegularExpression("_+"), "_");
-    name.remove(QRegularExpression(R"(^[._-]+)"));
-    name.remove(QRegularExpression(R"([._-]+$)"));
-    static const QStringList reserved = {
-        "CON","PRN","AUX","NUL",
-        "COM1","COM2","COM3","COM4","COM5","COM6","COM7","COM8","COM9",
-        "LPT1","LPT2","LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9"
-    };
-    if (reserved.contains(name.toUpper())) {
-        name.prepend("_");
-    }
-    const int maxLength = 200;
-    if (name.length() > maxLength) {
-        name = name.left(maxLength);
-    }
-    return name;
+    return PlanBundle::sanitizeFilename(input);
 }
 
 

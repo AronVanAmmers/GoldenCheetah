@@ -26,6 +26,8 @@
 #include "../qzip/zipreader.h"
 #include "../qzip/zipwriter.h"
 
+#include <QRegularExpression>
+
 static std::pair<int, int> writeActivities(Context *context, const PlanExportDescription &description, const QDir &activityWorkDir, const QDir &workoutWorkDir, PlanMetadata &metadata);
 static bool packDir(const QDir &workDir, const QString &dirName, ZipWriter &zipWriter);
 static QString hashFile(const QString &filePath);
@@ -785,6 +787,173 @@ PlanBundleReader::validate
 
 
 ////////////////////////////////////////////////////////////////////////////////
+// PlanExportDescription
+
+QString
+PlanExportDescription::expandedDescription
+() const
+{
+    QString text = description.trimmed();
+    text.replace("$NAME", name);
+    text.replace("$AUTHOR", author);
+    text.replace("$SPORT", sport);
+    text.replace("$COPYRIGHT", copyright);
+    return text;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+// RepeatPlan
+
+RepeatPlan::RepeatPlan
+(Context *context, const QDate &targetStart)
+: context(context), targetRangeStart(targetStart), targetRangeEnd(targetStart)
+{
+}
+
+
+QDate
+RepeatPlan::getTargetRangeStart
+() const
+{
+    return targetRangeStart;
+}
+
+
+QDate
+RepeatPlan::getTargetRangeEnd
+() const
+{
+    return targetRangeEnd;
+}
+
+
+const QList<RideItem*>&
+RepeatPlan::getDeletionList
+() const
+{
+    return deletionList;
+}
+
+
+void
+RepeatPlan::update
+()
+{
+    update(sourceRangeStart, sourceRangeEnd, keepGap, preferOriginal);
+}
+
+
+void
+RepeatPlan::update
+(const QDate &sourceStart, const QDate &sourceEnd, bool keepGap, bool preferOriginal)
+{
+    if (   sourceRangeStart != sourceStart
+        || sourceRangeEnd != sourceEnd
+        || keepGap != this->keepGap
+        || preferOriginal != this->preferOriginal) {
+
+        sourceRangeStart = sourceStart;
+        sourceRangeEnd = sourceEnd;
+        this->keepGap = keepGap;
+        this->preferOriginal = preferOriginal;
+
+        // a conflict on the source dates is one on the target dates: they
+        // are all shifted by the same number of days
+        sourceRides = PlanBundle::sourceRides(context, sourceStart, sourceEnd, preferOriginal);
+    }
+
+    // Calculate frontGap and rangeLength
+    frontGap = 0;
+    int rangeLength = 0;
+    if (! sourceRides.isEmpty()) {
+        QDate firstSelectedDate;
+        QDate lastSelectedDate;
+        for (const SourceRide &sourceRide : sourceRides) {
+            if (! sourceRide.selected) {
+                continue;
+            }
+            if (firstSelectedDate.isNull()) {
+                firstSelectedDate = sourceRide.sourceDate;
+                if (! keepGap) {
+                    frontGap = sourceStart.daysTo(firstSelectedDate);
+                }
+            }
+            lastSelectedDate = sourceRide.sourceDate;
+        }
+
+        for (SourceRide &sourceRide : sourceRides) {
+            sourceRide.targetDate = targetRangeStart.addDays(
+                sourceRangeStart.daysTo(sourceRide.sourceDate) - frontGap);
+        }
+
+        if (firstSelectedDate.isValid()) {
+            rangeLength = sourceStart.daysTo(sourceEnd);
+            if (! keepGap) {
+                rangeLength -= (frontGap + lastSelectedDate.daysTo(sourceEnd));
+            }
+        }
+    }
+    targetRangeEnd = targetRangeStart.addDays(rangeLength);
+
+    // Find conflicting planned and linked activities (they wont be autodeleted)
+    deletionList.clear();
+    QSet<QDateTime> blockedKeys;
+    for (RideItem *rideItem : context->athlete->rideCache->rides()) {
+        if (   rideItem == nullptr
+            || ! rideItem->planned) {
+            continue;
+        }
+        QDate rideDate = rideItem->dateTime.date();
+        if (   rideDate < targetRangeStart
+            || rideDate > targetRangeEnd) {
+            continue;
+        }
+        if (rideItem->hasLinkedActivity()) {
+            blockedKeys.insert(QDateTime(rideDate, rideItem->dateTime.time()));
+        } else {
+            deletionList << rideItem;
+        }
+    }
+    for (SourceRide &sourceRide : sourceRides) {
+        QDateTime key(sourceRide.targetDate, sourceRide.rideItem->dateTime.time());
+        sourceRide.targetBlocked = blockedKeys.contains(key);
+    }
+}
+
+
+QList<std::pair<RideItem*, QDate>>
+RepeatPlan::copies
+() const
+{
+    QList<std::pair<RideItem*, QDate>> planList;
+    for (const SourceRide &sourceRide : sourceRides) {
+        if (! sourceRide.selected || sourceRide.targetBlocked) {
+            continue;
+        }
+        planList << std::pair<RideItem*, QDate> { sourceRide.rideItem, sourceRide.targetDate };
+    }
+    return planList;
+}
+
+
+void
+RepeatPlan::apply
+(RideCache::OperationPreCheck &check, RideCache::OperationResult &result)
+{
+    QList<std::pair<RideItem*, QDate>> planList = copies();
+    for (RideItem *rideItem : deletionList) {
+        context->athlete->rideCache->removeRide(rideItem->fileName);
+    }
+    deletionList.clear();
+    check = context->athlete->rideCache->checkCopyPlannedActivities(planList);
+    if (check.canProceed) {
+        result = context->athlete->rideCache->copyPlannedActivities(planList);
+    }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
 // Namespace PlanBundle
 
 
@@ -844,6 +1013,90 @@ PlanBundle::exportBundle
         return false;
     }
     return true;
+}
+
+
+QList<SourceRide>
+PlanBundle::sourceRides
+(Context *context, const QDate &sourceStart, const QDate &sourceEnd, bool preferOriginal)
+{
+    QList<SourceRide> sourceRides;
+    for (RideItem *rideItem : context->athlete->rideCache->rides()) {
+        if (   rideItem == nullptr
+            || ! rideItem->planned) {
+            continue;
+        }
+        QDate rideDate = PlanBundle::getRideDate(rideItem, preferOriginal);
+        if (   rideDate < sourceStart
+            || rideDate > sourceEnd) {
+            continue;
+        }
+        sourceRides << SourceRide { rideItem, rideDate, QDate(), true, -1, false };
+    }
+    std::sort(sourceRides.begin(), sourceRides.end(), [](const SourceRide &a, const SourceRide &b) {
+        return a.sourceDate < b.sourceDate;
+    });
+
+    // QDateTime of any planned RideItem must be unique
+    QHash<QDateTime, int> targetKeyCount;
+    for (const SourceRide &sourceRide : sourceRides) {
+        QDateTime key(sourceRide.sourceDate, sourceRide.rideItem->dateTime.time());
+        targetKeyCount[key]++;
+    }
+    QHash<QDateTime, int> keyToGroup;
+    int nextGroup = 0;
+    for (SourceRide &sourceRide : sourceRides) {
+        QDateTime key(sourceRide.sourceDate, sourceRide.rideItem->dateTime.time());
+        if (targetKeyCount[key] > 1) {
+            if (! keyToGroup.contains(key)) {
+                keyToGroup[key] = nextGroup++;
+            }
+            sourceRide.conflictGroup = keyToGroup[key];
+        } else {
+            sourceRide.conflictGroup = -1;
+        }
+    }
+
+    QHash<int, bool> groupHasSelection;
+    for (SourceRide &sourceRide : sourceRides) {
+        if (sourceRide.conflictGroup < 0) {
+            continue;
+        }
+        if (! groupHasSelection.value(sourceRide.conflictGroup, false)) {
+            sourceRide.selected = true;
+            groupHasSelection[sourceRide.conflictGroup] = true;
+        } else {
+            sourceRide.selected = false;
+        }
+    }
+    return sourceRides;
+}
+
+
+QString
+PlanBundle::sanitizeFilename
+(QString input)
+{
+    QString name = input.trimmed();
+    name.replace(' ', '_');
+    QRegularExpression invalid(R"([^\p{L}\p{N}._-])");
+    name.replace(invalid, "_");
+    name.replace(QRegularExpression("_+"), "_");
+    name.remove(QRegularExpression(R"(^[._-]+)"));
+    name.remove(QRegularExpression(R"([._-]+$)"));
+    static const QStringList reserved = {
+        "CON","PRN","AUX","NUL",
+        "COM1","COM2","COM3","COM4","COM5","COM6","COM7","COM8","COM9",
+        "LPT1","LPT2","LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9"
+    };
+    if (reserved.contains(name.toUpper())) {
+        name.prepend("_");
+    }
+    const int maxLength = 200;
+    if (name.length() > maxLength) {
+        name = name.left(maxLength);
+    }
+    return name;
 }
 
 
