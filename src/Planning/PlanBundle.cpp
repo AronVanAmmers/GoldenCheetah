@@ -369,8 +369,8 @@ PlanBundleReader::importBundle
     findConflicts();
     if (existingLinked.count() > 0) {
         for (const RideFileSelection &entry : rideFiles) {
-            if (entry.selected && existingLinked.contains(entry.getRideFile()->startTime())) {
-                lastImportResult.addError(QObject::tr("Bundle can't be imported: Conflicts with linked planned activity on %1").arg(entry.getRideFile()->startTime().toString()));
+            if (entry.selected && existingLinked.contains(getTargetDateTime(entry))) {
+                lastImportResult.addError(QObject::tr("Bundle can't be imported: Conflicts with linked planned activity on %1").arg(getTargetDateTime(entry).toString()));
                 return lastImportResult;
             }
         }
@@ -487,6 +487,14 @@ PlanBundleReader::getExistingLinked
 () const
 {
     return existingLinked;
+}
+
+
+QDateTime
+PlanBundleReader::getTargetDateTime
+(const RideFileSelection &entry) const
+{
+    return entry.getRideFile()->startTime().addDays(daysToAdd);
 }
 
 
