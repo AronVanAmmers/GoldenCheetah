@@ -44,6 +44,7 @@
 #include "Specification.h"
 #include "ManualActivity.h"
 #include "PlanBundle.h"
+#include "PlanAdherenceData.h"
 #include "TrainDB.h"
 #include "ErgFile.h"
 
@@ -866,6 +867,83 @@ importPlan(CommandEnvironment &env, const CommandRequest &request)
 }
 
 //
+// plan adherence: the Plan Adherence chart's entries and totals
+//
+
+static CommandResult
+adherence(CommandEnvironment &env, const CommandRequest &request)
+{
+    QDate from = dateArg(request, "from");
+    QDate to = request.args.contains("to") ? dateArg(request, "to") : QDate::currentDate();
+    if (to < from) return CommandResult::failure(Status::Usage, "--to is before --from");
+    QDate today = QDate::currentDate();
+
+    QList<PlanAdherenceRow> rows;
+    PlanAdherenceStatistics stats;
+    PlanAdherenceOffsetRange range;
+    planAdherence(env.session->rideCache(), from, to, today, nullptr, rows, stats, range);
+
+    QJsonArray entries;
+    QString text;
+    for (const PlanAdherenceRow &row : rows) {
+        RideItem *item = row.rideItem;
+        QJsonObject o;
+        o.insert("date", row.date.toString(Qt::ISODate));
+        o.insert("sport", item->sport);
+        QString title = item->getText("Route", "").trimmed();
+        if (title.isEmpty()) title = item->getText("Workout Code", "").trimmed();
+        o.insert("title", title);
+        QString status;
+        if (!item->planned) {
+            status = "unplanned";
+            o.insert("planned", QJsonValue());
+            o.insert("actual", idOf(item));
+        } else {
+            o.insert("planned", idOf(item));
+            o.insert("actual", row.linkedItem ? QJsonValue(idOf(row.linkedItem)) : QJsonValue());
+            if (row.actualOffset) status = *row.actualOffset == 0 ? "on time" : "done";
+            else status = row.date < today ? "missed" : "upcoming";
+        }
+        o.insert("status", status);
+        o.insert("moved_by", row.shiftOffset ? QJsonValue(qint64(*row.shiftOffset)) : QJsonValue());
+        o.insert("done_after", row.actualOffset ? QJsonValue(qint64(*row.actualOffset)) : QJsonValue());
+        entries.append(o);
+
+        QString line = QString("%1  %2  %3  %4").arg(o.value("date").toString(), status.leftJustified(9),
+                                                     item->sport, o.value("title").toString());
+        if (row.shiftOffset) line += QString("  moved %1%2 d").arg(*row.shiftOffset > 0 ? "+" : "").arg(*row.shiftOffset);
+        if (row.actualOffset && *row.actualOffset != 0)
+            line += QString("  done %1%2 d").arg(*row.actualOffset > 0 ? "+" : "").arg(*row.actualOffset);
+        text += line + "\n";
+    }
+    QJsonObject totals;
+    totals.insert("total", stats.totalAbs);
+    totals.insert("planned", stats.plannedAbs);
+    totals.insert("planned_percent", jsonNumber(stats.plannedRel));
+    totals.insert("on_time", stats.onTimeAbs);
+    totals.insert("on_time_percent", jsonNumber(stats.onTimeRel));
+    totals.insert("moved", stats.shiftedAbs);
+    totals.insert("moved_percent", jsonNumber(stats.shiftedRel));
+    totals.insert("missed", stats.missedAbs);
+    totals.insert("missed_percent", jsonNumber(stats.missedRel));
+    totals.insert("unplanned", stats.unplannedAbs);
+    totals.insert("unplanned_percent", jsonNumber(stats.unplannedRel));
+    totals.insert("average_move_days", jsonNumber(stats.avgShift));
+    totals.insert("total_move_days", stats.totalShiftDaysAbs);
+
+    QJsonObject data;
+    data.insert("from", from.toString(Qt::ISODate));
+    data.insert("to", to.toString(Qt::ISODate));
+    data.insert("entries", entries);
+    data.insert("totals", totals);
+    CommandResult result = CommandResult::success(data);
+    text += QString("%1 planned: %2 on time, %3 moved, %4 missed; %5 unplanned\n").arg(stats.plannedAbs)
+            .arg(stats.onTimeAbs).arg(stats.shiftedAbs).arg(stats.missedAbs).arg(stats.unplannedAbs);
+    result.text = text;
+    return result;
+}
+
+//
 // calendar summary: the calendar's weekly totals
 //
 
@@ -1085,6 +1163,21 @@ registerPlanCommands(CommandRegistry &registry)
     importCmd.spec.httpPath = "/athletes/{athlete}/plan/imports";
     importCmd.handler = importPlan;
     registry.add(importCmd);
+
+    Command adh;
+    adh.spec.name = "plan.adherence";
+    adh.spec.summary = "planned against done, as the Plan Adherence chart";
+    adh.spec.description =
+        "Each planned activity of the period, by the day it was planned for: on time\n"
+        "(done that day), done (on another day), missed or upcoming, and how far it was\n"
+        "moved; each completed activity that wasn't planned; and the chart's totals.";
+    adh.spec.scope = Scope::Athlete;
+    adh.spec.params << ParamSpec("from", ParamType::Date, "the first day (planned for)").req();
+    adh.spec.params << ParamSpec("to", ParamType::Date, "the last day (default today)");
+    adh.spec.httpMethod = "GET";
+    adh.spec.httpPath = "/athletes/{athlete}/plan/adherence";
+    adh.handler = adherence;
+    registry.add(adh);
 
     Command summary;
     summary.spec.name = "calendar.summary";

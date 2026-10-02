@@ -360,33 +360,19 @@ PlanAdherenceWindow::updateActivities
     QDate firstVisible = adherenceView->firstVisibleDay();
     QDate lastVisible = adherenceView->lastVisibleDay();
     QDate today = QDate::currentDate();
-    for (RideItem *rideItem : context->athlete->rideCache->rides()) {
-        if (   rideItem == nullptr
-            || (! rideItem->planned && rideItem->hasLinkedActivity())
-            || (context->isfiltered && ! context->filters.contains(rideItem->fileName))
-            || (context->ishomefiltered && ! context->homeFilters.contains(rideItem->fileName))) {
-            continue;
-        }
-        QDate rideDate = rideItem->dateTime.date();
-        QString originalDateString = rideItem->getText("Original Date", "");
-        QDate originalDate(rideDate);
-        if (! originalDateString.isEmpty()) {
-            originalDate = QDate::fromString(originalDateString, "yyyy/MM/dd");
-            if (! originalDate.isValid()) {
-                originalDate = rideDate;
-            }
-        }
-        if (   (firstVisible.isValid() && originalDate < firstVisible)
-            || (lastVisible.isValid() && originalDate > lastVisible)) {
-            continue;
-        }
-
+    QList<PlanAdherenceRow> rows;
+    planAdherence(context->athlete->rideCache, firstVisible, lastVisible, today, [this](RideItem *rideItem) {
+        return ! (   (context->isfiltered && ! context->filters.contains(rideItem->fileName))
+                  || (context->ishomefiltered && ! context->homeFilters.contains(rideItem->fileName)));
+    }, rows, statistics, offsetRange);
+    for (const PlanAdherenceRow &row : rows) {
+        RideItem *rideItem = row.rideItem;
         PlanAdherenceEntry entry;
 
         entry.titlePrimary = getRideItemTitle(rideItem);
         entry.iconFile = IconManager::instance().getFilepath(rideItem);
 
-        entry.date = originalDate;
+        entry.date = row.date;
         entry.isPlanned = rideItem->planned;
         if (entry.isPlanned) {
             entry.plannedReference = rideItem->fileName;
@@ -399,20 +385,10 @@ PlanAdherenceWindow::updateActivities
                 entry.color = rideItem->color;
             }
         }
+        entry.shiftOffset = row.shiftOffset;
 
-        if (entry.isPlanned && originalDate != rideDate) {
-            entry.shiftOffset = originalDate.daysTo(rideDate);
-            offsetRange.min = std::min(offsetRange.min, entry.shiftOffset.value());
-            offsetRange.max = std::max(offsetRange.max, entry.shiftOffset.value());
-        } else {
-            entry.shiftOffset.reset();
-        }
-
-        RideItem *linkedItem = nullptr;
-        if (! rideItem->getLinkedFileName().isEmpty()) {
-            linkedItem = context->athlete->rideCache->getRide(rideItem->getLinkedFileName());
-        }
-        if (entry.isPlanned && linkedItem != nullptr) {
+        RideItem *linkedItem = row.linkedItem;
+        if (linkedItem != nullptr) {
             entry.iconFile = IconManager::instance().getFilepath(linkedItem);
             if (linkedItem->color.alpha() < 255) {
                 entry.color = GCColor::invertColor(GColor(CPLOTBACKGROUND));
@@ -421,47 +397,10 @@ PlanAdherenceWindow::updateActivities
             }
             entry.titleSecondary = getRideItemTitle(linkedItem);
             entry.actualReference = linkedItem->fileName;
-            entry.actualOffset = originalDate.daysTo(linkedItem->dateTime.date());
-            offsetRange.min = std::min(offsetRange.min, entry.actualOffset.value());
-            offsetRange.max = std::max(offsetRange.max, entry.actualOffset.value());
-        } else {
-            entry.actualOffset.reset();
         }
+        entry.actualOffset = row.actualOffset;
 
         entries << entry;
-
-        ++statistics.totalAbs;
-        if (entry.isPlanned) {
-            ++statistics.plannedAbs;
-            if (entry.shiftOffset != std::nullopt) {
-                ++statistics.shiftedAbs;
-                statistics.totalShiftDaysAbs += std::abs(entry.shiftOffset.value());
-            }
-            if (entry.actualOffset != std::nullopt) {
-                if (entry.actualOffset.value() == 0) {
-                    ++statistics.onTimeAbs;
-                }
-            } else if (entry.date < today) {
-                ++statistics.missedAbs;
-            }
-        } else {
-            ++statistics.unplannedAbs;
-        }
-    }
-    std::sort(entries.begin(), entries.end(), [](const PlanAdherenceEntry &a, const PlanAdherenceEntry &b) {
-        return a.date < b.date;
-    });
-    if (statistics.totalAbs > 0) {
-        statistics.plannedRel = 100.0 * statistics.plannedAbs / statistics.totalAbs;
-        statistics.unplannedRel = 100.0 * statistics.unplannedAbs / statistics.totalAbs;
-    }
-    if (statistics.plannedAbs > 0) {
-        statistics.onTimeRel = 100.0 * statistics.onTimeAbs / statistics.plannedAbs;
-        statistics.missedRel = 100.0 * statistics.missedAbs / statistics.plannedAbs;
-        statistics.shiftedRel = 100.0 * statistics.shiftedAbs / statistics.plannedAbs;
-    }
-    if (statistics.shiftedAbs > 0) {
-        statistics.avgShift = statistics.totalShiftDaysAbs / static_cast<float>(statistics.shiftedAbs);
     }
 
     adherenceView->fillEntries(entries, statistics, offsetRange, isFiltered());
