@@ -1086,7 +1086,7 @@ calendarSummary(CommandEnvironment &env, const CommandRequest &request)
     RideCache *cache = env.session->rideCache();
     QJsonArray buckets;
     for (QDate first = from; first <= to; first = first.addDays(days)) {
-        QDate last = first.addDays(days - 1);
+        QDate last = std::min(first.addDays(days - 1), to);    // the last one ends with --to
         spec.setDateRange(DateRange(first, last));
         QJsonObject o;
         o.insert("from", first.toString(Qt::ISODate));

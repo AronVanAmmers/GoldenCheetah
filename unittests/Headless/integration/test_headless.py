@@ -3509,6 +3509,11 @@ class TestPlannedActivities(Headless, PlanHelpers):
         days = self.gcj("calendar", "summary", "--from", start, "--to", day(182), "--days", "1", "--metric", "coggan_tss")["data"]
         self.assertEqual([d["metrics"]["coggan_tss"] for d in days["summaries"]], [60, 0, 30])
         self.gcj("calendar", "summary", "--from", start, "--to", day(179), expect=2)
+        # the last period ends with --to
+        self.plan("add", "--date", day(191), "--sport", "Bike", "--duration", "1800", "--bikestress", "40")
+        short = self.gcj("calendar", "summary", "--from", start, "--to", day(190))["data"]["summaries"]
+        self.assertEqual([(w["from"], w["to"]) for w in short], [(start, day(186)), (day(187), day(190))])
+        self.assertEqual(short[1]["metrics"]["ride_count"], 0)
 
     def test_refusals(self):
         before = self.planned_files()
