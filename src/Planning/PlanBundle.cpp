@@ -646,7 +646,7 @@ PlanBundleReader::processWorkout
         if (trainDBHashes.contains(hash)) {
             rideFile->setTag("WorkoutFilename", trainDBHashes.value(hash));
         } else {
-            QString gcWorkoutDir = appsettings->value(nullptr, GC_WORKOUTDIR).toString();
+            QString gcWorkoutDir = appsettings->value(nullptr, GC_WORKOUTDIR, "").toString();
             if (gcWorkoutDir == "") {
                 QDir root = context->athlete->home->root();
                 root.cdUp();
