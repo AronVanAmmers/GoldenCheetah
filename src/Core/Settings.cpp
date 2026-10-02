@@ -451,6 +451,24 @@ GSettings::syncQSettingsAllAthletes() {
     }
 }
 
+bool
+GSettings::syncCValue(QString athleteName, QString key, QString *error) {
+
+    QSettings *settings = systemsettings;
+    if (newFormat) {
+        int store;
+        int file;
+        DetermineKey(key, store, file);
+        QHash<QString, AthleteQSettings*>::const_iterator i = athlete.find(athleteName);
+        if (store != SETTINGS_ATHLETE || i == athlete.end()) return true; // setCValue stored nothing
+        settings = i.value()->getQSettings(file);
+    }
+    settings->sync();
+    if (settings->status() == QSettings::NoError) return true;
+    if (error) *error = QString("%1 could not be saved").arg(settings->fileName());
+    return false;
+}
+
 void
 GSettings::syncQSettingsGlobal() {
 

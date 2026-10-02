@@ -119,6 +119,12 @@ class Athlete : public QObject
         double getWeight(QDate date, RideFile *ride=NULL);
         double getHeight(RideFile *ride=NULL);
 
+        // the athlete model settings when none are saved (About, Model)
+        static const int defaultWbaltau = 300;
+        static const int defaultSTSavg = 7;
+        static const int defaultLTSavg = 42;
+        static const int defaultSBToday = 0;
+
         // Athlete's autoimport handling
         RideImportWizard *autoImport = nullptr;
         RideAutoImportConfig *autoImportConfig = nullptr;

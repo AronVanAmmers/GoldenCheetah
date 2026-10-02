@@ -538,6 +538,9 @@ public:
     void syncQSettingsGlobal();
     void syncQSettingsAllAthletes();
 
+    // write the athlete's settings file holding key now; false, naming the file, when it could not be saved
+    bool syncCValue(QString athleteName, QString key, QString *error = nullptr);
+
     // Cleanup if AthleteDir is changed
     void clearGlobalAndAthletes();
 
