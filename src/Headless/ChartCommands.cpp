@@ -28,6 +28,7 @@
 #include "ActivitySelection.h"
 #include "MetricNames.h"
 #include "ActivityJson.h"
+#include "SeasonRange.h"
 
 #include "Context.h"
 #include "Athlete.h"
@@ -275,11 +276,27 @@ pmcChart(CommandEnvironment &env, const CommandRequest &request)
     const RideMetric *m = RideMetricFactory::instance().rideMetric(metric);
     if (!m) return CommandResult::failure(Status::Usage, QString("unknown metric '%1'").arg(request.args.value("metric").toString()));
 
-    PMCData *pmc = pmcFor(*env.session, metric);
+    QString error;
+    Status status = Status::Ok;
+    QDate from, to;
+    if (!dateRangeArgs(*env.session, request.args, from, to, error, status)) return CommandResult::failure(status, error);
+
+    std::unique_ptr<PMCData> owned;
+    PMCData *pmc = pmcForArgs(*env.session, request.args, metric, owned, error, status);
+    if (!error.isEmpty()) return CommandResult::failure(status, error);
     if (!pmc || !pmc->start().isValid()) return CommandResult::failure(Status::Failed, "no activities to compute the PMC from");
 
-    QDate to = request.args.contains("to") ? QDate::fromString(request.args.value("to").toString(), Qt::ISODate) : QDate::currentDate();
-    QDate from = request.args.contains("from") ? QDate::fromString(request.args.value("from").toString(), Qt::ISODate) : to.addDays(-180);
+    // planned and expected look ahead, to the last planned day
+    QString series = request.args.value("series").toString("actual");
+    QDate today = QDate::currentDate();
+    if (!to.isValid()) {
+        to = today;
+        QDate planned = series == "actual" ? QDate() : lastPlannedDay(*env.session, request.args);
+        if (planned.isValid() && planned > to) to = planned;
+    }
+    // the default is the half year up to the end of the data, so an athlete
+    // without recent activities still gets a chart
+    if (!from.isValid()) from = std::min(to, pmc->end()).addDays(-180);
     if (from > to)
         return CommandResult::failure(Status::Usage, QString("--from %1 is after --to %2").arg(from.toString(Qt::ISODate), to.toString(Qt::ISODate)));
     if (from < pmc->start()) from = pmc->start();
@@ -292,13 +309,15 @@ pmcChart(CommandEnvironment &env, const CommandRequest &request)
     stress.name = "Stress"; stress.color = GColor(CPLOTMARKER); stress.style = ChartSeries::Dots;
 
     QDate epoch(1970, 1, 1);
+    double top = 0;
     for (QDate d = from; d <= to; d = d.addDays(1)) {
         double x = epoch.daysTo(d);
-        ctl.x << x; ctl.y << pmc->lts(d);
-        atl.x << x; atl.y << pmc->sts(d);
-        tsb.x << x; tsb.y << pmc->sb(d);
-        double value = pmc->stress(d);
-        if (value > 0) { stress.x << x; stress.y << value; }
+        PMCDay day = pmcDay(pmc, series, d);
+        ctl.x << x; ctl.y << day.lts;
+        atl.x << x; atl.y << day.sts;
+        tsb.x << x; tsb.y << day.sb;
+        if (day.stress > 0) { stress.x << x; stress.y << day.stress; }
+        top = std::max(top, std::max(day.stress, std::max(day.lts, day.sts)));
     }
 
     ChartPanel panel;
@@ -307,14 +326,30 @@ pmcChart(CommandEnvironment &env, const CommandRequest &request)
     panel.yRightLabel = "TSB";
     panel.series << stress << ctl << atl << tsb;
 
+    // a line on today, as the GUI's PMC and Plan charts draw one
+    bool marked = from <= today && today <= to && top > 0;
+    if (marked) {
+        ChartSeries mark;
+        mark.name = "Today";
+        mark.color = GColor(CPLOTMARKER);
+        mark.dashed = true;
+        mark.width = 1;
+        mark.x << epoch.daysTo(today) << epoch.daysTo(today);
+        mark.y << 0 << top;
+        panel.series << mark;
+    }
+
     ChartSpec spec;
-    spec.title = QString("Performance manager (%1)").arg(m->name());
+    QString which = series == "planned" ? "planned " : series == "expected" ? "expected " : "";
+    spec.title = QString("Performance manager (%1%2)").arg(which, m->name());
     spec.panels << panel;
 
     QJsonObject data;
     data.insert("metric", metric);
+    data.insert("series", series);
     data.insert("from", from.toString(Qt::ISODate));
     data.insert("to", to.toString(Qt::ISODate));
+    data.insert("today", marked);
     return renderResult(spec, request, "pmc", data);
 }
 
@@ -471,7 +506,8 @@ registerChartCommands(CommandRegistry &registry)
     pmc.spec.scope = Scope::Athlete;
     pmc.spec.params << ParamSpec("metric", ParamType::String, "stress metric").def("coggan_tss");
     pmc.spec.params << ParamSpec("from", ParamType::Date, "first day (default: 180 days before --to)");
-    pmc.spec.params << ParamSpec("to", ParamType::Date, "last day (default: today)");
+    pmc.spec.params << ParamSpec("to", ParamType::Date, "last day (default: today, for planned and expected the last planned day if later)");
+    pmc.spec.params << pmcParams(false);
     pmc.spec.params << imageParams();
     pmc.spec.httpMethod = "GET";
     pmc.spec.httpPath = "/athletes/{athlete}/charts/pmc";

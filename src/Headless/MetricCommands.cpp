@@ -26,6 +26,8 @@
 #include "ActivitySelection.h"
 #include "MetricNames.h"
 #include "ActivityJson.h"
+#include "SeasonRange.h"
+#include "ResultFormat.h"
 
 #include "Context.h"
 #include "Athlete.h"
@@ -169,6 +171,113 @@ pmcFor(AthleteSession &session, const QString &metric)
     return session.athlete()->getPMCFor(metric);
 }
 
+// the activities, actual and planned, that pass --sport and --filter, as
+// file names; false (and nothing filtered) when neither is given
+static bool
+pmcMatches(AthleteSession &session, const QJsonObject &args, QStringList &files, QString &error, Status &status)
+{
+    files.clear();
+    if (!args.contains("sport") && !args.contains("filter")) return false;
+    QJsonObject only;
+    if (args.contains("sport")) only.insert("sport", args.value("sport"));
+    if (args.contains("filter")) only.insert("filter", args.value("filter"));
+    for (bool planned : { false, true }) {
+        ActivitySelection s = ActivitySelection::fromArgs(only);
+        s.planned = planned;
+        QList<RideItem *> items;
+        if (!s.resolve(session, items, error, status)) return true;
+        for (RideItem *i : items) files << i->fileName;
+    }
+    return true;
+}
+
+PMCData *
+pmcForArgs(AthleteSession &session, const QJsonObject &args, const QString &metric,
+           std::unique_ptr<PMCData> &owned, QString &error, Status &status)
+{
+    error.clear();
+    int sts = args.value("sts").toInt(-1);
+    int lts = args.value("lts").toInt(-1);
+    QStringList files;
+    bool filtered = pmcMatches(session, args, files, error, status);
+    if (!error.isEmpty()) return nullptr;
+
+    // the athlete's cached PMC has the athlete's time constants and no
+    // filter (it is cached by metric only), others get a PMC of their own
+    if (!filtered && sts < 0 && lts < 0) return pmcFor(session, metric);
+
+    // as LTMPlot::createPMCData: the filter's matches, all dates
+    Specification spec;
+    if (filtered) spec.addMatches(files);
+    spec.setDateRange(DateRange(QDate(), QDate()));
+    owned.reset(new PMCData(session.context(), spec, metric, sts, lts));
+    return owned.get();
+}
+
+QStringList
+pmcSeriesNames(bool withAll)
+{
+    QStringList names = { "actual", "planned", "expected" };
+    if (withAll) names << "all";
+    return names;
+}
+
+PMCDay
+pmcDay(PMCData *pmc, const QString &series, const QDate &d)
+{
+    PMCDay day;
+    if (series == "planned") {
+        day.stress = pmc->plannedStress(d);
+        day.lts = pmc->plannedLts(d);
+        day.sts = pmc->plannedSts(d);
+        day.sb = pmc->plannedSb(d);
+        day.rr = pmc->plannedRr(d);
+    } else if (series == "expected") {
+        day.stress = pmc->expectedStress(d);
+        day.lts = pmc->expectedLts(d);
+        day.sts = pmc->expectedSts(d);
+        day.sb = pmc->expectedSb(d);
+        day.rr = pmc->expectedRr(d);
+    } else {
+        day.stress = pmc->stress(d);
+        day.lts = pmc->lts(d);
+        day.sts = pmc->sts(d);
+        day.sb = pmc->sb(d);
+        day.rr = pmc->rr(d);
+    }
+    return day;
+}
+
+QDate
+lastPlannedDay(AthleteSession &session, const QJsonObject &args)
+{
+    QStringList files;
+    QString error;
+    Status status;
+    bool filtered = pmcMatches(session, args, files, error, status);
+    QDate last;
+    for (RideItem *item : session.rideCache()->rides()) {
+        if (!item->planned) continue;
+        if (filtered && !files.contains(item->fileName)) continue;
+        if (!last.isValid() || item->dateTime.date() > last) last = item->dateTime.date();
+    }
+    return last;
+}
+
+QList<ParamSpec>
+pmcParams(bool withAll)
+{
+    QList<ParamSpec> list;
+    list << ParamSpec("series", ParamType::String,
+                      withAll ? "actual (completed activities), planned, expected (completed until today, planned after), or all"
+                              : "actual (completed activities), planned, or expected (completed until today, planned after)")
+                .def("actual").oneOf(pmcSeriesNames(withAll));
+    list << ParamSpec("sport", ParamType::String, "only activities of this sport (Bike, Run, Swim ...)");
+    list << ParamSpec("filter", ParamType::String, "only activities that pass this filter, as typed in the GUI filter box");
+    list << seasonParam();
+    return list;
+}
+
 //
 // Commands
 //
@@ -232,6 +341,18 @@ aggregateMetrics(CommandEnvironment &env, const CommandRequest &request)
     return CommandResult::success(data);
 }
 
+static QJsonObject
+pmcDayJson(const PMCDay &day)
+{
+    QJsonObject o;
+    o.insert("stress", jsonNumber(day.stress));
+    o.insert("ctl", jsonNumber(day.lts));
+    o.insert("atl", jsonNumber(day.sts));
+    o.insert("tsb", jsonNumber(day.sb));
+    o.insert("rr", jsonNumber(day.rr));
+    return o;
+}
+
 static CommandResult
 pmcCommand(CommandEnvironment &env, const CommandRequest &request)
 {
@@ -239,42 +360,54 @@ pmcCommand(CommandEnvironment &env, const CommandRequest &request)
     if (metric.isEmpty())
         return CommandResult::failure(Status::Usage, QString("unknown metric '%1', see 'metric list'").arg(request.args.value("metric").toString()));
 
-    int sts = request.args.value("sts").toInt(-1);
-    int lts = request.args.value("lts").toInt(-1);
-    // the athlete's cached PMC has the athlete's time constants (it is
-    // cached by metric only), other constants get a PMC of their own
-    std::unique_ptr<PMCData> custom;
-    PMCData *pmc = nullptr;
-    if (sts < 0 && lts < 0) pmc = pmcFor(*env.session, metric);
-    else {
-        custom.reset(new PMCData(env.session->context(), Specification(), metric, sts, lts));
-        pmc = custom.get();
-    }
+    QString error;
+    Status status = Status::Ok;
+    QDate from, to;
+    if (!dateRangeArgs(*env.session, request.args, from, to, error, status)) return CommandResult::failure(status, error);
+
+    std::unique_ptr<PMCData> owned;
+    PMCData *pmc = pmcForArgs(*env.session, request.args, metric, owned, error, status);
+    if (!error.isEmpty()) return CommandResult::failure(status, error);
     if (!pmc) return CommandResult::failure(Status::Failed, "could not compute the performance manager data");
 
-    QDate from = request.args.contains("from") ? QDate::fromString(request.args.value("from").toString(), Qt::ISODate) : pmc->start();
-    QDate to = request.args.contains("to") ? QDate::fromString(request.args.value("to").toString(), Qt::ISODate) : QDate::currentDate();
+    // planned and expected look ahead, to the last planned day
+    QString series = request.args.value("series").toString("actual");
+    if (!from.isValid()) from = pmc->start();
+    if (!to.isValid()) {
+        to = QDate::currentDate();
+        QDate planned = series == "actual" ? QDate() : lastPlannedDay(*env.session, request.args);
+        if (planned.isValid() && planned > to) to = planned;
+    }
 
     QJsonArray days;
     if (pmc->start().isValid()) {
         for (QDate d = from; d <= to; d = d.addDays(1)) {
             if (d < pmc->start() || d > pmc->end()) continue;
-            QJsonObject o;
+            QJsonObject o = pmcDayJson(pmcDay(pmc, series == "all" ? "actual" : series, d));
+            if (series == "all") {
+                o.insert("planned", pmcDayJson(pmcDay(pmc, "planned", d)));
+                o.insert("expected", pmcDayJson(pmcDay(pmc, "expected", d)));
+            }
             o.insert("date", d.toString(Qt::ISODate));
-            o.insert("stress", jsonNumber(pmc->stress(d)));
-            o.insert("ctl", jsonNumber(pmc->lts(d)));
-            o.insert("atl", jsonNumber(pmc->sts(d)));
-            o.insert("tsb", jsonNumber(pmc->sb(d)));
-            o.insert("rr", jsonNumber(pmc->rr(d)));
             days.append(o);
         }
     }
     QJsonObject data;
     data.insert("metric", metric);
+    data.insert("series", series);
     data.insert("sts_days", pmc->stsDays());
     data.insert("lts_days", pmc->ltsDays());
     data.insert("days", days);
-    return CommandResult::success(data);
+    CommandResult result = CommandResult::success(data);
+    if (series == "all") {
+        // each series' columns together, in the order the GUI names them
+        QStringList order;
+        for (const char *prefix : { "", "planned.", "expected." })
+            for (const char *c : { "stress", "ctl", "atl", "tsb", "rr" }) order << QString(prefix) + c;
+        result.text = ResultFormat::render(data, order);
+        result.csv = ResultFormat::csv(data, order);
+    }
+    return result;
 }
 
 static CommandResult
@@ -343,12 +476,14 @@ cpCommand(CommandEnvironment &env, const CommandRequest &request)
 static CommandResult
 estimatesCommand(CommandEnvironment &env, const CommandRequest &request)
 {
-    env.session->waitForEstimates();
-
     QString sport = request.args.value("sport").toString();
     QString model = request.args.value("model").toString();
-    QDate from = QDate::fromString(request.args.value("from").toString(), Qt::ISODate);
-    QDate to = QDate::fromString(request.args.value("to").toString(), Qt::ISODate);
+    QDate from, to;
+    QString error;
+    Status status = Status::Ok;
+    if (!dateRangeArgs(*env.session, request.args, from, to, error, status)) return CommandResult::failure(status, error);
+
+    env.session->waitForEstimates();
 
     QJsonArray list;
     for (const PDEstimate &e : env.session->athlete()->getPDEstimates()) {
@@ -405,7 +540,8 @@ registerMetricCommands(CommandRegistry &registry)
     pmc.spec.scope = Scope::Athlete;
     pmc.spec.params << ParamSpec("metric", ParamType::String, "stress metric").def("coggan_tss");
     pmc.spec.params << ParamSpec("from", ParamType::Date, "first day (default: first activity)");
-    pmc.spec.params << ParamSpec("to", ParamType::Date, "last day (default: today)");
+    pmc.spec.params << ParamSpec("to", ParamType::Date, "last day (default: today, for planned and expected the last planned day if later)");
+    pmc.spec.params << pmcParams(true);
     pmc.spec.params << ParamSpec("sts", ParamType::Int, "short term (ATL) days, default from the athlete settings");
     pmc.spec.params << ParamSpec("lts", ParamType::Int, "long term (CTL) days, default from the athlete settings");
     pmc.spec.httpMethod = "GET";
@@ -444,6 +580,7 @@ registerMetricCommands(CommandRegistry &registry)
     est.spec.params << ParamSpec("model", ParamType::String, "only this model (by name)");
     est.spec.params << ParamSpec("from", ParamType::Date, "first week");
     est.spec.params << ParamSpec("to", ParamType::Date, "last week");
+    est.spec.params << seasonParam();
     est.spec.httpMethod = "GET";
     est.spec.httpPath = "/athletes/{athlete}/cp/estimates";
     est.handler = estimatesCommand;

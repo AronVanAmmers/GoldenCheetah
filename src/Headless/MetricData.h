@@ -25,6 +25,8 @@
 #include "RideFile.h"
 
 #include <QVector>
+#include <QDate>
+#include <memory>
 
 class PDModel;
 class PMCData;
@@ -56,6 +58,28 @@ QStringList seriesNames();
 // performance manager data with the athlete's time constants, owned (and
 // cached by metric) by the athlete
 PMCData *pmcFor(AthleteSession &session, const QString &metric);
+
+// the PMC for a command's arguments: the athlete's own, or with --sts or
+// --lts, --sport or --filter one made here (into owned), filtered the way
+// LTMPlot filters a PMC curve: the activities that pass, planned ones
+// included, over all dates
+PMCData *pmcForArgs(AthleteSession &session, const QJsonObject &args, const QString &metric,
+                    std::unique_ptr<PMCData> &owned, QString &error, Status &status);
+
+// the series --series takes: actual, planned and expected, and all
+QStringList pmcSeriesNames(bool withAll);
+
+// one day of a series of a PMC
+struct PMCDay {
+    double stress = 0, lts = 0, sts = 0, sb = 0, rr = 0;
+};
+PMCDay pmcDay(PMCData *pmc, const QString &series, const QDate &date);
+
+// the last day a planned activity passes for this PMC, or an invalid date
+QDate lastPlannedDay(AthleteSession &session, const QJsonObject &args);
+
+// the parameters that choose the PMC: --series, --sport, --filter, --season
+QList<ParamSpec> pmcParams(bool withAll);
 
 } // namespace Headless
 
