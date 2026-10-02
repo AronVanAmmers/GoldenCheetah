@@ -33,6 +33,12 @@ private slots:
         QCOMPARE(CommandRegistry::coerce(d, QJsonValue("3.25"), error).toDouble(), 3.25);
         CommandRegistry::coerce(d, QJsonValue("abc"), error);
         QVERIFY(error.contains("abc"));
+        error.clear();
+        CommandRegistry::coerce(d, QJsonValue("nan"), error);
+        QVERIFY(error.contains("nan"));
+        error.clear();
+        CommandRegistry::coerce(d, QJsonValue("-inf"), error);
+        QVERIFY(error.contains("inf"));
 
         ParamSpec b("f", ParamType::Bool, "");
         QCOMPARE(CommandRegistry::coerce(b, QJsonValue("yes"), error).toBool(), true);

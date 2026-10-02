@@ -40,6 +40,7 @@
 #include <QRegularExpression>
 #include <functional>
 #include <algorithm>
+#include <cmath>
 
 namespace Headless {
 
@@ -858,7 +859,7 @@ setScheme(CommandEnvironment &env, const CommandRequest &request)
             return CommandResult::failure(Status::Usage, QString("PERCENT must be a whole number from 0 to 1000, got '%1'").arg(parts.at(2)));
         if (hr) {
             row.trimp = parts.at(3).trimmed().toDouble(&ok);
-            if (!ok || row.trimp < 0 || row.trimp > 10)
+            if (!ok || !std::isfinite(row.trimp) || row.trimp < 0 || row.trimp > 10)
                 return CommandResult::failure(Status::Usage, QString("TRIMPK must be a number from 0 to 10, got '%1'").arg(parts.at(3)));
         }
         rows << row;
@@ -929,7 +930,7 @@ measureValues(MeasuresGroup *g, const QJsonValue &set, Measure &m)
         }
         bool ok = false;
         double value = pair.second.toDouble(&ok);
-        if (!ok) return CommandResult::failure(Status::Usage, QString("'%1' is not a number").arg(pair.second));
+        if (!ok || !std::isfinite(value)) return CommandResult::failure(Status::Usage, QString("'%1' is not a number").arg(pair.second));
         if (value < 0 || value > 9999.99)
             return CommandResult::failure(Status::Usage, QString("%1 must be 0 to 9999.99, got %2").arg(pair.first).arg(pair.second));
         m.values[field] = value;
