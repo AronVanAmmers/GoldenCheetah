@@ -70,12 +70,14 @@ gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > inte
 |---|---|
 | Athletes | `athlete list`, `athlete create`, `athlete show`, `athlete set`, `athlete refresh [--rebuild]` |
 | Import | `import FILE-OR-FOLDER... [--recursive] [--dry-run]`, `formats` |
-| Activities | `activity list`, `activity show`, `activity overview [--tile NAME]`, `layout list`, `layout tile list|show|set`, `activity export --as tcx`, `activity set --set 'Field=value'`, `activity delete`, `activity eval --expression '...'`, `activity column list|add|remove` |
+| Activities | `activity list`, `activity show`, `activity add` (manual entry), `activity overview [--tile NAME]`, `layout list`, `layout tile list|show|set`, `activity export --as tcx`, `activity set --set 'Field=value'`, `activity delete`, `activity eval --expression '...'`, `activity column list|add|remove` |
 | Intervals | `interval list ACTIVITY [--type user,effort] [--metric ...] [--display]`, `interval show ACTIVITY NUMBER-OR-NAME` |
 | Fields | `field list`, `field add NAME... --type double --tab TAB`, `field remove` |
 | Processors | `processor list`, `processor show`, `processor install NAME --file script.py`, `processor configure`, `processor remove`, `processor run NAME ...` |
-| Metrics | `metric list`, `metric user list|show|add|edit|remove`, `metric favourite list|add|remove|set`, `metric aggregate`, `pmc`, `meanmax`, `cp`, `cp estimates` |
+| Metrics | `metric list`, `metric user list|show|add|edit|remove`, `metric favourite list|add|remove|set`, `metric aggregate`, `pmc [--series actual\|planned\|expected\|all]`, `meanmax`, `cp`, `cp estimates` |
 | Zones and measures | `zones show`, `zones set`, `zones remove` (`--type power\|hr\|pace`), `zones options`, `zones scheme show\|set`, `measures list`, `measures add`, `measures edit`, `measures remove` |
+| Plans | `plan add`, `plan list`, `plan move\|copy`, `plan link\|unlink`, `plan shift`, `plan repeat`, `plan export\|import`, `plan adherence`, `calendar summary` |
+| Seasons | `season list\|show\|add\|edit\|remove`, `season phase add\|edit\|remove`, `event list\|add\|edit\|remove` |
 | Charts | `chart activity`, `chart meanmax`, `chart pmc`, `chart zones [--type power\|hr\|pace\|fatigue]`, `chart trend` (`--as png\|svg\|pdf`, `--width`, `--height`, `--dark`), `chart library list\|show\|add\|edit\|remove`, `chart library curve add\|edit\|remove`, `chart library render\|data` |
 | Server | `serve` (see [REST API](#rest-api)) |
 
@@ -88,6 +90,7 @@ Commands that work on several activities accept the same selection options:
 - **`--search TEXT`**: a free text search, as in the GUI search box.
 - **`--named NAME`**: a search or filter saved in the GUI.
 - **`--from DATE --to DATE`**, **`--sport Bike`**, **`--limit N`** (the most recent N), **`--planned`**.
+- **`--season NAME`**: the dates of a season, a phase (`Season/Phase`) or a built-in range such as `"Last 6 weeks"`, instead of `--from` and `--to` (see [Seasons, phases and events](#seasons-phases-and-events)). The commands with dates of their own (`pmc`, `chart pmc`, `cp estimates`, `measures list`, `chart library render|data`, `plan list|export|adherence`, `calendar summary`) take it too.
 
 All given criteria must match. `processor run` and `activity set` change nothing unless activities are chosen or `--all` is given.
 
@@ -362,7 +365,7 @@ gc-cli -a Joe plan add --date 2026-10-14 --workout FTPCheckup
 
 `--workout` is a workout of the workout library (the Train view's list): its file, its file name or its title. The activity is then a Bike activity named after the workout, its description is added to the notes, and an erg workout sets the duration, average power, IsoPower, xPower, BikeStress and BikeScore, as the wizard does. What the workout decides can't be given as well (`--duration` with an erg workout, `--distance` with a slope one, `--title`, `--sport` other than Bike).
 
-`plan list` is the agenda: the planned activities from today on, or `--from`/`--to`, or `--all`. Each has its day and time, sport, title and workout code, the expected duration, distance and BikeStress, the completed activity it is linked to (`linked`), and the day it was first planned for when it was moved (`original_date`). `--metric` adds metrics, as in `activity list`. Text, JSON and CSV as the other lists.
+`plan list` is the agenda: the planned activities from today on, or `--from`/`--to` (or `--season`), or `--all`. Each has its day and time, sport, title and workout code, the expected duration, distance and BikeStress, the completed activity it is linked to (`linked`), and the day it was first planned for when it was moved (`original_date`). `--metric` adds metrics, as in `activity list`. Text, JSON and CSV as the other lists.
 
 The calendar's actions:
 
@@ -374,7 +377,7 @@ The calendar's actions:
 | unlink | `plan unlink ID` (either side) |
 | insert rest day / delete rest day | `plan shift --from DATE --days N` (N > 0 inserts N days, N < 0 deletes them) |
 | Repeat plan... | `plan repeat --from A --to B --start C` |
-| Export plan... | `plan export --from A --to B --name NAME -o plan.gcplan` |
+| Export plan... (Tools menu, or a phase in the Date Ranges sidebar) | `plan export --from A --to B --name NAME -o plan.gcplan`, or `--season "Season/Phase"` for the dates |
 | Import plan... | `plan import plan.gcplan --start DATE` |
 
 They make the same checks and the same changes as the calendar:
