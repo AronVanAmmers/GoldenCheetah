@@ -153,6 +153,11 @@ prepareChart(CommandEnvironment &env, const QJsonObject &args, TrendsChart &char
     // estimates are computed on demand, the GUI has them from the start
     if (needsEstimates(chart.settings)) env.session->waitForEstimates();
 
+    // the Trends view's own controls, which a saved chart doesn't carry (or
+    // not in old versions): season and event markers, no data table or stack
+    chart.settings.events = true;
+    chart.settings.showData = false;
+    chart.settings.stack = false;
     chart.settings.title = range.name;
     chart.settings.prepare(context, range, false, filters, chart.bests);
     return true;
