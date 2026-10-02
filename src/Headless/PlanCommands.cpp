@@ -820,8 +820,11 @@ importPlan(CommandEnvironment &env, const CommandRequest &request)
     QDate start = dateArg(request, "start");
     RideCache *cache = env.session->rideCache();
 
-    QSet<QString> before;
-    for (RideItem *item : cache->rides()) if (item->planned) before.insert(item->fileName);
+    // what is new afterwards was imported; a replaced activity's file name
+    // comes back, so items are compared, not names (removed items are only
+    // freed later)
+    QSet<RideItem*> before;
+    for (RideItem *item : cache->rides()) if (item->planned) before.insert(item);
 
     PlanBundleReader reader(env.session->context(), start);
     PlanResult loaded = reader.loadBundle(path);
@@ -841,7 +844,7 @@ importPlan(CommandEnvironment &env, const CommandRequest &request)
 
     QJsonArray added, removed;
     for (RideItem *item : cache->rides())
-        if (item->planned && !before.contains(item->fileName)) added.append(idOf(item));
+        if (item->planned && !before.contains(item)) added.append(idOf(item));
     for (const QString &f : replaced) removed.append(idOf(f));
 
     QJsonObject data;

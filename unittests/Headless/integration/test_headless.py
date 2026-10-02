@@ -3059,5 +3059,440 @@ class TestTrendsLibraryCharts(Headless):
         self.assertClosed()
 
 
+
+# manual entry and planned activities (activity add, plan ...)
+import datetime  # noqa: E402
+import zipfile   # noqa: E402
+
+
+def ride_id(date, time="16:00:00"):
+    return date.replace("-", "_") + "_" + time.replace(":", "_")
+
+
+class PlanHelpers:
+    def ride(self, rid, planned=False):
+        """the RIDE object of an activity file"""
+        path = os.path.join(self.folder, "planned" if planned else "activities", rid + ".json")
+        with open(path, encoding="utf-8-sig") as f:
+            return json.load(f)["RIDE"]
+
+    def tags(self, rid, planned=False):
+        return {k: v.strip() for k, v in self.ride(rid, planned).get("TAGS", {}).items()}
+
+    def overrides(self, rid, planned=False):
+        return {k: v["value"] for o in self.ride(rid, planned).get("OVERRIDES", []) for k, v in o.items()}
+
+    def planned_files(self):
+        folder = os.path.join(self.folder, "planned")
+        return sorted(f[:-5] for f in os.listdir(folder) if f.endswith(".json")) if os.path.isdir(folder) else []
+
+    def plan(self, *args, expect=0):
+        return self.gcj("plan", *args, expect=expect)["data"]
+
+
+# what the Manual entry wizard wrote on Xvfb for: 2026-10-02 16:57:58, Bike,
+# workout code WC1, notes "hello", 150 bpm, 200 W, 90 rpm, 30.5 km, 1:02:00,
+# estimate by duration (nothing to estimate from: the athlete's only ride had
+# no distance)
+WIZARD_TAGS = {"Device": "Manual", "Notes": "hello", "Sport": "Bike", "Workout Code": "WC1"}
+WIZARD_OVERRIDES = {"average_cad": "90", "average_hr": "150", "average_power": "200", "time_riding": "3720",
+                    "total_distance": "30.5", "workout_time": "3720"}
+
+
+def qround(x):
+    return int(x + 0.5) if x > 0 else 0
+
+
+class TestManualEntry(Headless, PlanHelpers):
+    """activity add: Activity > Manual entry"""
+
+    imports = [RUN_STRYD]
+
+    def test_same_file_as_the_wizard(self):
+        r = self.gcj("activity", "add", "--date", "2026-10-02", "--time", "16:57:58", "--sport", "Bike",
+                     "--workout-code", "WC1", "--notes", "hello", "--avg-hr", "150", "--avg-power", "200",
+                     "--avg-cadence", "90", "--distance", "30.5", "--duration", "1:02:00", "--estimate", "time")["data"]
+        self.assertEqual(r["id"], "2026_10_02_16_57_58")
+        ride = self.ride("2026_10_02_16_57_58")
+        self.assertEqual(ride["DEVICETYPE"].strip(), "Manual")
+        self.assertEqual(ride["RECINTSECS"], 0)
+        self.assertEqual(self.tags("2026_10_02_16_57_58"), WIZARD_TAGS)
+        self.assertEqual(self.overrides("2026_10_02_16_57_58"), WIZARD_OVERRIDES)
+        self.assertNotIn("SAMPLES", ride)
+        # it is an activity like any other
+        shown = self.gcj("activity", "show", "2026_10_02_16_57_58")["data"]
+        self.assertEqual(shown["metrics"]["total_distance"], 30.5)
+        self.assertEqual(shown["metadata"]["Workout Code"], "WC1")
+        listed = self.gcj("activity", "list", "2026_10_02_16_57_58", "--metric", "average_hr,workout_time")["data"]
+        self.assertEqual(listed["activities"][0]["metrics"], {"average_hr": 150, "workout_time": 3720})
+
+    def expected(self, sport, days, by, duration, distance):
+        """the wizard's estimate, from the activities as activity list has them"""
+        symbols = ["time_riding", "total_distance", "total_work", "coggan_tss", "skiba_bike_score", "swimscore", "triscore"]
+        rides = self.gcj("activity", "list", "--sport", sport, "--metric", ",".join(symbols))["data"]["activities"]
+        rides = [r for r in rides if r["sport"] == sport and r["metrics"]["time_riding"] and r["metrics"]["total_distance"]]
+        today = datetime.date.today()
+        recent = [r for r in rides if 0 <= (today - datetime.date.fromisoformat(r["start"][:10])).days < days]
+
+        def total(rs, s):
+            return sum(r["metrics"][s] for r in rs)
+        names = ["total_work", "coggan_tss", "skiba_bike_score", "swimscore", "triscore"]
+        t, d = total(rides, "time_riding"), total(rides, "total_distance")
+        by_time = {n: total(rides, n) * 3600 / t for n in names}
+        by_dist = {n: total(rides, n) / d for n in names}
+        if recent:
+            t, d = total(recent, "time_riding"), total(recent, "total_distance")
+            if t:
+                by_time = {n: total(recent, n) * 3600 / t for n in names}
+            if d:
+                by_dist = {n: total(recent, n) / d for n in names}
+        values = {n: (duration * by_time[n] / 3600 if by == "time" else distance * by_dist[n]) for n in names}
+        maxima = {"total_work": 9999}
+        return {n: min(qround(v), maxima.get(n, 999)) for n, v in values.items()}
+
+    def check_estimate(self, data, expected):
+        o = data["overrides"]
+        for name, value in expected.items():
+            self.assertEqual(o.get(name, 0), value, (name, o, expected))
+
+    def test_estimate_by_time_and_distance(self):
+        # entered by hand: stress given means no estimate
+        a = self.gcj("activity", "add", "--date", day(-3), "--time", "07:00", "--sport", "Row", "--duration", "3600",
+                     "--distance", "10", "--work", "600", "--bikestress", "50", "--bikescore", "40", "--triscore", "45")["data"]
+        self.assertEqual(a["estimate"]["by"], "none")
+        self.assertEqual(a["overrides"]["total_work"], 600)
+        self.gcj("activity", "add", "--date", day(-2), "--time", "07:00", "--sport", "Row", "--duration", "0:30:00",
+                 "--distance", "5", "--work", "300", "--bikestress", "25", "--bikescore", "20", "--triscore", "30")
+
+        expected = self.expected("Row", 30, "time", 5400, 12)
+        self.assertEqual(expected["total_work"], 900)
+        self.assertEqual(expected["coggan_tss"], 75)
+        c = self.gcj("activity", "add", "--date", day(-1), "--time", "07:00", "--sport", "Row", "--duration", "1:30:00",
+                     "--distance", "12", "--estimate", "time", "--estimate-days", "30")["data"]
+        self.assertEqual(c["estimate"], {"by": "time", "days": 30})
+        self.check_estimate(c, expected)
+
+        expected = self.expected("Row", 30, "distance", 3600, 9)
+        d = self.gcj("activity", "add", "--date", day(-1), "--time", "18:00", "--sport", "Row", "--duration", "1:00:00",
+                     "--distance", "9", "--estimate", "distance")["data"]
+        self.check_estimate(d, expected)
+        self.assertGreater(d["overrides"]["total_work"], 0)
+
+    def test_estimate_falls_back_to_all_activities(self):
+        # the only run is from 2024: none in the last 30 days, so all of them count
+        expected = self.expected("Run", 30, "time", 2700, 8)
+        self.assertGreater(expected["triscore"] + expected["total_work"], 0)
+        r = self.gcj("activity", "add", "--date", day(-1), "--time", "06:00", "--sport", "Run", "--duration", "0:45:00",
+                     "--distance", "8", "--estimate", "time")["data"]
+        self.check_estimate(r, expected)
+
+    def test_refusals(self):
+        before = self.activity_files()
+        for args in (("--date", day(1), "--sport", "Bike"),                       # in the future
+                     ("--date", "1999-12-31", "--sport", "Bike"),
+                     ("--date", day(-1)),                                          # no sport
+                     ("--date", day(-1), "--sport", "Bike", "--duration", "1:5"),
+                     ("--date", day(-1), "--sport", "Bike", "--time", "25:00"),
+                     ("--date", day(-1), "--sport", "Bike", "--rpe", "11"),
+                     ("--date", day(-1), "--sport", "Bike", "--avg-hr", "300"),
+                     ("--date", day(-1), "--sport", "Bike", "--distance", "-1"),
+                     ("--date", day(-1), "--sport", "Bike", "--estimate", "time", "--bikestress", "50"),
+                     ("--date", day(-1), "--sport", "Bike", "--estimate", "sometimes"),
+                     ("--date", day(-1), "--sport", "Bike", "--estimate-days", "0")):
+            self.gcj("activity", "add", *args, expect=2)
+        # objective and workouts are for plans
+        self.assertEqual(self.gca("activity", "add", "--date", day(-1), "--sport", "Bike", "--objective", "x").code, 2)
+        # a start that is taken
+        self.gcj("activity", "add", "--date", day(-5), "--time", "05:00", "--sport", "Bike")
+        r = self.gcj("activity", "add", "--date", day(-5), "--time", "05:00", "--sport", "Run", expect=5)
+        self.assertIn("already starts", r["error"])
+        self.assertEqual(len(self.activity_files()), len(before) + 1)
+        self.assertClosed()
+
+
+class TestPlannedActivities(Headless, PlanHelpers):
+    """plan add, list, move, copy, link, shift, repeat, export and import"""
+
+    imports = [RIDE_POWER]
+
+    def test_add_and_list(self):
+        d1, d2 = day(30), day(32)
+        a = self.plan("add", "--date", d1, "--sport", "Run", "--duration", "0:45:00", "--distance", "9",
+                      "--title", "Easy run", "--workout-code", "E1", "--objective", "aerobic", "--notes", "flat")
+        self.assertTrue(a["planned"])
+        self.assertEqual(a["id"], ride_id(d1))                        # 16:00, as the wizard
+        tags = self.tags(ride_id(d1), planned=True)
+        self.assertEqual(tags["Original Date"], d1.replace("-", "/"))
+        self.assertEqual((tags["Sport"], tags["Route"], tags["Workout Code"], tags["Objective"], tags["Notes"]),
+                         ("Run", "Easy run", "E1", "aerobic", "flat"))
+        self.assertEqual(self.overrides(ride_id(d1), planned=True),
+                         {"total_distance": "9", "workout_time": "2700", "time_riding": "2700"})
+        self.plan("add", "--date", d2, "--time", "07:30", "--sport", "Bike", "--duration", "5400", "--bikestress", "80")
+        self.assertFalse(os.path.exists(os.path.join(self.folder, "activities", ride_id(d1) + ".json")))
+
+        listed = {p["id"]: p for p in self.plan("list")["planned"]}
+        run = listed[ride_id(d1)]
+        self.assertEqual((run["date"], run["time"], run["sport"], run["title"], run["workout_code"], run["duration"],
+                          run["distance"], run["linked"], run["original_date"]),
+                         (d1, "16:00:00", "Run", "Easy run", "E1", 2700, 9, None, None))
+        self.assertEqual(listed[ride_id(d2, "07:30:00")]["coggan_tss"], 80)
+        only = self.plan("list", "--from", d2, "--to", d2)["planned"]
+        self.assertEqual([p["id"] for p in only], [ride_id(d2, "07:30:00")])
+        rows = self.csv_rows("plan", "list", "--to", d2)
+        self.assertIn("workout_code", rows[0])
+        self.assertIn(ride_id(d1), [r[rows[0].index("id")] for r in rows[1:]])
+        text = self.gca("plan", "list", "--to", d2).out.decode()
+        self.assertIn("Easy run (E1)", text)
+        # planned activities are not activities
+        ids = [a["id"] for a in self.gcj("activity", "list")["data"]["activities"]]
+        self.assertNotIn(ride_id(d1), ids)
+
+    def test_move_copy_keep_original_date(self):
+        d, later, past = day(40), day(43), "2026-01-15"
+        self.plan("add", "--date", d, "--sport", "Bike", "--duration", "3600", "--title", "Move me")
+        moved = self.plan("move", ride_id(d), "--to", later)
+        self.assertEqual((moved["id"], moved["moved_from"], moved["original_date"]), (ride_id(later), ride_id(d), d))
+        self.assertEqual(self.tags(ride_id(later), planned=True)["Original Date"], d.replace("-", "/"))
+        self.assertNotIn(ride_id(d), self.planned_files())
+        # moving on keeps the first day planned for, and a move can go back in time
+        self.plan("move", ride_id(later), "--to", past, "--time", "09:15")
+        self.assertEqual(self.tags(ride_id(past, "09:15:00"), planned=True)["Original Date"], d.replace("-", "/"))
+        self.assertNotIn(ride_id(past, "09:15:00"), [p["id"] for p in self.plan("list")["planned"]])
+        self.assertIn(ride_id(past, "09:15:00"), [p["id"] for p in self.plan("list", "--all")["planned"]])
+
+        copy = self.plan("copy", ride_id(past, "09:15:00"), "--to", later)
+        self.assertEqual((copy["id"], copy["copied_from"]), (ride_id(later, "09:15:00"), ride_id(past, "09:15:00")))
+        tags = self.tags(ride_id(later, "09:15:00"), planned=True)
+        self.assertEqual((tags["Route"], tags["Original Date"]), ("Move me", later.replace("-", "/")))
+        # at another time
+        other = self.plan("copy", ride_id(past, "09:15:00"), "--to", later, "--time", "18:00")
+        self.assertEqual(other["id"], ride_id(later, "18:00:00"))
+        self.assertEqual(self.gcj("activity", "show", "--planned", ride_id(later, "18:00:00"))["data"]["start"],
+                         later + "T18:00:00")
+        # taken
+        r = self.gcj("plan", "copy", ride_id(past, "09:15:00"), "--to", later, expect=5)
+        self.assertIn("already exists", r["error"])
+        self.gcj("plan", "move", ride_id(later, "18:00:00"), "--to", later, "--time", "09:15", expect=5)
+        self.gcj("plan", "move", "nonesuch", "--to", later, expect=3)
+
+    def test_link_unlink(self):
+        d = day(50)
+        self.plan("add", "--date", d, "--sport", "Bike", "--duration", "1800")
+        planned, actual = ride_id(d), "2020_01_26_13_00_38"
+        linked = self.plan("link", planned, actual)
+        self.assertEqual((linked["planned"], linked["actual"]), (planned, actual))
+        self.assertEqual(self.tags(planned, planned=True)["Linked Filename"], actual + ".json")
+        self.assertEqual(self.tags(actual)["Linked Filename"], planned + ".json")
+        self.assertEqual([p["linked"] for p in self.plan("list", "--from", d, "--to", d)["planned"]], [actual])
+        # the GUI's refusals
+        self.plan("add", "--date", d, "--time", "08:00", "--sport", "Bike")
+        r = self.gcj("plan", "link", ride_id(d, "08:00:00"), actual, expect=5)
+        self.assertIn("already linked", r["error"])
+        r = self.gcj("plan", "link", ride_id(d, "08:00:00"), planned, expect=5)
+        self.assertIn("same type", r["error"])
+        self.gcj("plan", "link", actual, actual, expect=3)            # not a planned activity
+        # either side unlinks both
+        self.plan("unlink", actual)
+        self.assertNotIn("Linked Filename", self.tags(planned, planned=True))
+        self.assertNotIn("Linked Filename", self.tags(actual))
+        r = self.gcj("plan", "unlink", planned, expect=5)
+        self.assertIn("not linked", r["error"])
+
+    def test_shift(self):
+        # far beyond the other tests' plans: it moves every planned activity from --from on
+        for i, n in enumerate((900, 901, 904)):
+            self.plan("add", "--date", day(n), "--sport", "Bike", "--title", "S%d" % i)
+        shifted = self.plan("shift", "--from", day(901), "--days", "2")
+        self.assertEqual((shifted["count"], shifted["shifted_by"]), (2, 2))
+        self.assertEqual(sorted(m["to"] for m in shifted["moved"]), [ride_id(day(903)), ride_id(day(906))])
+        self.assertIn(ride_id(day(900)), self.planned_files())
+        self.assertEqual(self.tags(ride_id(day(903)), planned=True)["Original Date"], day(901).replace("-", "/"))
+        # back, as deleting rest days: never to before --from
+        shifted = self.plan("shift", "--from", day(902), "--days", "-5")
+        self.assertEqual(shifted["shifted_by"], -1)
+        self.assertEqual([p["title"] for p in self.plan("list", "--from", day(900))["planned"]], ["S0", "S1", "S2"])
+        self.assertIn(ride_id(day(902)), self.planned_files())
+        self.assertIn(ride_id(day(905)), self.planned_files())
+        self.gcj("plan", "shift", "--from", day(900), "--days", "0", expect=2)
+
+    def test_repeat(self):
+        src = [day(70), day(70), day(72)]
+        self.plan("add", "--date", src[0], "--sport", "Bike", "--title", "R0", "--time", "06:00")
+        self.plan("add", "--date", src[1], "--sport", "Run", "--title", "R1", "--time", "18:00")
+        self.plan("add", "--date", src[2], "--sport", "Bike", "--title", "R2", "--time", "06:00")
+        start = day(77)
+        r = self.plan("repeat", "--from", day(70), "--to", day(76), "--start", start)
+        self.assertEqual((r["from"], r["to"], r["count"]), (start, day(83), 3))
+        made = sorted(c["id"] for c in r["copies"])
+        self.assertEqual(made, [ride_id(day(77), "06:00:00"), ride_id(day(77), "18:00:00"), ride_id(day(79), "06:00:00")])
+        for rid in made:
+            self.assertIn(rid, self.planned_files())
+        tags = self.tags(ride_id(day(79), "06:00:00"), planned=True)
+        self.assertEqual((tags["Route"], tags["Original Date"]), ("R2", day(79).replace("-", "/")))
+        # again: what is in the way and not linked is replaced
+        r = self.plan("repeat", "--from", day(70), "--to", day(76), "--start", start)
+        self.assertEqual(sorted(r["deleted"]), made)
+        self.assertEqual(r["count"], 3)
+        # without the gaps, from the first activity on
+        r = self.plan("repeat", "--from", day(69), "--to", day(76), "--start", day(90), "--no-gaps")
+        self.assertEqual((r["to"]), day(92))
+        self.gcj("plan", "repeat", "--from", day(70), "--to", day(76), "--start", day(76), expect=2)
+        self.gcj("plan", "repeat", "--from", day(200), "--to", day(201), "--start", day(210), expect=5)
+
+    def test_export_import(self):
+        self.plan("add", "--date", day(100), "--sport", "Bike", "--title", "E0", "--duration", "3600", "--avg-power", "200")
+        self.plan("add", "--date", day(102), "--sport", "Run", "--title", "E1", "--duration", "1800")
+        bundle = os.path.join(self.tmp, "week.gcplan")
+        r = self.gcj("plan", "export", "--from", day(99), "--to", day(105), "--name", "Test week",
+                     "--description", "$NAME by $AUTHOR", "-o", bundle)["data"]
+        self.assertEqual((r["name"], r["author"], r["sport"]), ("Test week", self.athlete, "Bike, Run"))
+        with zipfile.ZipFile(bundle) as z:
+            names = z.namelist()
+            manifest = json.loads(z.read("manifest.json"))
+            readme = z.read("README.md").decode()
+        self.assertEqual(sorted(n for n in names if n.startswith("planned/") and n.endswith(".json")),
+                         ["planned/" + ride_id(day(100)) + ".json", "planned/" + ride_id(day(102)) + ".json"])
+        self.assertEqual((manifest["name"], manifest["durationDays"], manifest["frontGapDays"], manifest["backGapDays"]),
+                         ("Test week", 7, 1, 3))
+        self.assertIn("Test week by " + self.athlete, readme)
+
+        r = self.gcj("plan", "import", bundle, "--start", day(120))["data"]
+        # the front gap is kept: the first activity is a day after the start
+        self.assertEqual(sorted(r["imported"]), [ride_id(day(121)), ride_id(day(123))])
+        tags = self.tags(ride_id(day(121)), planned=True)
+        self.assertEqual((tags["Route"], tags["Plan"]), ("E0", "Test week"))
+        self.assertEqual(self.overrides(ride_id(day(121)), planned=True)["average_power"], "200")
+        r = self.gcj("plan", "import", bundle, "--start", day(130), "--no-gap-days")["data"]
+        self.assertEqual(sorted(r["imported"]), [ride_id(day(130)), ride_id(day(132))])
+        # importing again replaces the unlinked planned activities of the period
+        r = self.gcj("plan", "import", bundle, "--start", day(130), "--no-gap-days")["data"]
+        self.assertEqual(sorted(r["replaced"]), [ride_id(day(130)), ride_id(day(132))])
+        self.assertEqual(sorted(r["imported"]), [ride_id(day(130)), ride_id(day(132))])
+
+        broken = os.path.join(self.tmp, "broken.gcplan")
+        with open(broken, "wb") as f:
+            f.write(b"not a zip")
+        self.gcj("plan", "import", broken, "--start", day(140), expect=5)
+        self.gcj("plan", "export", "--from", day(300), "--to", day(301), "--name", "Empty", "-o", bundle, expect=5)
+        self.gcj("plan", "export", "--from", day(99), "--to", day(105), "--name", " ", "-o", bundle, expect=2)
+
+    def test_workout_from_the_library(self):
+        # a plan with a workout, imported, puts the workout in the library
+        erg = os.path.join(TESTDATA, "workouts", "FTPCheckup.erg")
+        self.plan("add", "--date", day(150), "--sport", "Bike", "--duration", "3600")
+        self.gcj("activity", "set", "--planned", ride_id(day(150)), "--set", "WorkoutFilename=" + erg, "--allow-undefined")
+        bundle = os.path.join(self.tmp, "ftp.gcplan")
+        self.gcj("plan", "export", "--from", day(150), "--to", day(150), "--name", "FTP", "-o", bundle)
+        with zipfile.ZipFile(bundle) as z:
+            self.assertTrue(any(n.startswith("workouts/") and n.endswith("FTPCheckup.erg") for n in z.namelist()))
+        self.gcj("plan", "import", bundle, "--start", day(155))
+        self.assertTrue(os.path.exists(self.tags(ride_id(day(155)), planned=True)["WorkoutFilename"]))
+
+        p = self.plan("add", "--date", day(160), "--workout", "FTPCheckup", "--avg-hr", "140")
+        tags = self.tags(p["id"], planned=True)
+        self.assertEqual((tags["Sport"], tags["Route"], tags["Notes"]), ("Bike", "FTPCheckup", "FTP Checkup"))
+        o = self.overrides(p["id"], planned=True)
+        self.assertEqual((o["workout_time"], o["average_hr"]), ("3600", "140"))
+        for name in ("average_power", "coggan_np", "coggan_tss", "skiba_bike_score", "skiba_xpower"):
+            self.assertGreater(int(o[name]), 0, name)
+        self.assertEqual(p["estimate"]["by"], "none")              # erg workouts are not estimated
+        # what the workout decides can't be given
+        self.gcj("plan", "add", "--date", day(161), "--workout", "FTPCheckup", "--duration", "1:00:00", expect=2)
+        self.gcj("plan", "add", "--date", day(161), "--workout", "FTPCheckup", "--sport", "Run", expect=2)
+        self.gcj("plan", "add", "--date", day(161), "--workout", "No such workout", expect=3)
+
+    def test_planned_activities_as_activities(self):
+        d = day(170)
+        self.plan("add", "--date", d, "--sport", "Bike", "--duration", "3600")
+        rid = ride_id(d)
+        r = self.gcj("activity", "set", "--planned", d, "--set", "Notes=edited", "--set", "Average Power=210")["data"]
+        self.assertEqual(r["updated"], 1)
+        self.assertEqual(self.tags(rid, planned=True)["Notes"], "edited")
+        self.assertEqual(self.overrides(rid, planned=True)["average_power"], "210")
+        shown = self.gcj("activity", "show", "--planned", d)["data"]
+        self.assertEqual((shown["id"], shown["planned"], shown["metrics"]["average_power"]), (rid, True, 210))
+        self.gcj("activity", "show", d, expect=3)                      # without --planned: completed ones
+        out = os.path.join(self.tmp, "planned.json")
+        self.gcj("activity", "export", "--planned", rid, "-o", out)
+        self.assertTrue(os.path.getsize(out) > 0)
+        deleted = self.gcj("activity", "delete", "--planned", rid)["data"]
+        self.assertEqual(deleted["deleted"], [rid])
+        self.assertNotIn(rid, self.planned_files())
+        self.assertTrue(os.path.exists(os.path.join(self.folder, "bak", rid + ".json.bak")))
+
+    def test_same_name_planned_and_completed(self):
+        when = day(-1)
+        self.gcj("activity", "add", "--date", when, "--time", "05:30", "--sport", "Run")
+        self.gcj("plan", "add", "--date", day(0), "--time", "23:59", "--sport", "Run")
+        self.plan("move", ride_id(day(0), "23:59:00"), "--to", when, "--time", "05:30")
+        rid = ride_id(when, "05:30:00")
+        self.assertIn(rid, self.planned_files())
+        self.assertFalse(self.gcj("activity", "show", rid)["data"].get("planned", False))
+        self.assertTrue(self.gcj("activity", "show", "--planned", rid)["data"]["planned"])
+        self.plan("link", rid, rid)
+        r = self.gcj("activity", "delete", "--planned", rid, expect=5)
+        self.assertIn("can't tell them apart", r["error"])
+
+    def test_import_links_to_the_plan(self):
+        self.plan("add", "--date", day(1), "--sport", "Bike", "--title", "Planned ride")
+        self.plan("move", ride_id(day(1)), "--to", "2012-01-11", "--time", "10:00")
+        r = self.gcj("import", RIDE_GPS)["data"]
+        self.assertEqual(r["imported"], 1)
+        self.assertEqual(self.tags("2012_01_11_11_51_01")["Linked Filename"], "2012_01_11_10_00_00.json")
+        listed = self.plan("list", "--from", "2012-01-11", "--to", "2012-01-11")["planned"]
+        self.assertEqual([p["linked"] for p in listed], ["2012_01_11_11_51_01"])
+
+    def test_calendar_summary(self):
+        start = day(180)
+        self.plan("add", "--date", start, "--sport", "Bike", "--duration", "3600", "--distance", "30", "--bikestress", "60")
+        self.plan("add", "--date", day(182), "--sport", "Bike", "--duration", "1800", "--distance", "15", "--bikestress", "30")
+        s = self.gcj("calendar", "summary", "--from", start, "--to", day(193))["data"]
+        weeks = s["summaries"]
+        self.assertEqual([w["from"] for w in weeks], [start, day(187)])
+        self.assertEqual(weeks[0]["metrics"], {"ride_count": 2, "total_distance": 45, "coggan_tss": 90, "workout_time": 5400})
+        self.assertEqual(weeks[1]["metrics"]["ride_count"], 0)
+        never = self.gcj("calendar", "summary", "--from", start, "--to", day(186), "--planned", "never")["data"]
+        self.assertEqual(never["summaries"][0]["metrics"]["ride_count"], 0)
+        days = self.gcj("calendar", "summary", "--from", start, "--to", day(182), "--days", "1", "--metric", "coggan_tss")["data"]
+        self.assertEqual([d["metrics"]["coggan_tss"] for d in days["summaries"]], [60, 0, 30])
+        self.gcj("calendar", "summary", "--from", start, "--to", day(179), expect=2)
+
+    def test_refusals(self):
+        before = self.planned_files()
+        for args in (("--date", day(-1), "--sport", "Bike"),            # plans start today or later
+                     ("--date", day(5)),                                 # no sport
+                     ("--date", day(5), "--sport", "Bike", "--duration", "an hour")):
+            self.gcj("plan", "add", *args, expect=2)
+        self.assertEqual(self.gca("plan", "add", "--date", day(5), "--sport", "Bike", "--rpe", "5").code, 2)  # for activities
+        self.assertEqual(self.planned_files(), before)
+        self.gcj("plan", "list", "--metric", "nonesuch", expect=2)
+        self.assertClosed()
+
+
+@unittest.skipIf(os.name == "nt" or running_as_root(), "file permissions don't stop Windows or root")
+class TestPlanReadOnly(Headless, PlanHelpers):
+    """activity add and plan add in folders that can't be written"""
+
+    def read_only(self, path):
+        mode = os.stat(path).st_mode
+        os.chmod(path, mode & ~0o222)
+        self.addCleanup(os.chmod, path, mode)
+
+    def test_read_only(self):
+        activities = os.path.join(self.folder, "activities")
+        planned = os.path.join(self.folder, "planned")
+        self.read_only(activities)
+        self.read_only(planned)
+        r = self.gca("activity", "add", "--date", day(-1), "--time", "10:00", "--sport", "Bike", timeout=60)
+        self.assertEqual(r.code, 5, r)
+        self.assertIn(b"activities", r.err)
+        r = self.gca("plan", "add", "--date", day(3), "--sport", "Bike", timeout=60)
+        self.assertEqual(r.code, 5, r)
+        self.assertIn(b"planned", r.err)
+        self.assertEqual(os.listdir(activities), [])
+        self.assertEqual(os.listdir(planned), [])
+        self.assertClosed()
+
+
 if __name__ == "__main__":
     unittest.main()
