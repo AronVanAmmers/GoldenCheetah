@@ -35,6 +35,14 @@ struct ZoneScheme {
     int nzones_default;
 };
 
+// one zone of a scheme as the Default tab edits it: names and the lower
+// bound in % of CP
+struct ZoneSchemeRow {
+    QString name, desc;
+    int lo = 0;
+    bool operator<(const ZoneSchemeRow &right) const { return lo < right.lo; }
+};
+
 // A zone "info" defines a *single zone*
 // in absolute watts terms e.g.
 // "L4" "Threshold" is between 270w and 315w
@@ -113,6 +121,9 @@ class Zones : public QObject
         //
         ZoneScheme getScheme() const { return scheme; }
         void setScheme(ZoneScheme x) { scheme = x; }
+
+        // a scheme from its zones in any order, as the Default tab saves it
+        static ZoneScheme schemeFromRows(QList<ZoneSchemeRow> rows);
 
         // get defaults from the current scheme
         QString getDefaultZoneName(int z) const;

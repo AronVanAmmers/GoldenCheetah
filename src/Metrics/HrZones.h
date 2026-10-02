@@ -35,6 +35,15 @@ struct HrZoneScheme {
     int nzones_default;
 };
 
+// one zone of a scheme as the Default tab edits it: names, the lower
+// bound in % of LT and the Trimp k
+struct HrZoneSchemeRow {
+    QString name, desc;
+    int lo = 0;
+    double trimp = 0;
+    bool operator<(const HrZoneSchemeRow &right) const { return lo < right.lo; }
+};
+
 // A zone "info" defines a *single zone*
 // in absolute watts terms e.g.
 // "L4" "Threshold"
@@ -114,6 +123,9 @@ class HrZones : public QObject
         //
         HrZoneScheme getScheme() const { return scheme; }
         void setScheme(HrZoneScheme x) { scheme = x; }
+
+        // a scheme from its zones in any order, as the Default tab saves it
+        static HrZoneScheme schemeFromRows(QList<HrZoneSchemeRow> rows);
 
         // get defaults from the current scheme
         QString getDefaultZoneName(int z) const;

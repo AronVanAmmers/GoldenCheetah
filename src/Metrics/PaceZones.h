@@ -39,6 +39,14 @@ struct PaceZoneScheme {
     int nzones_default;
 };
 
+// one zone of a scheme as the Default tab edits it: names and the lower
+// bound in % of CV
+struct PaceZoneSchemeRow {
+    QString name, desc;
+    int lo = 0;
+    bool operator<(const PaceZoneSchemeRow &right) const { return lo < right.lo; }
+};
+
 // A zone "info" defines a *single zone*
 // in absolute watts terms e.g.
 // "L4" "Threshold" is between 270w and 315w
@@ -114,6 +122,9 @@ class PaceZones : public QObject
         //
         PaceZoneScheme getScheme() const { return scheme; }
         void setScheme(PaceZoneScheme x) { scheme = x; }
+
+        // a scheme from its zones in any order, as the Default tab saves it
+        static PaceZoneScheme schemeFromRows(QList<PaceZoneSchemeRow> rows);
 
         // get defaults from the current scheme
         QString getDefaultZoneName(int z) const;

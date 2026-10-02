@@ -1054,24 +1054,15 @@ SchemePage::deleteClicked()
 }
 
 
-// just for sorting
-struct schemeitem {
-    QString name, desc;
-    int lo;
-    double trimp;
-    bool operator<(schemeitem right) const { return lo < right.lo; }
-};
-
 ZoneScheme
 SchemePage::getScheme()
 {
     // read the scheme widget and return a scheme object
-    QList<schemeitem> table;
-    ZoneScheme results;
+    QList<ZoneSchemeRow> table;
 
     // read back the details from the table
     for (int i=0; i<scheme->invisibleRootItem()->childCount(); i++) {
-        schemeitem add;
+        ZoneSchemeRow add;
         QTreeWidgetItem *item = scheme->invisibleRootItem()->child(i);
         if (!item) continue;
         add.name = item->data(0, Qt::DisplayRole).toString();
@@ -1080,20 +1071,7 @@ SchemePage::getScheme()
         table.append(add);
     }
 
-    // sort the list into ascending order
-    std::sort(table.begin(),table.end());
-
-    // now update the results
-    results.nzones_default = 0;
-    foreach(schemeitem zone, table) {
-        results.nzones_default++;
-        results.zone_default.append(zone.lo);
-        results.zone_default_is_pct.append(true);
-        results.zone_default_name.append(zone.name);
-        results.zone_default_desc.append(zone.desc);
-    }
-
-    return results;
+    return Zones::schemeFromRows(table);
 }
 
 
@@ -2415,12 +2393,11 @@ HrZoneScheme
 HrSchemePage::getScheme()
 {
     // read the scheme widget and return a scheme object
-    QList<schemeitem> table;
-    HrZoneScheme results;
+    QList<HrZoneSchemeRow> table;
 
     // read back the details from the table
     for (int i=0; i<scheme->invisibleRootItem()->childCount(); i++) {
-        schemeitem add;
+        HrZoneSchemeRow add;
         QTreeWidgetItem *item = scheme->invisibleRootItem()->child(i);
         if (!item) continue;
         add.name = item->data(0, Qt::DisplayRole).toString();
@@ -2430,21 +2407,7 @@ HrSchemePage::getScheme()
         table.append(add);
     }
 
-    // sort the list into ascending order
-    std::sort(table.begin(),table.end());
-
-    // now update the results
-    results.nzones_default = 0;
-    foreach(schemeitem zone, table) {
-        results.nzones_default++;
-        results.zone_default.append(zone.lo);
-        results.zone_default_is_pct.append(true);
-        results.zone_default_name.append(zone.name);
-        results.zone_default_desc.append(zone.desc);
-        results.zone_default_trimp.append(zone.trimp);
-    }
-
-    return results;
+    return HrZones::schemeFromRows(table);
 }
 
 
@@ -3052,24 +3015,15 @@ PaceSchemePage::deleteClicked()
     }
 }
 
-// just for sorting
-struct paceschemeitem {
-    QString name, desc;
-    int lo;
-    double trimp;
-    bool operator<(paceschemeitem right) const { return lo < right.lo; }
-};
-
 PaceZoneScheme
 PaceSchemePage::getScheme()
 {
     // read the scheme widget and return a scheme object
-    QList<paceschemeitem> table;
-    PaceZoneScheme results;
+    QList<PaceZoneSchemeRow> table;
 
     // read back the details from the table
     for (int i=0; i<scheme->invisibleRootItem()->childCount(); i++) {
-        paceschemeitem add;
+        PaceZoneSchemeRow add;
         QTreeWidgetItem *item = scheme->invisibleRootItem()->child(i);
         if (!item) continue;
         add.name = item->data(0, Qt::DisplayRole).toString();
@@ -3078,20 +3032,7 @@ PaceSchemePage::getScheme()
         table.append(add);
     }
 
-    // sort the list into ascending order
-    std::sort(table.begin(),table.end());
-
-    // now update the results
-    results.nzones_default = 0;
-    foreach(paceschemeitem zone, table) {
-        results.nzones_default++;
-        results.zone_default.append(zone.lo);
-        results.zone_default_is_pct.append(true);
-        results.zone_default_name.append(zone.name);
-        results.zone_default_desc.append(zone.desc);
-    }
-
-    return results;
+    return PaceZones::schemeFromRows(table);
 }
 
 CVPage::CVPage(PaceZones* paceZones, PaceSchemePage *schemePage) :
