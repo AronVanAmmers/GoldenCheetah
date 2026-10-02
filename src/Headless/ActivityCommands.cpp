@@ -74,7 +74,8 @@ static CommandResult
 showActivity(CommandEnvironment &env, const CommandRequest &request)
 {
     QString error;
-    RideItem *item = env.session->findActivity(request.args.value("activity").toString(), error);
+    RideItem *item = env.session->findActivity(request.args.value("activity").toString(), error,
+                                               request.args.value("planned").toBool(false));
     if (!item) return CommandResult::failure(Status::NotFound, error);
     bool metricUnits = !request.args.value("imperial").toBool(false);
 
@@ -155,7 +156,8 @@ static CommandResult
 exportActivity(CommandEnvironment &env, const CommandRequest &request)
 {
     QString error;
-    RideItem *item = env.session->findActivity(request.args.value("activity").toString(), error);
+    RideItem *item = env.session->findActivity(request.args.value("activity").toString(), error,
+                                               request.args.value("planned").toBool(false));
     if (!item) return CommandResult::failure(Status::NotFound, error);
 
     // the format first, before the whole file is read
@@ -268,8 +270,9 @@ storedText(const FieldDefinition &field, const QString &value, QString &text, QS
 static bool
 startTaken(RideCache *cache, const RideItem *item)
 {
+    // planned activities have a folder of their own
     for (const RideItem *other : cache->rides())
-        if (other != item && other->dateTime == item->dateTime) return true;
+        if (other != item && other->planned == item->planned && other->dateTime == item->dateTime) return true;
     return false;
 }
 
@@ -398,12 +401,20 @@ deleteActivities(CommandEnvironment &env, const CommandRequest &request)
     for (const QJsonValue &v : request.args.value("activity").toArray()) ids << v.toString();
 
     QStringList files, paths;
-    ActivityLookup lookup(env.session->rideCache());
+    bool planned = request.args.value("planned").toBool(false);
+    ActivityLookup lookup(env.session->rideCache(), planned);
     for (const QString &id : ids) {
         QString error;
         RideItem *item = lookup.find(id, error);
         if (!item) return CommandResult::failure(Status::NotFound, error);
         if (files.contains(item->fileName)) continue;
+        // the ride cache deletes by file name
+        for (const RideItem *other : env.session->rideCache()->rides())
+            if (other != item && other->fileName == item->fileName)
+                return CommandResult::failure(Status::Failed,
+                            QString("a planned and a completed activity are both called %1, and GoldenCheetah "
+                                    "can't tell them apart when deleting; move the planned one first ('plan move')")
+                            .arg(QFileInfo(item->fileName).completeBaseName()));
         files << item->fileName;
         paths << QDir(item->path).absoluteFilePath(item->fileName);
     }
@@ -422,6 +433,7 @@ deleteActivities(CommandEnvironment &env, const CommandRequest &request)
     data.insert("deleted", deleted);
     data.insert("failed", failed);
     data.insert("backup", "activities are moved to the athlete's bak folder");
+    if (planned) data.insert("planned", true);
     return CommandResult::batch(data, failed.count(), files.count(),
                                 QString("%1 activit%2 could not be moved to the bak folder")
                                 .arg(failed.count()).arg(failed.count() == 1 ? "y" : "ies"));
@@ -484,6 +496,7 @@ registerActivityCommands(CommandRegistry &registry)
     show.spec.params << ParamSpec("activity", ParamType::String, "activity id, start time, date, 'first' or 'last'").req().pos();
     show.spec.params << ParamSpec("imperial", ParamType::Bool, "metric values in imperial units");
     show.spec.params << ParamSpec("pmc-metric", ParamType::String, "stress metric for the performance manager values (default: govss for runs, swimscore for swims, else coggan_tss)");
+    show.spec.params << ParamSpec("planned", ParamType::Bool, "a planned activity: dates, times, 'first' and 'last' are planned ones");
     show.spec.httpMethod = "GET";
     show.spec.httpPath = "/athletes/{athlete}/activities/{activity}";
     show.handler = showActivity;
@@ -495,6 +508,7 @@ registerActivityCommands(CommandRegistry &registry)
     exportCmd.spec.scope = Scope::Athlete;
     exportCmd.spec.params << ParamSpec("activity", ParamType::String, "activity id, start time, date, 'first' or 'last'").req().pos();
     exportCmd.spec.params << ParamSpec("as", ParamType::String, "file format (see 'formats'), or csv-gc / csv-wprime").def("json");
+    exportCmd.spec.params << ParamSpec("planned", ParamType::Bool, "a planned activity: dates, times, 'first' and 'last' are planned ones");
     exportCmd.spec.httpMethod = "GET";
     exportCmd.spec.httpPath = "/athletes/{athlete}/activities/{activity}/export";
     exportCmd.handler = exportActivity;
@@ -520,6 +534,7 @@ registerActivityCommands(CommandRegistry &registry)
     remove.spec.scope = Scope::Athlete;
     remove.spec.modifies = true;
     remove.spec.params << ParamSpec("activity", ParamType::String, "activity id, start time or date").req().pos().many();
+    remove.spec.params << ParamSpec("planned", ParamType::Bool, "planned activities: dates and times are planned ones");
     remove.spec.httpMethod = "DELETE";
     remove.spec.httpPath = "/athletes/{athlete}/activities/{activity}";
     remove.handler = deleteActivities;

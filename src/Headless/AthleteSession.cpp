@@ -214,21 +214,26 @@ AthleteSession::waitForEstimates()
 }
 
 RideItem *
-AthleteSession::findActivity(const QString &id, QString &error) const
+AthleteSession::findActivity(const QString &id, QString &error, bool planned) const
 {
-    return ActivityLookup(rideCache()).find(id, error);
+    return ActivityLookup(rideCache(), planned).find(id, error);
 }
 
-ActivityLookup::ActivityLookup(RideCache *cache)
+ActivityLookup::ActivityLookup(RideCache *cache, bool planned) : planned(planned)
 {
     if (!cache) return;
     open = true;
-    for (RideItem *item : cache->rides()) {
-        if (!item->planned) actual << item;
-        // the first one wins, as the scan it replaces had it
-        QString base = QFileInfo(item->fileName).completeBaseName();
-        if (!byFile.contains(item->fileName)) byFile.insert(item->fileName, item);
-        if (!byFile.contains(base)) byFile.insert(base, item);
+    // the kind looked for first: a planned and a completed activity can
+    // have the same file name
+    for (int pass = 0; pass < 2; pass++) {
+        for (RideItem *item : cache->rides()) {
+            if ((item->planned == planned) != (pass == 0)) continue;
+            if (pass == 0) actual << item;
+            // the first one wins, as the scan it replaces had it
+            QString base = QFileInfo(item->fileName).completeBaseName();
+            if (!byFile.contains(item->fileName)) byFile.insert(item->fileName, item);
+            if (!byFile.contains(base)) byFile.insert(base, item);
+        }
     }
 }
 
@@ -250,11 +255,11 @@ ActivityLookup::find(const QString &id, QString &error) const
 
     // most recent / first
     if (key == "last" || key == "latest") {
-        if (actual.isEmpty()) { error = "there are no activities"; return nullptr; }
+        if (actual.isEmpty()) { error = planned ? "there are no planned activities" : "there are no activities"; return nullptr; }
         return actual.last();
     }
     if (key == "first") {
-        if (actual.isEmpty()) { error = "there are no activities"; return nullptr; }
+        if (actual.isEmpty()) { error = planned ? "there are no planned activities" : "there are no activities"; return nullptr; }
         return actual.first();
     }
 
@@ -269,7 +274,7 @@ ActivityLookup::find(const QString &id, QString &error) const
     if (!when.isValid()) when = QDateTime::fromString(key, "yyyy-MM-dd HH:mm");
     if (when.isValid()) {
         for (RideItem *item : actual) if (item->dateTime == when) return item;
-        error = QString("no activity starts at %1").arg(key);
+        error = QString("no %1activity starts at %2").arg(planned ? "planned " : "").arg(key);
         return nullptr;
     }
 
@@ -279,12 +284,12 @@ ActivityLookup::find(const QString &id, QString &error) const
         QList<RideItem *> matches;
         for (RideItem *item : actual) if (item->dateTime.date() == day) matches << item;
         if (matches.count() == 1) return matches.first();
-        if (matches.isEmpty()) error = QString("no activity on %1").arg(key);
-        else error = QString("%1 activities on %2, give the start time or file name").arg(matches.count()).arg(key);
+        if (matches.isEmpty()) error = QString("no %1activity on %2").arg(planned ? "planned " : "").arg(key);
+        else error = QString("%1 %2activities on %3, give the start time or file name").arg(matches.count()).arg(planned ? "planned " : "").arg(key);
         return nullptr;
     }
 
-    error = QString("activity '%1' not found").arg(key);
+    error = QString("%1activity '%2' not found").arg(planned ? "planned " : "").arg(key);
     return nullptr;
 }
 
