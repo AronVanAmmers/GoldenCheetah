@@ -3581,6 +3581,36 @@ class TestPlanReadOnly(Headless, PlanHelpers):
         self.assertEqual(os.listdir(planned), [])
         self.assertClosed()
 
+    def read_only_tree(self, path):
+        for name in os.listdir(path):
+            self.read_only(os.path.join(path, name))
+        self.read_only(path)
+
+    def test_save_failures_after_calendar_actions(self):
+        # the planned side can be written, the completed one can't
+        self.gcj("activity", "add", "--date", day(-2), "--time", "10:00", "--sport", "Bike")
+        self.gcj("activity", "add", "--date", day(-3), "--time", "10:00", "--sport", "Bike")
+        actual, other = ride_id(day(-2), "10:00:00"), ride_id(day(-3), "10:00:00")
+        self.plan("add", "--date", day(5), "--sport", "Bike")
+        self.plan("add", "--date", day(6), "--sport", "Bike")
+        planned, linked = ride_id(day(5)), ride_id(day(6))
+        self.plan("link", linked, other)
+        self.read_only_tree(os.path.join(self.folder, "activities"))
+
+        # a link is in both files or in neither
+        r = self.gcj("plan", "link", planned, actual, expect=5)
+        self.assertIn(actual, r["error"])
+        self.assertNotIn("Linked Filename", self.tags(planned, planned=True))
+        self.assertNotIn("Linked Filename", self.tags(actual))
+        r = self.gcj("plan", "unlink", linked, expect=5)
+        self.assertIn(other, r["error"])
+        self.assertEqual(self.tags(linked, planned=True)["Linked Filename"], other + ".json")
+        self.assertEqual(self.tags(other)["Linked Filename"], linked + ".json")
+        # a move that can't update the linked activity fails, naming it
+        r = self.gcj("plan", "move", linked, "--to", day(7), expect=5)
+        self.assertIn(other, r["error"])
+        self.assertClosed()
+
 
 class TestPlansSeasonsAndExpectedPMC(Headless):
     """the streams together: a plan made with plan add feeds the expected PMC, and
