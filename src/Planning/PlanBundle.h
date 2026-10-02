@@ -27,6 +27,7 @@
 
 #include "RideFile.h"
 #include "RideItem.h"
+#include "RideCache.h"
 #include "Context.h"
 #include "Season.h"
 
@@ -42,6 +43,20 @@ struct PlanExportDescription {
     QDate rangeEnd;
     QStringList activityFiles;
     QString planFile;
+
+    // the description with $NAME, $AUTHOR, $SPORT and $COPYRIGHT filled in
+    QString expandedDescription() const;
+};
+
+
+// a planned activity in a source period, for repeating or exporting a plan
+struct SourceRide {
+    RideItem *rideItem = nullptr;
+    QDate sourceDate;
+    QDate targetDate;
+    bool selected = false;
+    int conflictGroup = -1;
+    bool targetBlocked = false;
 };
 
 
@@ -160,6 +175,56 @@ namespace PlanBundle {
     QDate getRideDate(RideFile const * const rideFile, bool preferOriginal);
 
     bool exportBundle(Context *context, const PlanExportDescription &description);
+
+    // the planned activities dated (originally, with preferOriginal) from
+    // start to end, by date. Activities that would start on the same day at
+    // the same time are a conflict group, of which only the first is selected
+    QList<SourceRide> sourceRides(Context *context, const QDate &start, const QDate &end, bool preferOriginal);
+
+    // a plan name as a file name: no spaces or characters files can't have
+    QString sanitizeFilename(QString input);
 }
+
+
+//
+// Repeating a plan (the Repeat Plan wizard): the planned activities of a
+// source period are copied to the period starting on the target date. The
+// unlinked planned activities already in the target period are deleted,
+// and a copy that would start when a linked one does is left out.
+//
+class RepeatPlan {
+public:
+    RepeatPlan(Context *context, const QDate &targetStart);
+
+    QList<SourceRide> sourceRides;
+
+    // choose the source period; recollects the source rides when it changed
+    void update(const QDate &sourceStart, const QDate &sourceEnd, bool keepGap, bool preferOriginal);
+
+    // recompute the target period after the selection changed
+    void update();
+
+    QDate getTargetRangeStart() const;
+    QDate getTargetRangeEnd() const;
+    const QList<RideItem*> &getDeletionList() const;
+
+    // the copies that will be made: selected and not blocked
+    QList<std::pair<RideItem*, QDate>> copies() const;
+
+    // delete the deletion list and make the copies. check tells whether the
+    // copies could be made at all, result how making them went
+    void apply(RideCache::OperationPreCheck &check, RideCache::OperationResult &result);
+
+private:
+    Context *context;
+    QDate sourceRangeStart;
+    QDate sourceRangeEnd;
+    QDate targetRangeStart;
+    QDate targetRangeEnd;
+    int frontGap = 0;
+    QList<RideItem*> deletionList;
+    bool keepGap = false;
+    bool preferOriginal = false;
+};
 
 #endif

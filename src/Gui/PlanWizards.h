@@ -116,16 +116,6 @@ class IndicatorDelegate : public QStyledItemDelegate
 };
 
 
-struct SourceRide {
-    RideItem *rideItem = nullptr;
-    QDate sourceDate;
-    QDate targetDate;
-    bool selected = false;
-    int conflictGroup = -1;
-    bool targetBlocked = false;
-};
-
-
 ////////////////////////////////////////////////////////////////////////////////
 // Repeat Wizard
 
@@ -143,7 +133,11 @@ class RepeatPlanWizard : public QWizard
 
         RepeatPlanWizard(Context *context, const QDate &when, QWidget *parent = nullptr);
 
-        QList<SourceRide> sourceRides;
+    private:
+        RepeatPlan repeat;
+
+    public:
+        QList<SourceRide> &sourceRides;
 
         QDate getTargetRangeStart() const;
         QDate getTargetRangeEnd() const;
@@ -161,14 +155,6 @@ class RepeatPlanWizard : public QWizard
 
     private:
         Context *context;
-        QDate sourceRangeStart;
-        QDate sourceRangeEnd;
-        QDate targetRangeStart;
-        QDate targetRangeEnd;
-        int frontGap = 0;
-        QList<RideItem*> deletionList;
-        bool keepGap = false;
-        bool preferOriginal = false;
 };
 
 
