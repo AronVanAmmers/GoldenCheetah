@@ -19,6 +19,7 @@
 #include "LTMWindow.h"
 #include "LTMTool.h"
 #include "LTMPlot.h"
+#include "LTMDataTable.h"
 #include "LTMSettings.h"
 #include "LTMChartParser.h"
 #include "AbstractView.h"
@@ -1057,45 +1058,17 @@ LTMWindow::filterChanged()
 
     if (amVisible() == false) return;
 
-    if (useCustom) {
-
-        settings.start = QDateTime(custom.from, QTime(0,0));
-        settings.end   = QDateTime(custom.to, QTime(24,0,0));
-
-    } else if (useToToday) {
-
-        settings.start = QDateTime(myDateRange.from, QTime(0,0));
-        settings.end   = QDateTime(myDateRange.to, QTime(24,0,0));
-
-        QDate today = QDate::currentDate();
-        if (settings.end.date() > today) settings.end = QDateTime(today, QTime(24,0,0));
-
-    } else {
-
-        settings.start = QDateTime(myDateRange.from, QTime(0,0));
-        settings.end   = QDateTime(myDateRange.to, QTime(24,0,0));
-
-    }
     settings.title = myDateRange.name;
 
-    // Set the specification
+    // the filters: global, home, the chart's own and the perspective's
     FilterSet fs;
     fs.addFilter(context->isfiltered, context->filters);
     fs.addFilter(context->ishomefiltered, context->homeFilters);
     fs.addFilter(ltmTool->isFiltered(), ltmTool->filters());
     if (myPerspective) fs.addFilter(myPerspective->isFiltered(), myPerspective->filterlist(DateRange()));
-    settings.specification.setFilterSet(fs);
-    settings.specification.setDateRange(DateRange(settings.start.date(), settings.end.date()));
 
-    // if we want weeks and start is not a monday go back to the monday
-    int dow = settings.start.date().dayOfWeek();
-    if (settings.groupBy == LTM_WEEK && dow >1 && settings.start != QDateTime(QDate(), QTime(0,0)))
-        settings.start = settings.start.addDays(-1*(dow-1));
-
-    // we need to get data again and apply filter
-    bestsresults.clear();
-    bestsresults = RideFileCache::getAllBestsFor(context, settings.metrics, settings.specification);
-    settings.bests = &bestsresults;
+    // dates, specification and bests, as the command line does
+    settings.prepare(context, useCustom ? custom : myDateRange, !useCustom && useToToday, fs, bestsresults);
 
     refreshPlot();
 
@@ -1222,19 +1195,7 @@ LTMWindow::applyClicked()
 int
 LTMWindow::groupForDate(QDate date)
 {
-    switch(settings.groupBy) {
-    case LTM_WEEK:
-        {
-        // must start from 1 not zero!
-        return 1 + ((date.toJulianDay() - settings.start.date().toJulianDay()) / 7);
-        }
-    case LTM_MONTH: return (date.year()*12) + date.month();
-    case LTM_YEAR:  return date.year();
-    case LTM_DAY:
-    default:
-        return date.toJulianDay();
-
-    }
+    return LTMDataTable::groupForDate(settings, date);
 }
 void
 LTMWindow::pointClicked(QwtPlotCurve*curve, int index)
@@ -1277,368 +1238,11 @@ LTMWindow::refreshDataTable()
     dataSummary->page()->setHtml(summary);
 }
 
-// for storing curve data without using a curve
-class TableCurveData {
-    public:
-        TableCurveData() { n=0; x.resize(0); y.resize(0); }
-        QVector<double> x,y;
-        int n;
-};
-
 QString
 LTMWindow::dataTable(bool html)
 {
-    // truncate date range to the actual data when not set to any date
-    if (context->athlete->rideCache->rides().count()) {
-
-        QDateTime first = context->athlete->rideCache->rides().first()->dateTime;
-        QDateTime last = context->athlete->rideCache->rides().last()->dateTime;
-
-        // end
-        if (settings.end == QDateTime() || settings.end.date() > QDate::currentDate().addYears(40))
-                settings.end = last;
-
-        // start
-        if (settings.start == QDateTime() || settings.start.date() < QDate::currentDate().addYears(-40))
-            settings.start = first;
-    }
-
-    // now set to new (avoids a weird crash)
-    QString summary;
-
-    QColor bgColor = GColor(CTRENDPLOTBACKGROUND);
-    QColor altColor = GCColor::alternateColor(bgColor);
-
-    // html page prettified with a title
-    if (html) {
-
-        summary = GCColor::css();
-        summary += "<center>";
-
-        // device summary for ride summary, otherwise how many activities?
-        summary += "<p><h3>" + settings.title + tr(" grouped by ");
-
-        switch (settings.groupBy) {
-        case LTM_DAY :
-            summary += tr("day");
-            break;
-        case LTM_WEEK :
-            summary += tr("week");
-            break;
-        case LTM_MONTH :
-            summary += tr("month");
-            break;
-        case LTM_YEAR :
-            summary += tr("year");
-            break;
-        case LTM_TOD :
-            summary += tr("time of day");
-            break;
-        case LTM_ALL :
-            summary += tr("All");
-            break;
-        }
-        summary += "</h3><p>";
-    }
-
-    //
-    // STEP1: AGGREGATE DATA INTO GROUPBY FOR EACH METRIC
-    //        This is performed by reusing the existing code in
-    //        LTMPlot for creating curve data, but storing it
-    //        in columns and forceing zero values
-    QList<TableCurveData> columns;
-    bool first=true;
-    int rows = 0;
-    bool firstXvalue=true;
-    double lowestFirstXvalue = DBL_MAX;
-    double highestFirstXvalue = 0.0;
-
-    // create curve data for each metric detail to iterate over
-    foreach(MetricDetail metricDetail, settings.metrics) {
-        TableCurveData add;
-
-        ltmPlot->settings=&settings; // for stack mode ltmPlot isn't set
-        if (settings.groupBy != LTM_TOD)
-            ltmPlot->createCurveData(context, &settings, metricDetail, add.x, add.y, add.n, true);
-        else
-            ltmPlot->createTODCurveData(context, &settings, metricDetail, add.x, add.y, add.n, true);
-
-        // adjust to avoid empty chart when there is only 1 group
-        if (settings.groupBy != LTM_TOD) add.n++;
-
-        columns << add;
-
-        // check if "x" value of all metrics is the same for all colums and find
-        // the lowest "x" value and highest "x" value to which all columns need to be aligned
-        if (add.n > 0) {
-            if (firstXvalue) {
-                lowestFirstXvalue = highestFirstXvalue = add.x[0];
-                firstXvalue = false;
-            } else {
-                if (add.x[0] < lowestFirstXvalue) {
-                    lowestFirstXvalue = add.x[0];
-                }
-                if (add.x[0] > highestFirstXvalue) {
-                    highestFirstXvalue = add.x[0];
-                }
-            }
-        }
-
-        // truncate to shortest set of rows available as 
-        // we dont pad with zeroes in the data table
-        if (first) rows=add.n;
-        else if (add.n < rows) rows=add.n;
-        first=false;
-    }
-
-    // align the starting X values of all columns using the
-    // lowest xValue and highest xValue as borders
-    // for columns which have data at all - and if there is something to adjust
-    if (!firstXvalue && lowestFirstXvalue != highestFirstXvalue) {
-        for (int i = 0; i< columns.count(); i++) {
-            if (columns[i].n > 0) {
-                // Prepend on vector is prohibitively expensive since requires
-                // full vector copy for each prepend. Much faster to convert
-                // to Qlist, do our business, then convert back.
-                QList<double> tx = columns[i].x.toList();
-                QList<double> ty = columns[i].y.toList();
-
-                double xValue = columns[i].x[0];
-                while (xValue > lowestFirstXvalue) {
-                    xValue--;
-                    tx.prepend(xValue);
-                    ty.prepend(0.0);
-                }
-
-                columns[i].x = tx.toVector();
-                columns[i].y = ty.toVector();
-                columns[i].n += tx.size();
-            }
-        }
-        // adjust number of visible rows in table
-        rows += qRound(highestFirstXvalue-lowestFirstXvalue);
-    }
-
-
-    //
-    // STEP 2: PREPARE HTML TABLE FROM AGGREGATED DATA
-    //         But note there will be no data if there are no curves of if there
-    //         is no date range selected of no data anyway!
-    //
-    if (rows) {
-
-        // formatting ...
-        LTMScaleDraw lsd(settings.start, groupForDate(settings.start.date()), settings.groupBy);
-
-        QString sLabel = (settings.groupBy == LTM_TOD) ? tr("Time of Day") : tr("Date");
-        if (html) {
-            // table and headings 50% for 1 metric, 70% for 2 metrics, 90% for 3 metrics or more
-            QString tableStart = "<table border=0 cellspacing=3 width=\"%1%%\"><tr><td align=\"center\" valigne=\"top\"><b>%2</b></td>";
-            tableStart = tableStart.arg(settings.metrics.count() >= 3 ? 90 : (30 + (settings.metrics.count() * 20))).arg(sLabel);
-
-            summary += tableStart;
-        } else {
-            summary += sLabel;
-        }
-
-        QList<QVector<double> > hdatas;
-        QList<QString> fontcolors;
-
-        // highlight
-        for (int a=0; a < settings.metrics.count(); a++) {
-            MetricDetail metricDetail = settings.metrics[a];
-
-            int brightness = metricDetail.penColor.red() *0.299 + metricDetail.penColor.green()*0.587 + metricDetail.penColor.blue()*0.114;
-            fontcolors.append( brightness > 128 ? "#000" : "#fff" );
-
-            // highlight lowest / top N values
-            if (metricDetail.lowestN > 0 || metricDetail.topN > 0) {
-                QMap<double, int> sortedList;
-
-                // copy the yvalues, retaining the offset
-                for(int i=0; i<columns[a].y.count(); i++) {
-                    // pmc metrics we highlight TROUGHS
-                    if (metricDetail.type == METRIC_STRESS || metricDetail.type == METRIC_PM) {
-                        if (i && i < (columns[a].y.count()-1) // not at start/end
-                            && ((columns[a].y[i-1] > columns[a].y[i] && columns[a].y[i+1] > columns[a].y[i]) || // is a trough
-                                (columns[a].y[i-1] < columns[a].y[i] && columns[a].y[i+1] < columns[a].y[i])))  // is a peak
-                            sortedList.insert(columns[a].y[i], i);
-                    } else
-                        sortedList.insert(columns[a].y[i], i);
-                }
-
-                // copy the top N values
-                QVector<double> hdata;
-                hdata.resize(metricDetail.topN + metricDetail.lowestN);
-
-
-                // QMap orders the list so start at the top and work
-                // backwards for topN
-                int counter = 0;
-                QMapIterator<double, int> i(sortedList);
-                if (metricDetail.topN) {
-                    i.toBack();
-                    while (i.hasPrevious() && counter < metricDetail.topN) {
-                        i.previous();
-                        hdata[counter] = i.value();
-                        counter++;
-                    }
-                }
-
-                if (metricDetail.lowestN) {
-                    i.toFront();
-                    counter = 0; // and forwards for bottomN
-                    while (i.hasNext() && counter < metricDetail.lowestN) {
-                        i.next();
-                        hdata[metricDetail.topN + counter] = i.value();
-                        counter++;
-                    }
-                }
-                hdatas.append(hdata);
-            } else {
-                // add an empty vector to maintain alignment with fontcolors
-                QVector<double> hdata;
-                hdatas.append(hdata);
-            }
-        }
-
-        // metric name
-        for (int i=0; i < settings.metrics.count(); i++) {
-
-            QString metricSummary;
-
-            if (html) metricSummary = "<td align=\"center\" style=\"font-weight:bold;background-color:%2;color:%3\" valign=\"top\">%1</td>";
-            else metricSummary = ", %1";
-
-            QString name = settings.metrics[i].uname;
-
-            if (name == "Coggan Acute Training Load" || name == tr("Coggan Acute Training Load")) name = "ATL";
-            if (name == "Coggan Chronic Training Load" || name == tr("Coggan Chronic Training Load")) name = "CTL";
-            if (name == "Coggan Training Stress Balance" || name == tr("Coggan Training Stress Balance")) name = "TSB";
-
-            metricSummary = metricSummary.arg(name);
-
-            if (html) {
-                QString bcolor = settings.metrics[i].penColor.lighter(80).name();
-                metricSummary = metricSummary.arg(bcolor);
-                metricSummary = metricSummary.arg(fontcolors.at(i));
-            }
-
-            summary += metricSummary;
-        }
-
-        if (html) {
-
-            // html table and units on next line
-            summary += "</tr><tr><td></td>";
-
-            // units
-            for (int i=0; i < settings.metrics.count(); i++) {
-                QString metricSummary = "<td align=\"center\" style=\"font-weight:bold;background-color:%2;color:%3\" valign=\"top\">"
-                        "%1</td>";
-                QString units = settings.metrics[i].uunits;
-                QString bcolor = settings.metrics[i].penColor.lighter(80).name();
-
-
-                if (units == "seconds" || units == tr("seconds")) units = tr("hours");
-                if (units == settings.metrics[i].uname) units = "";
-                metricSummary = metricSummary.arg(units != "" ? QString("(%1)").arg(units) : "");
-                metricSummary = metricSummary.arg(bcolor);
-                metricSummary = metricSummary.arg(fontcolors.at(i));
-
-                summary += metricSummary;
-            }
-            summary += "</tr>";
-
-        } else {
-
-            // end of heading for CSV
-            summary += "\n";
-        }
-
-        for(int row=0; row<rows; row++) {
-
-            QString rowSummary;
-
-            // in day mode we don't list all the zeroes .. its too many!
-            bool nonzero = false;
-            if (settings.groupBy == LTM_DAY) {
-
-                // nonzeros?
-                for(int j=0; j<columns.count(); j++) 
-                    if (int(columns[j].y[row])) nonzero = true;
-
-                // skip all zeroes if day mode
-                if (nonzero == false) continue;
-            }
-
-            // alternating colors on html output
-            if (html) {
-                if (row%2) rowSummary += "<tr bgcolor='" + altColor.name() + "'>";
-                else rowSummary += "<tr>";
-            }
-
-            // First column, date / month year etc
-            QString sDate = lsd.label(columns[0].x[row]+0.5).text().replace("\n", " ");
-            if (html) rowSummary += QString("<td align=\"center\" valign=\"top\">%1</td>").arg(sDate);
-            else rowSummary += (settings.groupBy == LTM_ALL || settings.groupBy == LTM_TOD) ? sDate : lsd.toDate(columns[0].x[row]+0.5).toString(Qt::ISODate);
-
-            // Remaining columns - each metric value
-            for(int j=0; j<columns.count(); j++) {
-
-                QString metricSummary;
-
-                if (html) metricSummary += "<td align=\"center\" style=\"%2\" valign=\"top\">%1</td>";
-                else metricSummary += ", %1";
-
-                // now format the actual value....
-                QString valueString;
-                double value = columns[j].y[row];
-
-                // Format minutes in sexagesimal format
-                if (LTMPlot::isMinutes(settings.metrics[j].uunits)) {
-                    valueString = time_to_string(value * 60, true);
-                } else {
-                    int precision = 1;
-                    const RideMetric *m = settings.metrics[j].metric;
-                    if (m != NULL) {
-
-                        // we have a metric so lets be precise ...
-                        precision = m->precision();
-
-                        // handle precision of 1 for seconds converted to hours
-                        if (settings.metrics[j].uunits == "seconds" || settings.metrics[j].uunits == tr("seconds")) precision = 1;
-                    }
-                    valueString.setNum(value, 'f', precision);
-                }
-
-                metricSummary = metricSummary.arg(valueString);
-
-                //
-                if (hdatas.at(j).contains(row)) {
-                    QString c = QString("background-color:%1;color:%2").arg(settings.metrics[j].penColor.name()).arg(fontcolors.at(j));
-                    metricSummary = metricSummary.arg(c);
-                } else
-                    metricSummary = metricSummary.arg("");
-
-                rowSummary += metricSummary;
-            }
-
-            // ok, this row is done
-            if (html) rowSummary += "</tr>";
-            else rowSummary += "\n"; // csv newline
-
-            summary += rowSummary;
-        }
-
-        // close table on html page
-        if (html) summary += "</table>";
-    }
-
-    // all done !
-    if (html) summary += "</center>";
-
-    return summary;
+    LTMDataTable table(context, ltmPlot, settings);
+    return html ? table.html() : table.csv();
 }
 
 void

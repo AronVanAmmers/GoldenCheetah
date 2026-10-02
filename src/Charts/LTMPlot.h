@@ -38,6 +38,7 @@
 
 class LTMPlotBackground;
 class LTMWindow;
+class LTMDataTable;
 class LTMPlotZoneLabel;
 class LTMScaleDraw;
 class CompareScaleDraw;
@@ -51,6 +52,8 @@ class LTMPlot : public QwtPlot
 
 
     public:
+        // the window may be null: the plot is then drawn to an image (headless),
+        // with no Banister helper, popup or compare mode
         LTMPlot(LTMWindow *, Context *context, int postition=0); // position in a stack
         ~LTMPlot();
         void setData(LTMSettings *);
@@ -69,6 +72,7 @@ class LTMPlot : public QwtPlot
         friend class ::LTMPlotBackground;
         friend class ::LTMPlotZoneLabel;
         friend class ::LTMWindow;
+        friend class ::LTMDataTable;
 
         LTMPlotBackground *bg;
         QList <LTMPlotZoneLabel *> zoneLabels;
@@ -114,6 +118,7 @@ class LTMPlot : public QwtPlot
         QVector< QVector<double>* > stackY;
 
         int groupForDate(QDate , int);
+        bool isCompare() const;
         void createCurveData(Context *,LTMSettings *, MetricDetail, QVector<double>&, QVector<double>&, int&, bool=false);
 
         // create curve data from Banister

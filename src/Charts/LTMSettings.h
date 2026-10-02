@@ -152,6 +152,13 @@ class MetricDetail {
     // "CP (cp2)", "Estimate 5 minutes Power (cp3)" (estimate: ESTIMATE_*)
     static QString estimateName(int estimate, const QString &model, int duration, int units);
 
+    // the key a PMC curve of a stress metric is plotted under, "coggan_tss_sts"
+    // (stressType: STRESS_*; the planned and expected ones keep the symbol)
+    static QString stressSymbol(const QString &symbol, int stressType);
+
+    // "Body - Weight", the name of a measure curve; its symbol has _ for spaces
+    static QString measureName(const QString &group, const QString &field);
+
     int type;
     bool stack; // should this be stacked?
     bool hidden; // should this be hidden ? (toggled via clicking on legend)
@@ -260,6 +267,15 @@ class LTMSettings {
         // the athlete's charts.xml, in its config folder
         static QString chartsFile(const QDir &config) { return config.absoluteFilePath("charts.xml"); }
         void translateMetrics(bool useMetricUnits);
+
+        // what a Trends chart is given before it is plotted (LTMWindow::filterChanged):
+        // its dates, from the start of the first day of range to the end of the last,
+        // and no later than today when thruToday; the specification of those dates
+        // and filters; a weekly chart starting on a Monday; and the bests its curves
+        // need, kept in bests, which must outlive the plot. The window and the
+        // command line prepare a chart with this.
+        void prepare(Context *context, const DateRange &range, bool thruToday,
+                     const FilterSet &filters, QList<RideBest> &bests);
 
         QString name;
         QString title;
