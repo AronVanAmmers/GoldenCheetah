@@ -147,6 +147,16 @@ AthleteSession::~AthleteSession()
         // now. An activity doesn't delete its intervals (the cache loader hands
         // them over from a temporary item), these are the ones it owns
         context_->athlete = nullptr;
+
+        // activities the cache let go of (deleted, replaced, a plan import's
+        // clean up) were handed to deleteLater: delete them now, while the
+        // context they point at is still there, not in a later event loop
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+        // close the activities a command left open first: closing one
+        // clears the intervals' link to its ride file, which must not run
+        // on intervals already freed (~RideItem closes an open activity)
+        for (RideItem *item : items) if (item->isOpen()) item->close();
         for (RideItem *item : items) qDeleteAll(item->intervals());
         qDeleteAll(items);
         delete home;
