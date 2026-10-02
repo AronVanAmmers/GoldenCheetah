@@ -209,6 +209,60 @@ gc-cli -a Joe interval list last --type user --metric Pace,Average_Power,Average
 gc-cli -a Joe interval show last "Lap 3" --format json
 ```
 
+### Seasons, phases and events
+
+Seasons are the date ranges of the Trends sidebar: the ones you made, stored in the athlete's `config/seasons.xml`, and the built-in ranges (All Dates, This Year, Last 6 weeks ...), which can't be changed. `season list` shows them all with their dates as of today, the seasons you made first, newest at the top, each followed by its phases. `season show` gives the definition, the starting LTS (`seed`) and lowest SB (`low`), the phases and the events. A season is named by its name (any case) or its id; when two have the same name, the command refuses and lists their ids.
+
+`season add NAME` takes what the Edit Date Range dialog can express. The start is a date (`--from`), some weeks, months or years ago (`--start-ago N --start-unit weeks|months|years`, weeks by default), or a length before the end. The end is a date (`--to`), some time ago (`--end-ago N --end-unit ...`), a length after the start, or year to date (`--ytd`: today's day and month in the start's year). `--length` is years, months and days, such as `1y`, `6m`, `10d` or `1y2m3d`, and takes the place of the side that isn't given. `--type` is `season` (the default), `cycle` or `adhoc`; a cycle or an adhoc range has fixed dates, as in the dialog. `--seed` sets the PMC's starting LTS on the first day, and `--low` the lowest SB. A range that would end before it starts is refused, and so is a name another season or range already has.
+
+```sh
+gc-cli -a Joe season add "2026 Season" --from 2026-01-01 --to 2026-12-31 --seed 45
+gc-cli -a Joe season add "Last quarter" --start-ago 3 --start-unit months --length 3m
+gc-cli -a Joe season add "Race build-up" --to 2026-06-14 --length 3m
+gc-cli -a Joe season add "This season so far" --from 2026-01-01 --ytd
+gc-cli -a Joe season edit "2026 Season" --name "Season 2026" --to 2026-10-31
+gc-cli -a Joe season remove "Last quarter"
+```
+
+`season edit` changes the side it is given and keeps the other; `--length` alone changes the length, or makes the end a length after the start. Phases and events go on seasons you made with fixed dates, and such a season can't be changed to move with today (`--start-ago`, `--end-ago`, `--ytd`), as in the GUI.
+
+A phase lies within its season and lasts at least a day. `--from` and `--to` default to the season's dates, and `--type` is `phase`, `prep`, `base`, `build` or `camp`. An event is on a day within its season, the season's last day unless `--date` says otherwise, with a priority `A` to `E` or `none`. Events get an id as the GUI gives them; `event edit` and `event remove` take the id, or the name with `--season` when another season has an event of that name. `event list` lists the events by date, `--season`, `--from` and `--to` narrow it.
+
+```sh
+gc-cli -a Joe season phase add "Season 2026" Base --type base --to 2026-03-31
+gc-cli -a Joe season phase edit "Season 2026" Base --to 2026-04-15
+gc-cli -a Joe event add "Season 2026" "Spring classic" --date 2026-04-19 --priority A
+gc-cli -a Joe event list --from 2026-04-01
+gc-cli -a Joe event edit "Spring classic" --priority B
+```
+
+Every change is written the way the sidebar writes `seasons.xml`, in one go, so a failed write (a read-only folder, a full disk) leaves the old file; the command then fails and names the file. A changed seed changes the PMC from the next command on. The REST routes are `/v1/athletes/<athlete>/seasons[/<season>[/phases[/<phase>]]]`, `/v1/athletes/<athlete>/seasons/<season>/events` and `/v1/athletes/<athlete>/events[/<event>]`; ids go in the path URL-encoded, braces and all.
+
+**`--season NAME`** stands for that season's dates, resolved as of today, wherever a command takes `--from` and `--to`: every command that chooses activities (`activity list`, `metric aggregate`, `chart trend`, `meanmax`, `cp` ...), and `pmc`, `chart pmc`, `cp estimates` and `measures list`. It takes a season, a built-in range (`--season "Last 6 weeks"`), a phase as `Season/Phase` or an id. Giving it with `--from` or `--to` is refused.
+
+```sh
+gc-cli -a Joe activity list --season "Season 2026/Base"
+gc-cli -a Joe metric aggregate --metric total_distance --season "This Year"
+```
+
+### PMC: actual, planned and expected
+
+`pmc` and `chart pmc` compute the performance manager as the GUI does. `--series` chooses which:
+
+- `actual` (the default): completed activities.
+- `planned`: planned activities only.
+- `expected`: what the Plan view's Expected PMC shows: completed activities up to today, planned ones after it (today counts what was done, or what was planned if nothing was), and a planned activity that is already linked to a completed one is not counted again.
+- `all` (`pmc` only): all three. The actual values keep their names (`ctl`, `atl`, `tsb`, `rr`, `stress`) and the others are nested as `planned` and `expected` in JSON, and are columns such as `planned.ctl` and `expected.tsb` in the text table and CSV.
+
+`--to` defaults to today; for `planned`, `expected` and `all` it defaults to the last planned day when that is later. `--from` defaults to the start of the data for `pmc` and to half a year before `--to` (or the end of the data) for `chart pmc`. `--sport` and `--filter` limit the PMC to the activities, completed and planned, that pass, as a PMC curve with a data filter does in the GUI; `--season` gives the dates. `chart pmc` marks today with a dashed line.
+
+```sh
+gc-cli -a Joe pmc --series expected --metric coggan_tss
+gc-cli -a Joe --format csv pmc --series all --from 2026-09-01 > pmc.csv
+gc-cli -a Joe chart pmc --series expected --sport Bike -o expected.png
+gc-cli -a Joe pmc --filter 'isRun' --metric govss --season "This Year"
+```
+
 ## Example: estimating power
 
 This is the job the command line was built for.
