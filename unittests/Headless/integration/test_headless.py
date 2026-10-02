@@ -37,6 +37,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
@@ -2015,7 +2016,6 @@ def seasons_xml(folder):
 
 
 def day(offset=0):
-    import datetime
     return (datetime.date.today() + datetime.timedelta(days=offset)).isoformat()
 
 
@@ -2258,7 +2258,6 @@ class TestExpectedPMC(Headless):
 
     @classmethod
     def plan(cls, offset, stress, linked=None):
-        import datetime
         when = datetime.date.today() + datetime.timedelta(days=offset)
         tags = {"Sport": "Bike ", "Workout Code": "Plan "}
         if linked:
@@ -2428,7 +2427,6 @@ def ini_values(path):
 
 def ini_date(value):
     """a QDate as QSettings writes it: @Variant(...), a type id and a julian day, Qt 4 data stream"""
-    import datetime
     m = re.fullmatch(r"@Variant\((.*)\)", value)
     text, raw, i = m.group(1), bytearray(), 0
     while i < len(text):
@@ -3059,10 +3057,7 @@ class TestTrendsLibraryCharts(Headless):
         self.assertClosed()
 
 
-
 # manual entry and planned activities (activity add, plan ...)
-import datetime  # noqa: E402
-import zipfile   # noqa: E402
 
 
 def ride_id(date, time="16:00:00"):
@@ -3527,6 +3522,39 @@ class TestPlanReadOnly(Headless, PlanHelpers):
         self.assertEqual(os.listdir(activities), [])
         self.assertEqual(os.listdir(planned), [])
         self.assertClosed()
+
+
+class TestPlansSeasonsAndExpectedPMC(Headless):
+    """the streams together: a plan made with plan add feeds the expected PMC, and
+    the plan commands take --season"""
+
+    imports = [RIDE_POWER]
+
+    def test_plan_add_feeds_the_expected_pmc(self):
+        self.gcj("plan", "add", "--date", day(4), "--time", "09:00", "--sport", "Bike",
+                 "--duration", "1:00:00", "--bikestress", "90")
+        days = {d["date"]: d for d in self.gcj("pmc", "--series", "expected", "--from", day(3))["data"]["days"]}
+        self.assertEqual(max(days), day(4))
+        self.assertEqual(days[day(4)]["stress"], 90)
+        self.assertGreater(days[day(4)]["ctl"], days[day(3)]["ctl"])
+        actual = {d["date"]: d for d in self.gcj("pmc", "--from", day(-1))["data"]["days"]}
+        self.assertEqual(max(actual), day())
+
+    def test_plan_commands_take_a_season(self):
+        self.gcj("season", "add", "Block", "--from", day(10), "--to", day(16))
+        self.gcj("plan", "add", "--date", day(12), "--sport", "Run", "--duration", "0:40:00")
+        self.gcj("plan", "add", "--date", day(20), "--sport", "Run", "--duration", "0:30:00")
+        listed = [p["date"] for p in self.gcj("plan", "list", "--season", "Block")["data"]["planned"]]
+        self.assertEqual(listed, [day(12)])
+        bundle = os.path.join(self.tmp, "block.gcplan")
+        self.gcj("-o", bundle, "plan", "export", "--season", "Block", "--name", "Block")
+        self.assertTrue(zipfile.is_zipfile(bundle))
+        summary = self.gcj("calendar", "summary", "--season", "Block", "--days", "7")["data"]
+        self.assertEqual(summary["summaries"][0]["from"], day(10))
+        self.gcj("plan", "adherence", "--season", "Block")
+        self.gcj("plan", "list", "--season", "Block", "--from", day(10), expect=2)
+        self.gcj("plan", "export", "--name", "Block", expect=2)
+        self.gcj("calendar", "summary", "--season", "No such season", expect=3)
 
 
 if __name__ == "__main__":

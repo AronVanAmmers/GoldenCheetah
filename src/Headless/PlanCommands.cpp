@@ -33,6 +33,7 @@
 #include "ActivityJson.h"
 #include "MetricNames.h"
 #include "ResultFormat.h"
+#include "SeasonRange.h"
 
 #include "Context.h"
 #include "Athlete.h"
@@ -74,6 +75,28 @@ static QDate
 dateArg(const CommandRequest &request, const QString &name)
 {
     return QDate::fromString(request.args.value(name).toString(), Qt::ISODate);
+}
+
+// --from and --to, or --season's dates instead; with required, both have
+// to be there one way or the other
+static bool
+periodArgs(CommandEnvironment &env, const CommandRequest &request, bool required, QDate &from, QDate &to, CommandResult &failure)
+{
+    QString error;
+    Status status = Status::Usage;
+    if (!dateRangeArgs(*env.session, request.args, from, to, error, status)) {
+        failure = CommandResult::failure(status, error);
+        return false;
+    }
+    if (required && (!from.isValid() || !to.isValid())) {
+        failure = CommandResult::failure(Status::Usage, "give --from and --to, or --season");
+        return false;
+    }
+    if (from.isValid() && to.isValid() && to < from) {
+        failure = CommandResult::failure(Status::Usage, "--to is before --from");
+        return false;
+    }
+    return true;
 }
 
 // hh:mm or hh:mm:ss
@@ -441,8 +464,10 @@ listPlan(CommandEnvironment &env, const CommandRequest &request)
 {
     RideCache *cache = env.session->rideCache();
     bool all = request.args.value("all").toBool(false);
-    QDate from = request.args.contains("from") ? dateArg(request, "from") : (all ? QDate() : QDate::currentDate());
-    QDate to = request.args.contains("to") ? dateArg(request, "to") : QDate();
+    QDate from, to;
+    CommandResult failure;
+    if (!periodArgs(env, request, false, from, to, failure)) return failure;
+    if (!from.isValid() && !all && !request.args.contains("season")) from = QDate::currentDate();
     QString sport = request.args.value("sport").toString();
 
     QStringList metrics;
@@ -760,8 +785,9 @@ repeatPlan(CommandEnvironment &env, const CommandRequest &request)
 static CommandResult
 exportPlan(CommandEnvironment &env, const CommandRequest &request)
 {
-    QDate from = dateArg(request, "from"), to = dateArg(request, "to");
-    if (to < from) return CommandResult::failure(Status::Usage, "--to is before --from");
+    QDate from, to;
+    CommandResult failure;
+    if (!periodArgs(env, request, true, from, to, failure)) return failure;
     Context *context = env.session->context();
 
     PlanExportDescription description;
@@ -873,8 +899,11 @@ importPlan(CommandEnvironment &env, const CommandRequest &request)
 static CommandResult
 adherence(CommandEnvironment &env, const CommandRequest &request)
 {
-    QDate from = dateArg(request, "from");
-    QDate to = request.args.contains("to") ? dateArg(request, "to") : QDate::currentDate();
+    QDate from, to;
+    CommandResult failure;
+    if (!periodArgs(env, request, false, from, to, failure)) return failure;
+    if (!from.isValid()) return CommandResult::failure(Status::Usage, "give --from, or --season");
+    if (!to.isValid()) to = QDate::currentDate();
     if (to < from) return CommandResult::failure(Status::Usage, "--to is before --from");
     QDate today = QDate::currentDate();
 
@@ -950,8 +979,9 @@ adherence(CommandEnvironment &env, const CommandRequest &request)
 static CommandResult
 calendarSummary(CommandEnvironment &env, const CommandRequest &request)
 {
-    QDate from = dateArg(request, "from"), to = dateArg(request, "to");
-    if (to < from) return CommandResult::failure(Status::Usage, "--to is before --from");
+    QDate from, to;
+    CommandResult failure;
+    if (!periodArgs(env, request, true, from, to, failure)) return failure;
     int days = request.args.value("days").toInt(7);
     if (days < 1) return CommandResult::failure(Status::Usage, "--days is 1 or more");
 
@@ -1035,6 +1065,7 @@ registerPlanCommands(CommandRegistry &registry)
     list.spec.scope = Scope::Athlete;
     list.spec.params << ParamSpec("from", ParamType::Date, "from this day (default today)");
     list.spec.params << ParamSpec("to", ParamType::Date, "until this day");
+    list.spec.params << seasonParam();
     list.spec.params << ParamSpec("all", ParamType::Bool, "past planned activities too");
     list.spec.params << ParamSpec("sport", ParamType::String, "only this sport");
     list.spec.params << ParamSpec("metric", ParamType::String, "more metrics, symbols or formula names (comma separated or repeated)").many();
@@ -1136,8 +1167,9 @@ registerPlanCommands(CommandRegistry &registry)
         "workouts they use, as the Export Plan wizard does. In the description, $NAME,\n"
         "$AUTHOR, $SPORT and $COPYRIGHT are filled in.";
     exportCmd.spec.scope = Scope::Athlete;
-    exportCmd.spec.params << ParamSpec("from", ParamType::Date, "first day of the plan").req();
-    exportCmd.spec.params << ParamSpec("to", ParamType::Date, "last day of the plan").req();
+    exportCmd.spec.params << ParamSpec("from", ParamType::Date, "first day of the plan");
+    exportCmd.spec.params << ParamSpec("to", ParamType::Date, "last day of the plan");
+    exportCmd.spec.params << seasonParam();
     exportCmd.spec.params << ParamSpec("name", ParamType::String, "the plan's name").req();
     exportCmd.spec.params << ParamSpec("author", ParamType::String, "the plan's author (default: the athlete's name)");
     exportCmd.spec.params << ParamSpec("copyright", ParamType::String, "copyright");
@@ -1172,8 +1204,9 @@ registerPlanCommands(CommandRegistry &registry)
         "(done that day), done (on another day), missed or upcoming, and how far it was\n"
         "moved; each completed activity that wasn't planned; and the chart's totals.";
     adh.spec.scope = Scope::Athlete;
-    adh.spec.params << ParamSpec("from", ParamType::Date, "the first day (planned for)").req();
+    adh.spec.params << ParamSpec("from", ParamType::Date, "the first day (planned for)");
     adh.spec.params << ParamSpec("to", ParamType::Date, "the last day (default today)");
+    adh.spec.params << seasonParam();
     adh.spec.httpMethod = "GET";
     adh.spec.httpPath = "/athletes/{athlete}/plan/adherence";
     adh.handler = adherence;
@@ -1187,8 +1220,9 @@ registerPlanCommands(CommandRegistry &registry)
         "BikeStress and duration, per week from --from. Start --from on the first day of\n"
         "your calendar week to get the calendar's weeks.";
     summary.spec.scope = Scope::Athlete;
-    summary.spec.params << ParamSpec("from", ParamType::Date, "the first day").req();
-    summary.spec.params << ParamSpec("to", ParamType::Date, "the last day").req();
+    summary.spec.params << ParamSpec("from", ParamType::Date, "the first day");
+    summary.spec.params << ParamSpec("to", ParamType::Date, "the last day");
+    summary.spec.params << seasonParam();
     summary.spec.params << ParamSpec("days", ParamType::Int, "days per total (default 7)").def(7);
     summary.spec.params << ParamSpec("planned", ParamType::String, "planned activities counted: always, upcoming-or-missed (not linked), upcoming (not linked, from today) or never, as the calendar's Include Planned")
                             .oneOf({ "always", "upcoming-or-missed", "upcoming", "never" }).def("always");
