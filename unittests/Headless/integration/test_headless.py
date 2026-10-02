@@ -3469,6 +3469,41 @@ class TestPlannedActivities(Headless, PlanHelpers):
         self.assertClosed()
 
 
+
+class TestPlanAdherence(Headless, PlanHelpers):
+    """plan adherence: the Plan Adherence chart's entries and totals"""
+
+    imports = [RIDE_POWER]
+
+    def test_adherence(self):
+        self.plan("add", "--date", day(5), "--sport", "Bike", "--title", "A")
+        # copies are plans of their own day, so they can be in the past
+        self.plan("copy", ride_id(day(5)), "--to", "2020-01-26", "--time", "13:00")
+        self.plan("link", "2020_01_26_13_00_00", "2020_01_26_13_00_38")
+        self.plan("copy", ride_id(day(5)), "--to", day(-10))
+        self.plan("add", "--date", day(3), "--sport", "Bike", "--title", "M")
+        self.plan("move", ride_id(day(3)), "--to", day(4))
+        self.gcj("activity", "add", "--date", day(-2), "--time", "06:00", "--sport", "Run")
+
+        a = self.plan("adherence", "--from", "2020-01-01", "--to", day(10))
+        rows = {(e["planned"], e["actual"]): e for e in a["entries"]}
+        done = rows[("2020_01_26_13_00_00", "2020_01_26_13_00_38")]
+        self.assertEqual((done["status"], done["done_after"], done["date"]), ("on time", 0, "2020-01-26"))
+        self.assertEqual(rows[(ride_id(day(-10)), None)]["status"], "missed")
+        moved = rows[(ride_id(day(4)), None)]
+        self.assertEqual((moved["status"], moved["moved_by"], moved["date"], moved["title"]), ("upcoming", 1, day(3), "M"))
+        self.assertEqual(rows[(ride_id(day(5)), None)]["status"], "upcoming")
+        self.assertEqual(rows[(None, ride_id(day(-2), "06:00:00"))]["status"], "unplanned")
+        self.assertEqual([e["date"] for e in a["entries"]], sorted(e["date"] for e in a["entries"]))
+        t = a["totals"]
+        self.assertEqual((t["total"], t["planned"], t["on_time"], t["moved"], t["missed"], t["unplanned"]), (5, 4, 1, 1, 1, 1))
+        self.assertEqual((t["on_time_percent"], t["unplanned_percent"], t["average_move_days"]), (25, 20, 1))
+        # by the day planned for: the moved one is in its old day's range
+        a = self.plan("adherence", "--from", day(3), "--to", day(3))
+        self.assertEqual([e["planned"] for e in a["entries"]], [ride_id(day(4))])
+        self.gcj("plan", "adherence", "--from", day(3), "--to", day(2), expect=2)
+
+
 @unittest.skipIf(os.name == "nt" or running_as_root(), "file permissions don't stop Windows or root")
 class TestPlanReadOnly(Headless, PlanHelpers):
     """activity add and plan add in folders that can't be written"""

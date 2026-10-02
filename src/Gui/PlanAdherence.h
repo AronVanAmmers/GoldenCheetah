@@ -29,6 +29,7 @@
 
 #include "TimeUtils.h"
 #include "Colors.h"
+#include "PlanAdherenceData.h"
 
 
 class StatisticBox : public QFrame {
@@ -94,23 +95,6 @@ private:
 };
 
 
-struct PlanAdherenceStatistics {
-    int totalAbs = 0;
-    int plannedAbs = 0;
-    float plannedRel = 0;
-    int onTimeAbs = 0;
-    float onTimeRel = 0;
-    int shiftedAbs = 0;
-    float shiftedRel = 0;
-    int missedAbs = 0;
-    float missedRel = 0;
-    float avgShift = 0;
-    int unplannedAbs = 0;
-    float unplannedRel = 0;
-    int totalShiftDaysAbs = 0;
-};
-
-
 struct PlanAdherenceEntry {
     QString titlePrimary;
     QString titleSecondary;
@@ -124,12 +108,6 @@ struct PlanAdherenceEntry {
     QString actualReference;
 };
 Q_DECLARE_METATYPE(PlanAdherenceEntry)
-
-
-struct PlanAdherenceOffsetRange {
-    qint64 min = -1;
-    qint64 max = 1;
-};
 
 
 class PlanAdherenceOffsetHandler {

@@ -393,6 +393,8 @@ gc-cli -a Joe calendar summary --from 2026-09-28 --to 2026-11-01
 gc-cli -a Joe --format csv calendar summary --from 2026-09-28 --to 2026-11-01 --planned never
 ```
 
+`plan adherence --from DATE [--to DATE]` is the Plan Adherence chart as data. Each planned activity planned for a day of the period (the day first planned for, so a moved one stays where it was planned) is `on time` when it was done that day, `done` when it was done on another day (`done_after` days later, negative for earlier), `missed` when it wasn't done and its day has passed, or `upcoming`; `moved_by` is how far it was moved. A planned activity counts as done when it is linked to a completed one. Completed activities that aren't linked to a plan are `unplanned`. `totals` has the chart's figures: total, planned, on time, moved, missed and unplanned, each as a count and a percentage, and the average and total days moved.
+
 ## Example: estimating power
 
 This is the job the command line was built for.

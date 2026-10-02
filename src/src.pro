@@ -680,7 +680,7 @@ HEADERS += Metrics/Banister.h Metrics/CPSolver.h Metrics/Estimator.h Metrics/Ext
 
 ## Planning and Compliance
 HEADERS += Planning/PlanningWindow.h Planning/PlanBundle.h
-HEADERS += Core/ManualActivity.h
+HEADERS += Core/ManualActivity.h Planning/PlanAdherenceData.h
 
 # contrib
 HEADERS += ../contrib/qtsolutions/codeeditor/codeeditor.h ../contrib/qtsolutions/json/mvjson.h \
@@ -801,7 +801,7 @@ SOURCES += Metrics/aBikeScore.cpp Metrics/aCoggan.cpp Metrics/AerobicDecoupling.
 
 ## Planning and Compliance
 SOURCES += Planning/PlanningWindow.cpp Planning/PlanBundle.cpp
-SOURCES += Core/ManualActivity.cpp
+SOURCES += Core/ManualActivity.cpp Planning/PlanAdherenceData.cpp
 
 ## Contributed solutions
 SOURCES += ../contrib/qtsolutions/codeeditor/codeeditor.cpp ../contrib/qtsolutions/json/mvjson.cpp \
