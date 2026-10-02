@@ -42,6 +42,7 @@ struct ActivitySelection {
     QString search;             // free text search
     QString named;              // named search or filter
     QDate from, to;             // inclusive
+    QString season;             // a season's dates instead of from and to (SeasonRange.h)
     QString sport;              // Bike, Run, Swim ... as in the Sport field
     bool planned = false;       // planned instead of actual activities
     int limit = 0;              // most recent n (0 = all)

@@ -21,6 +21,7 @@
 #include "AthleteLock.h"
 #include "ActivitySelection.h"
 #include "ActivityJson.h"
+#include "SeasonRange.h"
 
 #include "Context.h"
 #include "Athlete.h"
@@ -453,8 +454,10 @@ listMeasures(CommandEnvironment &env, const CommandRequest &request)
 {
     Athlete *athlete = env.session->athlete();
     QString group = request.args.value("group").toString();
-    QDate from = QDate::fromString(request.args.value("from").toString(), Qt::ISODate);
-    QDate to = QDate::fromString(request.args.value("to").toString(), Qt::ISODate);
+    QDate from, to;
+    QString error;
+    Status status = Status::Ok;
+    if (!dateRangeArgs(*env.session, request.args, from, to, error, status)) return CommandResult::failure(status, error);
 
     QJsonArray groups;
     for (MeasuresGroup *g : athlete->measures->getGroups()) {
@@ -652,6 +655,7 @@ registerAthleteCommands(CommandRegistry &registry)
     mlist.spec.params << ParamSpec("group", ParamType::String, "measures group, e.g. Body or Hrv");
     mlist.spec.params << ParamSpec("from", ParamType::Date, "first day");
     mlist.spec.params << ParamSpec("to", ParamType::Date, "last day");
+    mlist.spec.params << seasonParam();
     mlist.spec.httpMethod = "GET";
     mlist.spec.httpPath = "/athletes/{athlete}/measures";
     mlist.handler = listMeasures;
