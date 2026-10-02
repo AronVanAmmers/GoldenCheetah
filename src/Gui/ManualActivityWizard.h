@@ -62,11 +62,6 @@ class ManualActivityWizard : public QWizard
     private:
         Context *context;
         bool plan = false;
-
-        void field2MetricDouble(RideFile &rideFile, const QString &fieldName, const QString &metricName) const;
-        void field2MetricInt(RideFile &rideFile, const QString &fieldName, const QString &metricName) const;
-        void field2TagString(RideFile &rideFile, const QString &fieldName, const QString &tagName) const;
-        void field2TagInt(RideFile &rideFile, const QString &fieldName, const QString &tagName) const;
 };
 
 

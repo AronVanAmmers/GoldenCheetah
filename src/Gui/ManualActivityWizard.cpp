@@ -41,6 +41,7 @@
 #include "Units.h"
 #include "HelpWhatsThis.h"
 #include "IconManager.h"
+#include "ManualActivity.h"
 
 #define MANDATORY " *"
 #define TRADEMARK "<sup>TM</sup>"
@@ -56,10 +57,6 @@
 #endif
 #define HLO "<h4>"
 #define HLC "</h4>"
-
-static QString activityBasename(const QDateTime &dt);
-static QString activityFilename(const QDateTime &dt, bool plan, Context *context);
-
 
 ////////////////////////////////////////////////////////////////////////////////
 // ManualActivityWizard
@@ -104,75 +101,36 @@ ManualActivityWizard::done
         int eb = field("estimateBy").toInt();
         appsettings->setValue(GC_BIKESCOREMODE, eb == 0 ? "time" : (eb == 1 ? "dist" : "manual"));
 
-        RideFile rideFile;
-
-        QDateTime rideDateTime = QDateTime(field("activityDate").toDate(), field("activityTime").toTime());
-        rideFile.setStartTime(rideDateTime);
-        rideFile.setRecIntSecs(0.00);
-        rideFile.setDeviceType("Manual");
-        rideFile.setFileFormat("GoldenCheetah Json");
-        if (plan) {
-            rideFile.setTag("Original Date", field("activityDate").toDate().toString("yyyy/MM/dd"));
+        ManualActivity activity;
+        activity.start = QDateTime(field("activityDate").toDate(), field("activityTime").toTime());
+        activity.sport = field("sport").toString();
+        activity.subSport = field("subSport").toString();
+        activity.workoutCode = field("workoutCode").toString();
+        activity.rpe = field("rpe").toInt();
+        activity.objective = field("objective").toString();
+        activity.workoutFilename = field("woFilename").toString();
+        activity.workoutTitle = field("woTitle").toString();
+        activity.notes = field("notes").toString();
+        activity.workoutDescription = field("woDescription").toString();
+        activity.paceIntervals = field("paceIntervals").toBool();
+        if ((sport == "Run" || sport == "Swim") && activity.paceIntervals) {
+            activity.laps = field("laps").value<QList<RideFilePoint*>>();
         }
+        activity.distance = field("realDistance").toDouble();
+        activity.duration = field("realDuration").toInt();
+        activity.averageHr = field("averageHr").toInt();
+        activity.averageCadence = field("averageCadence").toInt();
+        activity.averagePower = field("averagePower").toInt();
+        activity.work = field("work").toInt();
+        activity.bikeStress = field("bikeStress").toInt();
+        activity.bikeScore = field("bikeScore").toInt();
+        activity.swimScore = field("swimScore").toInt();
+        activity.triScore = field("triScore").toInt();
+        activity.elevationGain = field("woElevationGain").toInt();
+        activity.isoPower = field("woIsoPower").toInt();
+        activity.xPower = field("woXPower").toInt();
 
-        field2TagString(rideFile, "sport", "Sport");
-        field2TagString(rideFile, "subSport", "SubSport");
-        field2TagString(rideFile, "workoutCode", "Workout Code");
-        field2TagInt(rideFile, "rpe", "RPE");
-        field2TagString(rideFile, "objective", "Objective");
-        field2TagString(rideFile, "woFilename", "WorkoutFilename");
-        field2TagString(rideFile, "woTitle", "Route");
-
-        // Special case notes: Combine notes and workout description (if available)
-        QString notesCombined = field("notes").toString().trimmed();
-        QString description = field("woDescription").toString().trimmed();
-        if (! description.isEmpty()) {
-            if (! notesCombined.isEmpty()) {
-                notesCombined += "\n";
-            }
-            notesCombined += description;
-        }
-        if (! notesCombined.isEmpty()) {
-        }
-        rideFile.setTag("Notes", notesCombined);
-
-        if ((sport == "Run" || sport == "Swim") && field("paceIntervals").toBool()) {
-            QList<RideFilePoint*> points = field("laps").value<QList<RideFilePoint*>>();
-            // get samples from Laps Editor, if available
-            if (points.count() > 0) {
-                rideFile.setRecIntSecs(1.00);
-                for (RideFilePoint *point : points) {
-                    rideFile.appendPoint(*point);
-                }
-                rideFile.fillInIntervals();
-            }
-        } else {
-            field2MetricDouble(rideFile, "realDistance", "total_distance");
-            field2MetricInt(rideFile, "realDuration", "workout_time");
-            field2MetricInt(rideFile, "realDuration", "time_riding");
-        }
-        field2MetricInt(rideFile, "averageHr", "average_hr");
-        field2MetricInt(rideFile, "averageCadence", "average_cad");
-        field2MetricInt(rideFile, "averagePower", "average_power");
-        field2MetricInt(rideFile, "work", "total_work");
-        field2MetricInt(rideFile, "bikeStress", "coggan_tss");
-        field2MetricInt(rideFile, "bikeScore", "skiba_bike_score");
-        field2MetricInt(rideFile, "swimScore", "swimscore");
-        field2MetricInt(rideFile, "triScore", "triscore");
-        field2MetricInt(rideFile, "woElevationGain", "elevation_gain");
-        field2MetricInt(rideFile, "woIsoPower", "coggan_np");
-        field2MetricInt(rideFile, "woXPower", "skiba_xpower");
-
-        // process linked defaults
-        GlobalContext::context()->rideMetadata->setLinkedDefaults(&rideFile);
-
-        // what should the filename be?
-        QString basename = activityBasename(rideDateTime);
-        QFile out(activityFilename(rideDateTime, plan, context));
-        if (RideFileFactory::instance().writeRideFile(context, &rideFile, out, "json")) {
-            // refresh metric db etc
-            context->athlete->addRide(basename + ".json", true, true, false, plan);
-        } else {
+        if (! activity.save(context, plan)) {
             // rather than dance around renaming existing rides, this time we will let the user
             // work it out -- they may actually want to keep an existing ride, so we shouldn't
             // rename it silently.
@@ -184,52 +142,6 @@ ManualActivityWizard::done
     }
 
     QWizard::done(finalResult);
-}
-
-
-void
-ManualActivityWizard::field2MetricDouble
-(RideFile &rideFile, const QString &fieldName, const QString &metricName) const
-{
-    double value = field(fieldName).toDouble();
-    if (value > 0) {
-        QMap<QString,QString> values;
-        values.insert("value", QString::number(value));
-        rideFile.metricOverrides.insert(metricName, values);
-    }
-}
-
-
-void
-ManualActivityWizard::field2MetricInt
-(RideFile &rideFile, const QString &fieldName, const QString &metricName) const
-{
-    int value = field(fieldName).toInt();
-    if (value > 0) {
-        QMap<QString,QString> values;
-        values.insert("value", QString::number(value));
-        rideFile.metricOverrides.insert(metricName, values);
-    }
-}
-
-
-void
-ManualActivityWizard::field2TagString
-(RideFile &rideFile, const QString &fieldName, const QString &tagName) const
-{
-    if (! field(fieldName).toString().trimmed().isEmpty()) {
-        rideFile.setTag(tagName, field(fieldName).toString().trimmed());
-    }
-}
-
-
-void
-ManualActivityWizard::field2TagInt
-(RideFile &rideFile, const QString &fieldName, const QString &tagName) const
-{
-    if (field(fieldName).toInt() > 0) {
-        rideFile.setTag(tagName, QString::number(field(fieldName).toInt()));
-    }
 }
 
 
@@ -420,7 +332,7 @@ ManualActivityPageBasics::checkDateTime
 ()
 {
     QDateTime dt(field("activityDate").toDate(), field("activityTime").toTime());
-    QFile file(activityFilename(dt, plan, context));
+    QFile file(ManualActivity::fileName(context, dt, plan));
     duplicateActivityLabel->setVisible(file.exists());
 }
 
@@ -688,39 +600,28 @@ ManualActivityPageWorkout::selectionChanged
         }
     }
 
-    int avgPower = 0;
-    int bikeStress = 0;
-    int bikeScore = 0;
-    int isoPower = 0;
-    int xPower = 0;
-    if (ergFile != nullptr && type == "erg") {
-        avgPower = static_cast<int>(ergFile->AP());
-        bikeStress = static_cast<int>(ergFile->bikeStress());
-        bikeScore = static_cast<int>(ergFile->BS());
-        isoPower = static_cast<int>(ergFile->IsoPower());
-        xPower = static_cast<int>(ergFile->XP());
-    }
-
     int elevationGain = workoutModel->data(workoutModel->index(target.row(), TdbWorkoutModelIdx::elevation), Qt::DisplayRole).toInt();
-    setField("woFilename", filename);
-    setField("woTitle", title);
+    int durationMs = workoutModel->data(workoutModel->index(target.row(), TdbWorkoutModelIdx::duration), Qt::DisplayRole).toInt();
+    double distanceM = workoutModel->data(workoutModel->index(target.row(), TdbWorkoutModelIdx::distance), Qt::DisplayRole).toDouble();
+    ManualActivity workout;
+    workout.setWorkout(filename, title, type, description, elevationGain, durationMs, distanceM, ergFile);
+    setField("woFilename", workout.workoutFilename);
+    setField("woTitle", workout.workoutTitle);
     setField("woFileType", type);
-    setField("woDescription", description);
-    setField("woElevationGain", elevationGain);
-    setField("woIsoPower", isoPower);
-    setField("woXPower", xPower);
-    setField("bikeStress", bikeStress);
-    setField("bikeScore", bikeScore);
+    setField("woDescription", workout.workoutDescription);
+    setField("woElevationGain", workout.elevationGain);
+    setField("woIsoPower", workout.isoPower);
+    setField("woXPower", workout.xPower);
+    setField("bikeStress", workout.bikeStress);
+    setField("bikeScore", workout.bikeScore);
     if (type == "erg") {
-        int durationSecs = workoutModel->data(workoutModel->index(target.row(), TdbWorkoutModelIdx::duration), Qt::DisplayRole).toInt() / 1000;
-        setField("averagePower", avgPower);
-        setField("realDuration", durationSecs);
-        setField("duration", QTime(0, 0, 0).addSecs(durationSecs));
+        setField("averagePower", workout.averagePower);
+        setField("realDuration", workout.duration);
+        setField("duration", QTime(0, 0, 0).addSecs(workout.duration));
     } else if (type == "slp") {
         bool useMetricUnits = GlobalContext::context()->useMetricUnits;
-        double distanceKM = workoutModel->data(workoutModel->index(target.row(), TdbWorkoutModelIdx::distance), Qt::DisplayRole).toDouble() / 1000;
-        setField("realDistance", distanceKM);
-        setField("distance", distanceKM * (useMetricUnits ? 1.0 : MILES_PER_KM));
+        setField("realDistance", workout.distance);
+        setField("distance", workout.distance * (useMetricUnits ? 1.0 : MILES_PER_KM));
     }
 
     contentStack->setCurrentIndex(ergFile != nullptr ? 1 : 2);
@@ -1128,126 +1029,16 @@ ManualActivityPageMetrics::updateEstimates
         return;
     }
     int estimationDays = field("estimationDays").toInt();
-    double timeWork = 0.0;
-    double distanceWork = 0.0;
-    double timeBikeStress = 0.0;
-    double distanceBikeStress = 0.0;
-    double timeBikeScore = 0.0;
-    double distanceBikeScore = 0.0;
-    double timeSwimScore = 0.0;
-    double distanceSwimScore = 0.0;
-    double timeTriScore = 0.0;
-    double distanceTriScore = 0.0;
-
-    double metricFactor = 1.0;
-    if (   (sport == "Run" && ! appsettings->value(this, GC_PACE, GlobalContext::context()->useMetricUnits).toBool())
-        || (sport == "Swim" && ! appsettings->value(this, GC_SWIMPACE, GlobalContext::context()->useMetricUnits).toBool())
-        || (sport != "Run" && sport != "Swim" && ! GlobalContext::context()->useMetricUnits)) {
-        metricFactor = MILES_PER_KM;
-    }
-
-    // do we have any rides?
-    if (context->athlete->rideCache->rides().count()) {
-        // last 'n' days calculation
-        double seconds = 0.0;
-        double distance = 0.0;
-        double work = 0.0;
-        double bikeStress = 0.0;
-        double bikeScore = 0.0;
-        double swimScore = 0.0;
-        double triScore = 0.0;
-        int rides = 0;
-
-        // fall back to 'all time' calculation
-        double totalSeconds = 0.0;
-        double totalDistance = 0.0;
-        double totalWork = 0.0;
-        double totalBikeStress = 0.0;
-        double totalBikeScore = 0.0;
-        double totalSwimScore = 0.0;
-        double totalTriScore = 0.0;
-
-        // iterate over the ride cache
-        for (RideItem *ride : context->athlete->rideCache->rides()) {
-            if (ride->planned || ride->sport.trimmed() != sport) {
-                continue;
-            }
-
-            // skip those with no time or distance values (not comparing doubles)
-            if (ride->getForSymbol("time_riding") == 0 || ride->getForSymbol("total_distance") == 0) {
-                continue;
-            }
-
-            // how many days ago was it?
-            int daysAgo = ride->dateTime.daysTo(QDateTime::currentDateTime());
-
-            // only use rides in last 'n' days
-            if (daysAgo >= 0 && daysAgo < estimationDays) {
-                seconds += ride->getForSymbol("time_riding");
-                distance += ride->getForSymbol("total_distance");
-                work += ride->getForSymbol("total_work");
-                bikeStress += ride->getForSymbol("coggan_tss");
-                bikeScore += ride->getForSymbol("skiba_bike_score");
-                swimScore += ride->getForSymbol("swimscore");
-                triScore += ride->getForSymbol("triscore");
-
-                rides++;
-            }
-            totalSeconds += ride->getForSymbol("time_riding");
-            totalDistance += ride->getForSymbol("total_distance");
-            totalWork += ride->getForSymbol("total_work");
-            totalBikeStress += ride->getForSymbol("coggan_tss");
-            totalBikeScore += ride->getForSymbol("skiba_bike_score");
-            totalSwimScore += ride->getForSymbol("swimscore");
-            totalTriScore += ride->getForSymbol("triscore");
-        }
-
-        // total values, not just last 'n' days -- but avoid divide by zero
-        totalDistance *= metricFactor;
-
-        timeWork = (totalWork * 3600) / totalSeconds;
-        timeBikeStress = (totalBikeStress * 3600) / totalSeconds;
-        timeBikeScore = (totalBikeScore * 3600) / totalSeconds;
-        timeSwimScore = (totalSwimScore * 3600) / totalSeconds;
-        timeTriScore = (totalTriScore * 3600) / totalSeconds;
-        distanceWork = totalWork / totalDistance;
-        distanceBikeStress = totalBikeStress / totalDistance;
-        distanceBikeScore = totalBikeScore / totalDistance;
-        distanceSwimScore = totalSwimScore / totalDistance;
-        distanceTriScore = totalTriScore / totalDistance;
-
-        // don't use defaults if we have rides in last 'n' days
-        if (rides) {
-            if (seconds) {
-                distance *= metricFactor;
-                timeWork = (work * 3600) / seconds;
-                timeBikeStress = (bikeStress * 3600) / seconds;
-                timeBikeScore = (bikeScore * 3600) / seconds;
-                timeSwimScore = (swimScore * 3600) / seconds;
-                timeTriScore = (triScore * 3600) / seconds;
-            }
-            if (distance) {
-                distanceWork = work / distance;
-                distanceBikeStress = bikeStress / distance;
-                distanceBikeScore = bikeScore / distance;
-                distanceSwimScore = swimScore / distance;
-                distanceTriScore = triScore / distance;
-            }
-        }
-    }
-
-    if (estimateBy == 0) { // by time
-        setField("work", actDuration * timeWork / 3600.0);
-        setField("bikeStress", actDuration * timeBikeStress / 3600.0);
-        setField("bikeScore", actDuration * timeBikeScore / 3600.0);
-        setField("swimScore", actDuration * timeSwimScore / 3600.0);
-        setField("triScore", actDuration * timeTriScore / 3600.0);
-    } else if (estimateBy == 1) { // by distance
-        setField("work", actDistance * distanceWork);
-        setField("bikeStress", actDistance * distanceBikeStress);
-        setField("bikeScore", actDistance * distanceBikeScore);
-        setField("swimScore", actDistance * distanceSwimScore);
-        setField("triScore", actDistance * distanceTriScore);
+    ManualActivity::Estimate estimate = ManualActivity::estimate(context, sport, estimationDays,
+                                                                 estimateBy == 0 ? ManualActivity::EstimateBy::Duration
+                                                                                 : ManualActivity::EstimateBy::Distance,
+                                                                 actDuration, actDistance);
+    if (estimateBy == 0 || estimateBy == 1) { // by time or by distance
+        setField("work", estimate.work);
+        setField("bikeStress", estimate.bikeStress);
+        setField("bikeScore", estimate.bikeScore);
+        setField("swimScore", estimate.swimScore);
+        setField("triScore", estimate.triScore);
     }
 }
 
@@ -1503,30 +1294,4 @@ ManualActivityPageSummary::addRow
         return true;
     }
     return false;
-}
-
-
-////////////////////////////////////////////////////////////////////////////////
-// Helpers & Utilities
-
-static QString
-activityBasename
-(const QDateTime &dt)
-{
-    return dt.toString("yyyy_MM_dd_HH_mm_ss");
-}
-
-
-static QString
-activityFilename
-(const QDateTime &dt, bool plan, Context *context)
-{
-    QString basename = activityBasename(dt);
-    QString filename;
-    if (plan) {
-        filename = context->athlete->home->planned().canonicalPath() + "/" + basename + ".json";
-    } else {
-        filename = context->athlete->home->activities().canonicalPath() + "/" + basename + ".json";
-    }
-    return filename;
 }
