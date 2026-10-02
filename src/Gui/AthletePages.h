@@ -164,10 +164,10 @@ class AboutModelPage : public QWidget
         QCheckBox *showSBToday;
         QPushButton *resetButton;
 
-        static const int defaultWbaltau = 300;
-        static const int defaultSTSavg = 7;
-        static const int defaultLTSavg = 42;
-        static const int defaultSBToday = 0;
+        static const int defaultWbaltau = Athlete::defaultWbaltau;
+        static const int defaultSTSavg = Athlete::defaultSTSavg;
+        static const int defaultLTSavg = Athlete::defaultLTSavg;
+        static const int defaultSBToday = Athlete::defaultSBToday;
 
     struct {
         int lts,sts;
