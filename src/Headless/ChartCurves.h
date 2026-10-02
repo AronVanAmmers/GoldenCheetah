@@ -58,6 +58,7 @@ const Choices<RideFile::SeriesType> &bestSeries();
 const Choices<int> &durationUnits();                    // in seconds
 const Choices<int> &estimates();                        // ESTIMATE_WPRIME ...
 const Choices<int> &curveTypes();                       // METRIC_DB ...
+const Choices<int> &pmcTypes();                         // STRESS_STS ...
 QString modelEither();                                  // "cp2, cp3 or ext"
 
 extern const char *const oneCurveDrawing;               // the error for drawing several curves at once
@@ -76,6 +77,9 @@ int curveSources(const QJsonObject &args);
 
 // a curve's flags given without the kind of curve they belong to
 bool strayCurveArgs(const QJsonObject &args, QString &error);
+
+// a filter expression as the GUI's filter box takes it ("" is none)
+bool checkFilter(Context *context, const QString &expr, QString &error);
 
 // how one curve is drawn: the flags given, applied to a curve
 

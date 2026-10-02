@@ -35,6 +35,11 @@
 #include <QList>
 #include <QByteArray>
 #include <cmath>
+#include <functional>
+
+class QPainter;
+class QRectF;
+class QwtPlot;
 
 namespace Headless {
 
@@ -85,6 +90,16 @@ class ChartRenderer
 
         // returns the encoded chart, or an empty array and sets error
         static QByteArray render(const ChartSpec &spec, const QString &format, QString &error);
+
+        // a plot made elsewhere (a Trends chart's LTMPlot), drawn at size as
+        // it draws itself, on its own background
+        static QByteArray renderPlot(QwtPlot *plot, const QSize &size, const QString &format,
+                                     const QString &title, QString &error);
+
+        // what paint draws into the rectangle it is given, encoded as format
+        static QByteArray encode(const QSize &size, const QString &format, const QString &title,
+                                 const QColor &background,
+                                 const std::function<void(QPainter &, const QRectF &)> &paint, QString &error);
 
         static QString mimeType(const QString &format);
 };

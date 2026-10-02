@@ -27,6 +27,7 @@
 
 #include "HeadlessCommands.h"
 #include "ChartCurves.h"
+#include "TrendsChart.h"
 
 #include "Athlete.h"
 #include "Context.h"
@@ -72,7 +73,7 @@ chartText(const LTMSettings &chart)
     return text;
 }
 
-static int
+int
 findChart(const QList<LTMSettings> &charts, const QString &name, QString &error)
 {
     int found = -1;
@@ -225,11 +226,11 @@ replacementCurves(Context *context, const QJsonObject &args, QList<MetricDetail>
 {
     int sources = curveSources(args);
     if (sources == 0) {
-        error = "give a curve with --metric, --best or --estimate";
+        error = "give a curve with --metric, --best, --estimate, --pmc or --measure";
         return false;
     }
     if (sources > 1) {
-        error = "give only one of --metric, --best and --estimate";
+        error = "give only one of --metric, --best, --estimate, --pmc and --measure";
         return false;
     }
     QStringList symbols;
@@ -280,7 +281,7 @@ editChart(CommandEnvironment &env, const CommandRequest &request)
     QString error;
     if (!supportedTypes(request.args, error)) return CommandResult::failure(Status::Usage, error);
     if (!rename && !regroup && !replace && !drawing)
-        return CommandResult::failure(Status::Usage, "give --name, --by, or a curve with --metric, --best or --estimate");
+        return CommandResult::failure(Status::Usage, "give --name, --by, or a curve with --metric, --best, --estimate, --pmc or --measure");
     if (drawing && !replace)
         return CommandResult::failure(Status::Usage, "to change one curve, use 'chart library curve edit'");
     // a curve's own flags without a curve would be dropped without a word
@@ -343,7 +344,7 @@ addCurve(CommandEnvironment &env, const CommandRequest &request)
     QString error;
     if (!supportedTypes(request.args, error)) return CommandResult::failure(Status::Usage, error);
     if (curveSources(request.args) != 1)
-        return CommandResult::failure(Status::Usage, "give one curve with --metric, --best or --estimate");
+        return CommandResult::failure(Status::Usage, "give one curve with --metric, --best, --estimate, --pmc or --measure");
 
     Athlete *athlete = env.session->athlete();
     int chartIndex = findChart(athlete->presets, request.args.value("chart").toString(), error);
@@ -378,7 +379,7 @@ editCurve(CommandEnvironment &env, const CommandRequest &request)
 
     int sources = curveSources(request.args);
     if (sources > 1)
-        return CommandResult::failure(Status::Usage, "give only one of --metric, --best and --estimate");
+        return CommandResult::failure(Status::Usage, "give only one of --metric, --best, --estimate, --pmc and --measure");
     if (sources == 1) {
         // an estimate stays per kilogram, or not, unless --wpk says
         QJsonObject args = request.args;
@@ -466,12 +467,13 @@ registerChartLibraryCommands(CommandRegistry &registry)
     add.spec.name = "chart.library.add";
     add.spec.summary = "add a Trends chart";
     add.spec.description =
-        "A curve is a metric from 'metric list', a best (a duration of one series)\n"
-        "or an estimate from a CP model (" + modelEither() + "). Several --metric flags\n"
-        "and no drawing flags keep today's metric curves. A style, marker, color,\n"
-        "fill, filter or units applies to one curve; add further curves with\n"
-        "'chart library curve add'. --by defaults to week. PMC, Banister,\n"
-        "performance, formula and measure curves are refused. A chart that cannot\n"
+        "A curve is a metric from 'metric list', a best (a duration of one series),\n"
+        "an estimate from a CP model (" + modelEither() + "), a PMC curve of a stress\n"
+        "metric (--pmc, with planned and expected variants) or a daily measure\n"
+        "(--measure). Several --metric flags and no drawing flags keep today's metric\n"
+        "curves. A style, marker, color, fill, filter or units applies to one curve;\n"
+        "add further curves with 'chart library curve add'. --by defaults to week.\n"
+        "Banister, performance and formula curves are refused. A chart that cannot\n"
         "be read back is refused and the file is left unchanged.";
     add.spec.scope = Scope::Athlete;
     add.spec.modifies = true;
@@ -488,7 +490,7 @@ registerChartLibraryCommands(CommandRegistry &registry)
     edit.spec.name = "chart.library.edit";
     edit.spec.summary = "rename a Trends chart, replace its curves, or change how it groups";
     edit.spec.description =
-        "Give --name, --by, or a curve. --metric, --best or --estimate replaces the\n"
+        "Give --name, --by, or a curve. A curve (--metric, --best ...) replaces the\n"
         "whole curve list. To change one curve and leave the others, including bests\n"
         "and estimates already in the file, use 'chart library curve edit'.\n"
         "A change that cannot be read back is refused and the file is left unchanged.";
@@ -539,7 +541,7 @@ registerChartLibraryCommands(CommandRegistry &registry)
     curveEdit.spec.description =
         "The curve number is the one 'chart library show' prints. Drawing flags\n"
         "that are left off stay as they are, and the other curves are not touched.\n"
-        "Pass --metric, --best or --estimate to replace this curve.";
+        "Pass a curve (--metric, --best, --estimate, --pmc or --measure) to replace it.";
     curveEdit.spec.scope = Scope::Athlete;
     curveEdit.spec.modifies = true;
     curveEdit.spec.params << ParamSpec("chart", ParamType::String, "chart").req().pos();
@@ -563,6 +565,8 @@ registerChartLibraryCommands(CommandRegistry &registry)
     writeParams(curveRemove.spec);
     curveRemove.handler = removeCurve;
     registry.add(curveRemove);
+
+    registerTrendsChartCommands(registry);
 }
 
 

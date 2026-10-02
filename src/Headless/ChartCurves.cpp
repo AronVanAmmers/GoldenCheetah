@@ -25,7 +25,10 @@
 #include "ActivitySelection.h"
 #include "MetricNames.h"
 
+#include "Athlete.h"
 #include "Context.h"
+#include "Measures.h"
+#include "Utils.h"
 #include "DataFilter.h"
 #include "PDModel.h"
 #include "RideMetric.h"
@@ -88,6 +91,19 @@ curveTypes()
     static const Choices<int> c{ { "metric", "pmc", "meta", "best", "estimate", "stress", "formula", "measure", "performance", "banister" },
                                  { METRIC_DB, METRIC_PM, METRIC_META, METRIC_BEST, METRIC_ESTIMATE, METRIC_STRESS,
                                    METRIC_FORMULA, METRIC_D_MEASURE, METRIC_PERFORMANCE, METRIC_BANISTER } };
+    return c;
+}
+
+// what a PMC curve plots, in Curve Settings' order (STRESS_*)
+const Choices<int> &
+pmcTypes()
+{
+    static const Choices<int> c{ { "sts", "lts", "sb", "rr",
+                                   "planned-sts", "planned-lts", "planned-sb", "planned-rr",
+                                   "expected-sts", "expected-lts", "expected-sb", "expected-rr" },
+                                 { STRESS_STS, STRESS_LTS, STRESS_SB, STRESS_RR,
+                                   STRESS_PLANNED_STS, STRESS_PLANNED_LTS, STRESS_PLANNED_SB, STRESS_PLANNED_RR,
+                                   STRESS_EXPECTED_STS, STRESS_EXPECTED_LTS, STRESS_EXPECTED_SB, STRESS_EXPECTED_RR } };
     return c;
 }
 
@@ -202,6 +218,7 @@ curveDetail(const MetricDetail &m)
         if (!m.uname.isEmpty()) return m.uname;
         return MetricDetail::estimateName(m.estimate, m.model, m.estimateDuration, m.estimateDuration_units);
     }
+    if (m.type == METRIC_STRESS) return QString("%1 %2").arg(pmcTypes().name(m.stressType), m.symbol);
     if (!m.uname.isEmpty()) return m.uname;
     if (!m.name.isEmpty()) return m.name;
     return m.symbol;
@@ -263,6 +280,14 @@ curveJson(const MetricDetail &m, int index)
             o.insert("duration", m.estimateDuration);
             o.insert("unit", durationUnits().name(m.estimateDuration_units));
         }
+    }
+    if (m.type == METRIC_STRESS) {
+        o.insert("pmc", pmcTypes().name(m.stressType));
+        o.insert("stress", m.symbol);
+    }
+    if (m.type == METRIC_D_MEASURE) {
+        o.insert("group", m.measureGroup);
+        o.insert("field", m.measureField);
     }
     // the axis a curve goes on is chosen by these
     o.insert("units", m.uunits);
@@ -353,11 +378,9 @@ bool
 supportedTypes(const QJsonObject &args, QString &error)
 {
     struct { const char *flag; const char *label; } kinds[] = {
-        { "pmc", "PMC" },
         { "banister", "Banister" },
         { "performance", "performance" },
         { "formula", "formula" },
-        { "measure", "measure" },
     };
     for (const auto &k : kinds) {
         if (!args.contains(k.flag)) continue;
@@ -377,10 +400,11 @@ hasDrawing(const QJsonObject &args)
 int
 curveSources(const QJsonObject &args)
 {
-    return int(args.contains("metric")) + int(args.contains("best")) + int(args.contains("estimate"));
+    return int(args.contains("metric")) + int(args.contains("best")) + int(args.contains("estimate"))
+         + int(args.contains("pmc")) + int(args.contains("measure"));
 }
 
-static bool
+bool
 checkFilter(Context *context, const QString &expr, QString &error)
 {
     if (expr.trimmed().isEmpty()) return true;
@@ -482,6 +506,14 @@ strayCurveArgs(const QJsonObject &args, QString &error)
         error = "--best is the duration; --duration is for an estimate of best power";
         return false;
     }
+    if (args.contains("stress") && !args.contains("pmc")) {
+        error = "--stress is the stress metric of a --pmc curve";
+        return false;
+    }
+    if (args.contains("group") && !args.contains("measure")) {
+        error = "--group is the measures group of a --measure curve";
+        return false;
+    }
     return true;
 }
 
@@ -569,6 +601,73 @@ buildEstimate(Context *context, const QJsonObject &args, int index, MetricDetail
     return true;
 }
 
+// a PMC curve of a stress metric, as Curve Settings' PMC makes one, named
+// and on the axis as the built-in Expected PMC chart has them
+static bool
+buildPmc(const QJsonObject &args, int index, MetricDetail &detail, QString &error)
+{
+    QStringList symbols;
+    QString given = args.value("stress").toString("coggan_tss");
+    if (!resolveMetrics({ given }, symbols, error)) return false;
+    const RideMetric *metric = RideMetricFactory::instance().rideMetric(symbols.value(0));
+    if (!metric) {
+        error = QString("unknown metric '%1', see 'metric list'").arg(given);
+        return false;
+    }
+    int stress = pmcTypes().value(args.value("pmc").toString());
+
+    detail = MetricDetail::forMetric(metric, GlobalContext::context()->useMetricUnits);
+    prepareCurve(detail, index);
+    detail.type = METRIC_STRESS;
+    detail.stressType = stress;
+    detail.bestSymbol = MetricDetail::stressSymbol(detail.symbol, stress);
+
+    static const char *const names[] = { "ATL", "CTL", "TSB", "Ramp Rate" };
+    QString name = names[stress % 4];
+    if (stress >= STRESS_EXPECTED_STS) name = "Expected " + name;
+    else if (stress >= STRESS_PLANNED_STS) name = "Planned " + name;
+    detail.uname = name;
+    detail.uunits = detail.units = "Stress";
+    return true;
+}
+
+// a daily measure (Body weight, HRV ...), as Curve Settings' Measure names it
+static bool
+buildMeasure(Context *context, const QJsonObject &args, int index, MetricDetail &detail, QString &error)
+{
+    Measures *measures = context->athlete->measures;
+    QString groupGiven = args.value("group").toString("Body");
+    int group = -1;
+    QStringList groupSymbols = measures->getGroupSymbols(), groupNames = measures->getGroupNames();
+    for (int i = 0; i < groupNames.count(); i++)
+        if (groupSymbols.value(i).compare(groupGiven, Qt::CaseInsensitive) == 0
+            || groupNames.value(i).compare(groupGiven, Qt::CaseInsensitive) == 0) group = i;
+    if (group < 0) {
+        error = QString("no measures group '%1'; there are %2").arg(groupGiven, groupSymbols.join(", "));
+        return false;
+    }
+    QString fieldGiven = args.value("measure").toString();
+    int field = -1;
+    QStringList fieldSymbols = measures->getFieldSymbols(group), fieldNames = measures->getFieldNames(group);
+    for (int i = 0; i < fieldNames.count(); i++)
+        if (fieldSymbols.value(i).compare(fieldGiven, Qt::CaseInsensitive) == 0
+            || fieldNames.value(i).compare(fieldGiven, Qt::CaseInsensitive) == 0) field = i;
+    if (field < 0) {
+        error = QString("no measure '%1' in %2; there are %3").arg(fieldGiven, groupSymbols.value(group), fieldSymbols.join(", "));
+        return false;
+    }
+
+    prepareCurve(detail, index);
+    detail.type = METRIC_D_MEASURE;
+    detail.measureGroup = group;
+    detail.measureField = field;
+    QString name = MetricDetail::measureName(groupNames.value(group), fieldNames.value(field));
+    detail.uname = detail.name = name;
+    detail.symbol = QString(name).replace(" ", "_");
+    detail.uunits = detail.units = measures->getFieldUnits(group, field);
+    return true;
+}
+
 // one curve: a metric, a best, or an estimate, plus any drawing flags that were given
 bool
 buildCurve(Context *context, const QJsonObject &args, const QStringList &symbols, int index, MetricDetail &detail, QString &error)
@@ -587,8 +686,12 @@ buildCurve(Context *context, const QJsonObject &args, const QStringList &symbols
         if (!buildBest(context, args, index, detail, error)) return false;
     } else if (args.contains("estimate")) {
         if (!buildEstimate(context, args, index, detail, error)) return false;
+    } else if (args.contains("pmc")) {
+        if (!buildPmc(args, index, detail, error)) return false;
+    } else if (args.contains("measure")) {
+        if (!buildMeasure(context, args, index, detail, error)) return false;
     } else {
-        error = "give a curve with --metric, --best or --estimate";
+        error = "give a curve with --metric, --best, --estimate, --pmc or --measure";
         return false;
     }
     applyDrawing(detail, drawing);
@@ -606,6 +709,12 @@ sameCurve(const MetricDetail &want, const MetricDetail &got)
     if (want.type == METRIC_BEST) {
         if (want.duration != got.duration || want.duration_units != got.duration_units) return false;
         if (want.series != got.series || want.bestSymbol != got.bestSymbol) return false;
+    }
+    if (want.type == METRIC_STRESS) {
+        if (want.stressType != got.stressType || want.bestSymbol != got.bestSymbol) return false;
+    }
+    if (want.type == METRIC_D_MEASURE) {
+        if (want.measureGroup != got.measureGroup || want.measureField != got.measureField) return false;
     }
     if (want.type == METRIC_ESTIMATE) {
         if (want.model != got.model || want.estimate != got.estimate) return false;
@@ -630,11 +739,9 @@ drawingParams(CommandSpec &spec)
 static void
 refusedParams(CommandSpec &spec)
 {
-    spec.params << ParamSpec("pmc", ParamType::Bool, "not supported");
     spec.params << ParamSpec("banister", ParamType::Bool, "not supported");
     spec.params << ParamSpec("performance", ParamType::Bool, "not supported");
     spec.params << ParamSpec("formula", ParamType::Bool, "not supported");
-    spec.params << ParamSpec("measure", ParamType::Bool, "not supported");
 }
 
 void
@@ -650,6 +757,10 @@ typedCurveParams(CommandSpec &spec, bool metricRepeated)
     spec.params << ParamSpec("model", ParamType::String, modelEither()).oneOf(modelNames);
     spec.params << ParamSpec("duration", ParamType::Int, "length of an estimate of best power");
     spec.params << ParamSpec("wpk", ParamType::Bool, "an estimate per kilogram instead of absolute");
+    spec.params << ParamSpec("pmc", ParamType::String, "a PMC curve: " + pmcTypes().either()).oneOf(pmcTypes().names);
+    spec.params << ParamSpec("stress", ParamType::String, "stress metric of a PMC curve (default coggan_tss)");
+    spec.params << ParamSpec("measure", ParamType::String, "a daily measure field, e.g. WEIGHTKG or Weight");
+    spec.params << ParamSpec("group", ParamType::String, "measures group of --measure (default Body)");
     drawingParams(spec);
     refusedParams(spec);
 }

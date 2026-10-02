@@ -326,7 +326,31 @@ ChartRenderer::render(const ChartSpec &spec, const QString &format, QString &err
         error = "nothing to draw";
         return QByteArray();
     }
-    if (spec.size.width() < 100 || spec.size.height() < 100 || spec.size.width() > 10000 || spec.size.height() > 10000) {
+    return encode(spec.size, format, spec.title, themeFor(spec.dark).background,
+                  [&spec](QPainter &painter, const QRectF &area) { paintChart(spec, painter, area); }, error);
+}
+
+QByteArray
+ChartRenderer::renderPlot(QwtPlot *plot, const QSize &size, const QString &format, const QString &title, QString &error)
+{
+    error.clear();
+    QColor background = plot->palette().color(QPalette::Window);
+    return encode(size, format, title, background, [plot](QPainter &painter, const QRectF &area) {
+        QwtPlotRenderer renderer;
+        renderer.setDiscardFlag(QwtPlotRenderer::DiscardBackground, false);
+        renderer.setDiscardFlag(QwtPlotRenderer::DiscardCanvasFrame, true);
+        renderer.setLayoutFlag(QwtPlotRenderer::FrameWithScales, false);
+        plot->resize(area.size().toSize());
+        renderer.render(plot, &painter, area);
+    }, error);
+}
+
+QByteArray
+ChartRenderer::encode(const QSize &size, const QString &format, const QString &title, const QColor &background,
+                      const std::function<void(QPainter &, const QRectF &)> &paint, QString &error)
+{
+    error.clear();
+    if (size.width() < 100 || size.height() < 100 || size.width() > 10000 || size.height() > 10000) {
         error = "chart size must be between 100 and 10000 pixels";
         return QByteArray();
     }
@@ -334,36 +358,36 @@ ChartRenderer::render(const ChartSpec &spec, const QString &format, QString &err
     QByteArray bytes;
     QBuffer buffer(&bytes);
     buffer.open(QIODevice::WriteOnly);
-    QRectF area(QPointF(0, 0), QSizeF(spec.size));
+    QRectF area(QPointF(0, 0), QSizeF(size));
 
     if (format == "png") {
-        QImage image(spec.size, QImage::Format_ARGB32);
-        image.fill(themeFor(spec.dark).background);
+        QImage image(size, QImage::Format_ARGB32);
+        image.fill(background);
         QPainter painter(&image);
         painter.setRenderHint(QPainter::Antialiasing);
-        paintChart(spec, painter, area);
+        paint(painter, area);
         painter.end();
         image.save(&buffer, "PNG");
 
     } else if (format == "svg") {
         QSvgGenerator generator;
         generator.setOutputDevice(&buffer);
-        generator.setSize(spec.size);
+        generator.setSize(size);
         generator.setViewBox(area);
-        generator.setTitle(spec.title);
+        generator.setTitle(title);
         QPainter painter(&generator);
-        paintChart(spec, painter, area);
+        paint(painter, area);
         painter.end();
 
     } else if (format == "pdf") {
         QPdfWriter writer(&buffer);
         writer.setResolution(96);
-        writer.setPageSize(QPageSize(QSizeF(spec.size), QPageSize::Point));
+        writer.setPageSize(QPageSize(QSizeF(size), QPageSize::Point));
         writer.setPageMargins(QMarginsF(0, 0, 0, 0));
-        writer.setTitle(spec.title);
+        writer.setTitle(title);
         QPainter painter(&writer);
         QRectF page(QPointF(0, 0), QSizeF(painter.device()->width(), painter.device()->height()));
-        paintChart(spec, painter, page);
+        paint(painter, page);
         painter.end();
 
     } else {
