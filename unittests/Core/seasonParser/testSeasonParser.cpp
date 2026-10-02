@@ -5,6 +5,11 @@
 #include <QFile>
 #include <QList>
 
+// Seasons.cpp reports a file it can't write through GcNotify, the GUI's
+// message box; this test writes nothing and links without the GUI
+#include "Core/GcNotify.h"
+void GcNotify::message(QMessageBox::Icon, const QString &, const QString &) {}
+
 
 class TestSeasonParser: public QObject
 {
