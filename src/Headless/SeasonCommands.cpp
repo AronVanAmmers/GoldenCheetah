@@ -509,7 +509,9 @@ addPhase(CommandEnvironment &env, const CommandRequest &request)
     Status status;
     if (!findOneSeason(seasons->seasons, args.value("season").toString(), false, match, error, status))
         return CommandResult::failure(status, error);
-    Season &season = seasons->seasons[match.season];
+    // a copy, changed and put back: a reference into the list would change
+    // the implicitly shared copy kept for undoing a failed write too
+    Season season = seasons->seasons.at(match.season);
     if (!canHavePhasesOrEvents(season, "phases", error)) return CommandResult::failure(Status::Usage, error);
 
     QString name = args.value("name").toString().trimmed();
@@ -531,6 +533,7 @@ addPhase(CommandEnvironment &env, const CommandRequest &request)
 
     QList<Season> before = seasons->seasons;
     season.phases.append(phase);
+    seasons->seasons[match.season] = season;
     return saved(env, before, phaseJson(season, phase), "added",
                  QString("added phase %1 to %2 (%3 to %4)\n").arg(name, season.getName(), day(from), day(to)));
 }
@@ -549,7 +552,9 @@ editPhase(CommandEnvironment &env, const CommandRequest &request)
     Status status;
     if (!findOneSeason(seasons->seasons, args.value("season").toString(), false, match, error, status))
         return CommandResult::failure(status, error);
-    Season &season = seasons->seasons[match.season];
+    // a copy, changed and put back: a reference into the list would change
+    // the implicitly shared copy kept for undoing a failed write too
+    Season season = seasons->seasons.at(match.season);
     int index;
     if (!findPhase(season, args.value("phase").toString(), index, error, status)) return CommandResult::failure(status, error);
     if (!seedAndLow(args, error)) return CommandResult::failure(Status::Usage, error);
@@ -576,6 +581,7 @@ editPhase(CommandEnvironment &env, const CommandRequest &request)
 
     QList<Season> before = seasons->seasons;
     season.phases[index] = phase;
+    seasons->seasons[match.season] = season;
     return saved(env, before, phaseJson(season, phase), "updated",
                  QString("updated phase %1 of %2\n").arg(phase.getName(), season.getName()));
 }
@@ -589,7 +595,9 @@ removePhase(CommandEnvironment &env, const CommandRequest &request)
     Status status;
     if (!findOneSeason(seasons->seasons, request.args.value("season").toString(), false, match, error, status))
         return CommandResult::failure(status, error);
-    Season &season = seasons->seasons[match.season];
+    // a copy, changed and put back: a reference into the list would change
+    // the implicitly shared copy kept for undoing a failed write too
+    Season season = seasons->seasons.at(match.season);
     int index;
     if (!findPhase(season, request.args.value("phase").toString(), index, error, status))
         return CommandResult::failure(status, error);
@@ -597,6 +605,7 @@ removePhase(CommandEnvironment &env, const CommandRequest &request)
     const Phase phase = season.phases.at(index);
     QList<Season> before = seasons->seasons;
     season.phases.removeAt(index);
+    seasons->seasons[match.season] = season;
     QJsonObject data{ { "name", phase.getName() }, { "id", phase.id().toString() }, { "season", season.getName() } };
     return saved(env, before, data, "removed", QString("removed phase %1 of %2\n").arg(phase.getName(), season.getName()));
 }
@@ -728,7 +737,9 @@ addEvent(CommandEnvironment &env, const CommandRequest &request)
     Status status;
     if (!findOneSeason(seasons->seasons, args.value("season").toString(), false, match, error, status))
         return CommandResult::failure(status, error);
-    Season &season = seasons->seasons[match.season];
+    // a copy, changed and put back: a reference into the list would change
+    // the implicitly shared copy kept for undoing a failed write too
+    Season season = seasons->seasons.at(match.season);
     if (!canHavePhasesOrEvents(season, "events", error)) return CommandResult::failure(Status::Usage, error);
 
     QString name = args.value("name").toString().trimmed();
@@ -744,6 +755,7 @@ addEvent(CommandEnvironment &env, const CommandRequest &request)
     SeasonEvent event(name, date, priority, args.value("description").toString());
     QList<Season> before = seasons->seasons;
     season.events.append(event);
+    seasons->seasons[match.season] = season;
     return saved(env, before, eventJson(season, event), "added",
                  QString("added event %1 on %2 to %3\n").arg(name, day(date), season.getName()));
 }
@@ -761,7 +773,9 @@ editEvent(CommandEnvironment &env, const CommandRequest &request)
     QString error;
     Status status;
     if (!findEvent(seasons->seasons, args, match, error, status)) return CommandResult::failure(status, error);
-    Season &season = seasons->seasons[match.season];
+    // a copy, changed and put back: a reference into the list would change
+    // the implicitly shared copy kept for undoing a failed write too
+    Season season = seasons->seasons.at(match.season);
     SeasonEvent event = season.events.at(match.event);
 
     if (args.contains("name")) {
@@ -779,6 +793,7 @@ editEvent(CommandEnvironment &env, const CommandRequest &request)
 
     QList<Season> before = seasons->seasons;
     season.events[match.event] = event;
+    seasons->seasons[match.season] = season;
     return saved(env, before, eventJson(season, event), "updated",
                  QString("updated event %1 on %2 in %3\n").arg(event.name, day(event.date), season.getName()));
 }
@@ -791,11 +806,14 @@ removeEvent(CommandEnvironment &env, const CommandRequest &request)
     QString error;
     Status status;
     if (!findEvent(seasons->seasons, request.args, match, error, status)) return CommandResult::failure(status, error);
-    Season &season = seasons->seasons[match.season];
+    // a copy, changed and put back: a reference into the list would change
+    // the implicitly shared copy kept for undoing a failed write too
+    Season season = seasons->seasons.at(match.season);
     const SeasonEvent event = season.events.at(match.event);
 
     QList<Season> before = seasons->seasons;
     season.events.removeAt(match.event);
+    seasons->seasons[match.season] = season;
     QJsonObject data{ { "name", event.name }, { "id", event.id }, { "season", season.getName() } };
     return saved(env, before, data, "removed", QString("removed event %1 from %2\n").arg(event.name, season.getName()));
 }
