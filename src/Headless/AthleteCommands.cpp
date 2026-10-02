@@ -286,7 +286,11 @@ saveAthleteSettings(AthleteSession &s, const QList<QPair<QString, QVariant>> &va
     QString error;
     for (const auto &value : values) {
         if (appsettings->syncCValue(name, value.first, &error)) continue;
-        for (const auto &old : before) if (old.second.isValid()) appsettings->setCValue(name, old.first, old.second);
+        // as before: keys that had no value have none again
+        for (const auto &old : before) {
+            if (old.second.isValid()) appsettings->setCValue(name, old.first, old.second);
+            else appsettings->removeCValue(name, old.first);
+        }
         return CommandResult::failure(Status::Failed, error);
     }
 

@@ -3654,5 +3654,50 @@ class TestPlansSeasonsAndExpectedPMC(Headless):
         self.gcj("calendar", "summary", "--season", "No such season", expect=3)
 
 
+@unittest.skipIf(os.name == "nt" or running_as_root(), "file permissions don't stop Windows or root")
+class TestAthleteSettingsReadOnlyRest(Headless):
+    """in the server, a setting that could not be written is undone: the next request doesn't see it"""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.server, cls.port = start_server(cls.env, cls.home, os.path.join(cls.tmp, "server.log"))
+
+    @classmethod
+    def tearDownClass(cls):
+        stop_server(cls.server)
+        super().tearDownClass()
+
+    def call(self, method, path, body=None):
+        url = "http://127.0.0.1:%d/v1/athletes/%s%s" % (self.port, self.athlete, path)
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method,
+                                     headers={"Content-Type": "application/json"} if data else {})
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    def test_failed_athlete_set(self):
+        status, env = self.call("GET", "")
+        self.assertEqual(status, 200, env)
+        before = env["data"]
+        config = os.path.join(self.folder, "config")
+        for name in os.listdir(config) + [""]:
+            full = os.path.join(config, name)
+            mode = os.stat(full).st_mode
+            os.chmod(full, mode & ~0o222)
+            self.addCleanup(os.chmod, full, mode)
+        # a key with a value and keys without one
+        status, env = self.call("PUT", "", {"weight": 60, "nickname": "Zed", "sts-days": 10})
+        self.assertNotEqual(status, 200, env)
+        self.assertIn("athlete-preferences.ini", env["error"])
+        status, env = self.call("GET", "")
+        self.assertEqual(status, 200, env)
+        for key in ("weight", "nickname", "sts_days"):
+            self.assertEqual(env["data"][key], before[key], key)
+
+
 if __name__ == "__main__":
     unittest.main()
