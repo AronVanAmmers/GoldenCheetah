@@ -128,6 +128,11 @@ void HttpResponse::write(QByteArray data, bool lastPart) {
         else if (!headers.contains("Content-Length")) {
             socket->disconnectFromHost();
         }
+        // hand everything to the TCP stack before the connection may be
+        // closed: a large response could otherwise lose its end (seen on macOS)
+        while (socket->state()==QAbstractSocket::ConnectedState && socket->bytesToWrite()>0) {
+            if (!socket->waitForBytesWritten(30000)) break;
+        }
         sentLastPart=true;
     }
 }
