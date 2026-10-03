@@ -116,6 +116,13 @@ HeadlessApp::createApplication(int &argc, char **argv)
 #ifdef Q_OS_LINUX
     unsetenv("QT_SCALE_FACTOR");
 #endif
+#ifdef Q_OS_WIN
+    // the offscreen platform reads fonts with FreeType from a folder of its
+    // own, empty in a deployed app, so charts got boxes for text: use the
+    // system's fonts
+    if (qEnvironmentVariableIsEmpty("QT_QPA_FONTDIR"))
+        qputenv("QT_QPA_FONTDIR", QDir(qEnvironmentVariable("WINDIR", "C:\\Windows")).filePath("Fonts").toLocal8Bit());
+#endif
 
     qInstallMessageHandler(messageHandler);
 
