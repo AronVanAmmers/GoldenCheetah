@@ -71,7 +71,7 @@ gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > inte
 | Athletes | `athlete list`, `athlete create`, `athlete show`, `athlete set`, `athlete refresh [--rebuild]` |
 | Import | `import FILE-OR-FOLDER... [--recursive] [--dry-run]`, `formats` |
 | Activities | `activity list`, `activity show`, `activity add` (manual entry), `activity overview [--tile NAME]`, `layout list`, `layout tile list|show|set`, `activity export --as tcx`, `activity set --set 'Field=value'`, `activity series show|set` (see [Editing a data series](#editing-a-data-series)), `activity delete`, `activity eval --expression '...'`, `activity column list|add|remove` |
-| Intervals | `interval list ACTIVITY [--type user,effort] [--metric ...] [--display]`, `interval show ACTIVITY NUMBER-OR-NAME` |
+| Intervals | `interval list ACTIVITY [--type user,effort] [--metric ...] [--display]`, `interval show ACTIVITY NUMBER-OR-NAME`, `interval add\|edit\|delete\|rename\|sort\|merge` (see [Changing laps and intervals](#changing-laps-and-intervals)) |
 | Fields | `field list`, `field add NAME... --type double --tab TAB`, `field remove` |
 | Processors | `processor list`, `processor show`, `processor install NAME --file script.py`, `processor configure`, `processor remove`, `processor run NAME ...` |
 | Metrics | `metric list`, `metric user list|show|add|edit|remove`, `metric favourite list|add|remove|set`, `metric aggregate`, `pmc [--series actual\|planned\|expected\|all]`, `meanmax`, `cp`, `cp estimates` |
@@ -311,6 +311,36 @@ gc-cli -a Joe interval list last --type user --metric Pace,Average_Power,Average
 gc-cli -a Joe interval show last "Lap 3" --format json
 ```
 
+### Changing laps and intervals
+
+Laps from the device and intervals marked in GoldenCheetah are both `user` intervals: they are saved in the activity file, and the intervals sidebar lets you change them. The commands below change them the same way. The other types (the entire activity, efforts, peaks, climbs, segments) are found again on every refresh, so they can't be changed.
+
+| Command | What it does | In the GUI |
+|---|---|---|
+| `interval add ACTIVITY --name N --start T --stop T [--color C] [--test]` | adds an interval | selecting a span on the activity chart |
+| `interval add ACTIVITY --from INTERVAL [--name N] [--test]` | copies the span of any interval, such as an effort or a climb | "Create a performance test" |
+| `interval edit ACTIVITY INTERVAL [--name] [--start] [--stop] [--color] [--test\|--no-test]` | changes one; what isn't given stays as it is | Edit interval, "Mark as a performance test" |
+| `interval delete ACTIVITY INTERVALS` | deletes them | Delete interval, Delete selected intervals |
+| `interval rename ACTIVITY INTERVALS --name NAME` | numbers them in list order from the number `NAME` ends in (`Rep 3` gives Rep 3, Rep 4 ...), or from 1 | Rename selected intervals |
+| `interval sort ACTIVITY` | puts them in time order | Sort User Intervals |
+| `interval merge ACTIVITY INTERVALS [--name N]` | makes one interval from the earliest start to the latest end, and deletes the rest | (none) |
+
+- Intervals are given as `interval list` numbers them, by name, or as a range: `2-4`, `3,5,7`, `"Lap 2,Lap 3"`. Numbers can change after any of these, so list again before the next change.
+- Times are seconds from the start (`754`) or minutes and seconds (`12:34`, `1:02:03`), as `interval list` shows `start` and `stop`. An interval has to end after it starts and no later than the activity does.
+- A merge keeps the first interval to start, extended, with its name (unless `--name` is given), colour and performance test mark. A lap inside the merged span that wasn't given stays as it is, with a warning.
+- An interval over the whole activity is refused. GoldenCheetah lists it as the Entire Activity and doesn't show a lap over the same span.
+- A lap without a colour of its own gets the next standard colour by its place in the list, as in the GUI. `--color` (`red`, `#ff0000`) gives it a fixed colour.
+- The activity is saved as the GUI saves it, and the intervals' metrics are recomputed. The result is the interval as `interval list` then shows it, with its new number. `--dry-run` (add, edit, delete, merge) reports the change without saving it.
+
+```sh
+gc-cli -a Joe interval merge last 2-4                        # laps 2, 3 and 4 become one
+gc-cli -a Joe interval merge last "Lap 5,Lap 6" --name Tempo --dry-run
+gc-cli -a Joe interval add last --name Surge --start 10:00 --stop 12:30 --color red
+gc-cli -a Joe interval edit last Surge --stop 13:00 --test
+gc-cli -a Joe interval rename last 3-8 --name "Rep 1"
+gc-cli -a Joe interval delete last 9,10
+```
+
 ### Seasons, phases and events
 
 Seasons are the date ranges of the Trends sidebar: the ones you made, stored in the athlete's `config/seasons.xml`, and the built-in ranges (All Dates, This Year, Last 6 weeks ...), which can't be changed. `season list` shows them all with their dates as of today, the seasons you made first, newest at the top, each followed by its phases. `season show` gives the definition, the starting LTS (`seed`) and lowest SB (`low`), the phases and the events. A season is named by its name (any case) or its id; when two have the same name, the command refuses and lists their ids.
@@ -486,6 +516,9 @@ This serves every command as JSON under `http://127.0.0.1:12022/v1` until interr
 | `PUT /v1/athletes/Joe/layouts/Run/tiles/Intervals%20Data` `{"program": "..."}` | `layout tile set "Intervals Data" --layout Run --program "..."` |
 | `GET /v1/athletes/Joe/activities/last/intervals?type=user` | `interval list last --type user` |
 | `GET /v1/athletes/Joe/activities/last/intervals/Lap%203` | `interval show last "Lap 3"` |
+| `POST /v1/athletes/Joe/activities/last/intervals/merge` `{"interval": [2, 3, 4]}` | `interval merge last 2-4` |
+| `PATCH /v1/athletes/Joe/activities/last/intervals/Surge` `{"stop": "13:00"}` | `interval edit last Surge --stop 13:00` |
+| `DELETE /v1/athletes/Joe/activities/last/intervals/9,10` | `interval delete last 9,10` |
 | `POST /v1/athletes/Joe/imports` (multipart, or the raw file with `?filename=`) | `import` |
 | `POST /v1/fields` `{"name": ["EP CdA"], "type": "double"}` | `field add` |
 | `PUT /v1/processors/estimate-power` `{"source": "..."}` | `processor install` |

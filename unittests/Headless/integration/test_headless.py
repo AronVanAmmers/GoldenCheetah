@@ -903,6 +903,189 @@ class TestSeriesSet(Headless):
             self.assertEqual(new, dict(old, HEADWIND=-5))
 
 
+class IntervalHelpers:
+    """laps of the run with power: user intervals in the file and in interval list"""
+
+    def path(self):
+        return os.path.join(self.folder, "activities", self.ride_id + ".json")
+
+    def stored(self):
+        """the intervals in the activity file: (name, start, stop)"""
+        with open(self.path(), encoding="utf-8-sig") as f:
+            ride = json.load(f)["RIDE"]
+        # GoldenCheetah writes every string with a trailing space, and drops it on reading
+        return [(i["NAME"][:-1], i["START"], i["STOP"]) for i in ride.get("INTERVALS", [])]
+
+    def stored_raw(self):
+        with open(self.path(), encoding="utf-8-sig") as f:
+            return json.load(f)["RIDE"].get("INTERVALS", [])
+
+
+class TestIntervalEditing(Headless, IntervalHelpers):
+    """interval add, edit, delete, rename, sort and merge: the laps and marked
+    intervals of an activity, changed as the intervals sidebar changes them"""
+
+    imports = [RUN_STRYD]
+
+    def setUp(self):
+        self.ride_id = self.gcj("activity", "list")["data"]["activities"][0]["id"]
+        self.keep(os.path.join(self.folder, "activities"))
+        self.keep(os.path.join(self.folder, "cache"))
+
+    def laps(self, *args):
+        return self.gcj("interval", "list", self.ride_id, "--type", "user", "--metric", "Duration,Average_Power", *args)["data"]["intervals"]
+
+    def test_merge(self):
+        laps = self.laps()
+        before = self.stored()
+        self.assertEqual([l["name"] for l in laps], [s[0] for s in before])
+        self.assertGreater(len(laps), 5)
+        second, fourth = laps[1], laps[3]
+        numbers = "%d-%d" % (second["number"], fourth["number"])
+
+        # a dry run reports the merge and saves nothing
+        env = self.gcj("interval", "merge", self.ride_id, numbers, "--dry-run")
+        self.assertEqual(env["data"]["status"], "dry run")
+        self.assertFalse(env["data"]["saved"])
+        self.assertEqual([m["name"] for m in env["data"]["merged"]], [l["name"] for l in laps[1:4]])
+        self.assertEqual([env["data"]["interval"]["start"], env["data"]["interval"]["stop"]], [second["start"], fourth["stop"]])
+        self.assertEqual(self.stored(), before)
+
+        env = self.gcj("interval", "merge", self.ride_id, numbers)
+        data = env["data"]
+        self.assertEqual(data["status"], "updated")
+        self.assertTrue(data["saved"])
+        self.assertNotIn("warnings", env)
+        merged = data["interval"]
+        self.assertEqual(merged["number"], second["number"])
+        self.assertEqual(merged["name"], second["name"])
+        self.assertEqual([merged["start"], merged["stop"]], [second["start"], fourth["stop"]])
+
+        # in the file: the second lap extended, the third and fourth gone, the rest as they were
+        expected = before[:1] + [(before[1][0], before[1][1], before[3][2])] + before[4:]
+        self.assertEqual(self.stored(), expected)
+
+        # the cache follows, and its metrics are those of the merged span, as a rebuild works them out
+        after = self.laps()
+        self.assertEqual([(l["name"], l["start"], l["stop"]) for l in after], expected)
+        self.assertEqual(after[1]["metrics"]["workout_time"], merged["metrics"]["workout_time"])
+        self.assertAlmostEqual(after[1]["metrics"]["workout_time"], fourth["stop"] - second["start"] + 1, delta=1)
+        power = after[1]["metrics"]["average_power"]
+        self.assertTrue(min(l["metrics"]["average_power"] for l in laps[1:4]) <= power
+                        <= max(l["metrics"]["average_power"] for l in laps[1:4]))
+        self.gcj("athlete", "refresh", "--rebuild")
+        self.assertEqual(self.laps()[1]["metrics"], after[1]["metrics"])
+        self.assertClosed()
+
+    def test_merge_by_name_with_a_lap_left_inside(self):
+        laps = self.laps()
+        first, third = laps[0], laps[2]
+        env = self.gcj("interval", "merge", self.ride_id, "%s,%s" % (first["name"], third["name"]), "--name", "Long")
+        self.assertEqual(env["data"]["interval"]["name"], "Long")
+        self.assertEqual([env["data"]["interval"]["start"], env["data"]["interval"]["stop"]], [first["start"], third["stop"]])
+        self.assertEqual(len(env["warnings"]), 1)
+        self.assertIn("'%s'" % laps[1]["name"], env["warnings"][0])
+        self.assertEqual([l["name"] for l in self.laps()][:2], ["Long", laps[1]["name"]])
+
+    def test_add_edit_delete(self):
+        before = self.stored()
+        env = self.gcj("interval", "add", self.ride_id, "--name", "Surge", "--start", "10:00", "--stop", "750",
+                       "--color", "red", "--test")
+        added = env["data"]["interval"]
+        self.assertEqual([added["name"], added["start"], added["stop"], added["color"], added["test"]],
+                         ["Surge", 600, 750, "#ff0000", True])
+        self.assertIn("average_power", added["metrics"])
+        self.assertEqual(self.stored(), before + [("Surge", 600, 750)])
+        self.assertEqual(self.stored_raw()[-1]["COLOR"].strip(), "#ff0000")
+        self.assertEqual(self.stored_raw()[-1]["PTEST"].strip(), "true")
+
+        # the colour is read back from the file (it used to come back unset)
+        surge = [l for l in self.laps() if l["name"] == "Surge"][0]
+        self.assertEqual(surge["color"], "#ff0000")
+
+        # what isn't given stays as it is
+        env = self.gcj("interval", "edit", self.ride_id, str(surge["number"]), "--start", "9:30", "--no-test")
+        self.assertEqual(env["data"]["before"]["start"], 600)
+        edited = env["data"]["interval"]
+        self.assertEqual([edited["name"], edited["start"], edited["stop"], edited["color"]], ["Surge", 570, 750, "#ff0000"])
+        self.assertNotIn("test", edited)
+        self.assertEqual(self.stored_raw()[-1]["PTEST"].strip(), "false")
+        self.assertEqual(self.gcj("interval", "edit", self.ride_id, "Surge", "--stop", "750")["data"]["status"], "unchanged")
+
+        # a copy of the span of another interval, as "Create a performance test"
+        lap = self.laps()[2]
+        env = self.gcj("interval", "add", self.ride_id, "--from", lap["name"], "--test")
+        copy = env["data"]["interval"]
+        self.assertEqual([copy[k] for k in ("name", "start", "stop", "test")], [lap["name"], lap["start"], lap["stop"], True])
+        self.assertAlmostEqual(copy["metrics"]["average_power"], lap["metrics"]["average_power"], places=4)
+        self.gcj("interval", "delete", self.ride_id, str(copy["number"]))
+
+        env = self.gcj("interval", "delete", self.ride_id, "Surge", "--dry-run")
+        self.assertEqual(env["data"]["status"], "dry run")
+        self.assertEqual(len(self.stored()), len(before) + 1)
+        env = self.gcj("interval", "delete", self.ride_id, "Surge")
+        self.assertEqual([d["name"] for d in env["data"]["deleted"]], ["Surge"])
+        self.assertEqual(self.stored(), before)
+
+        # several at once, by number and range
+        laps = self.laps()
+        self.gcj("interval", "delete", self.ride_id, str(laps[0]["number"]), "%d-%d" % (laps[2]["number"], laps[3]["number"]))
+        self.assertEqual(self.stored(), [before[1]] + before[4:])
+        self.assertClosed()
+
+    def test_rename_and_sort(self):
+        before = self.stored()
+        self.gcj("interval", "add", self.ride_id, "--name", "Warm up", "--start", "5", "--stop", "60")
+        self.assertEqual(self.stored()[-1], ("Warm up", 5, 60))
+
+        env = self.gcj("interval", "sort", self.ride_id)
+        self.assertEqual(env["data"]["status"], "updated")
+        self.assertEqual(self.stored()[:2], [before[0], ("Warm up", 5, 60)])
+        self.assertEqual([s[1] for s in self.stored()], sorted(s[1] for s in self.stored()))
+        self.assertEqual(self.gcj("interval", "sort", self.ride_id)["data"]["status"], "unchanged")
+
+        # numbered in list order from the number the name ends in, as the sidebar does
+        laps = self.laps()
+        env = self.gcj("interval", "rename", self.ride_id, "%d-%d" % (laps[1]["number"], laps[-1]["number"]), "--name", "Rep 9")
+        names = ["Rep %d" % n for n in range(9, 9 + len(laps) - 1)]
+        self.assertEqual([r["to"] for r in env["data"]["renamed"]], names)
+        self.assertEqual([s[0] for s in self.stored()], [before[0][0]] + names)
+        env = self.gcj("interval", "rename", self.ride_id, str(laps[1]["number"]), str(laps[0]["number"]), "--name", "Part")
+        self.assertEqual([s[0] for s in self.stored()][:2], ["Part 1", "Part 2"])
+        self.assertEqual([(s[1], s[2]) for s in self.stored() if s[1:] != (5, 60)], [(b[1], b[2]) for b in before])
+        self.assertClosed()
+
+    def test_refused(self):
+        saved = open(self.path(), "rb").read()
+        intervals = self.gcj("interval", "list", self.ride_id)["data"]["intervals"]
+        entire = intervals[0]
+        self.assertEqual(entire["type"], "all")
+        laps = [i for i in intervals if i["type"] == "user"]
+
+        def refused(code, message, *args):
+            r = self.gca("interval", *args)
+            self.assertEqual(r.code, code, r)
+            self.assertIn(message.encode(), r.err)
+
+        refused(2, "is ALL: only laps and marked intervals (type user) can be changed", "merge", self.ride_id, "1-3")
+        refused(2, "is ALL", "delete", self.ride_id, "1")
+        refused(2, "is the whole activity", "add", self.ride_id, "--from", "1")
+        refused(2, "is the whole activity", "edit", self.ride_id, str(laps[0]["number"]), "--stop", str(entire["stop"]))
+        refused(2, "after the activity does", "add", self.ride_id, "--name", "x", "--start", "0", "--stop", "9:00:00")
+        refused(2, "before it starts", "edit", self.ride_id, str(laps[0]["number"]), "--start", "20:00", "--stop", "10:00")
+        refused(2, "isn't a time from the start", "add", self.ride_id, "--name", "x", "--start", "1:75", "--stop", "200")
+        refused(2, "isn't a colour", "add", self.ride_id, "--name", "x", "--start", "1", "--stop", "200", "--color", "nope")
+        refused(2, "give --start and --stop", "add", self.ride_id, "--name", "x", "--start", "1")
+        refused(2, "give the new interval a --name", "add", self.ride_id, "--start", "1", "--stop", "200")
+        refused(2, "nothing to change", "edit", self.ride_id, str(laps[0]["number"]))
+        refused(2, "give two or more intervals to merge", "merge", self.ride_id, str(laps[0]["number"]))
+        refused(3, "no interval 'Nope' in %s" % self.ride_id, "delete", self.ride_id, "Nope")
+        refused(3, "no intervals 2-999", "delete", self.ride_id, "2-999")
+        refused(2, "give one interval", "show", self.ride_id, "2-3")
+        self.assertEqual(open(self.path(), "rb").read(), saved)
+        self.assertClosed()
+
+
 class TestActivityFields(Headless):
     """activity set edits a field as the Details tab does"""
 
@@ -1634,6 +1817,47 @@ class TestRest(Headless):
 
 
 @unittest.skipIf(os.name == "nt", "no SIGINT for child processes on Windows")
+class TestIntervalEditingRest(Headless, IntervalHelpers):
+    """the interval changes over REST"""
+
+    imports = [RUN_STRYD]
+    call = TestRest.call
+    jcall = TestRest.jcall
+    token = uuid.uuid4().hex
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.ride_id = cls.gc_class("--format", "json", "--athlete", cls.athlete, "activity", "list").json()["data"]["activities"][0]["id"]
+        cls.server, cls.port = start_server(cls.env, cls.home, os.path.join(cls.tmp, "server.log"), "--token", cls.token)
+
+    @classmethod
+    def tearDownClass(cls):
+        stop_server(cls.server)
+        super().tearDownClass()
+
+    def test_merge_edit_delete(self):
+        a = "/athletes/%s/activities/%s/intervals" % (self.athlete, self.ride_id)
+        before = self.stored()
+        laps = [i for i in self.jcall("GET", a + "?type=user")["data"]["intervals"]]
+
+        merged = self.jcall("POST", a + "/merge", body={"interval": [laps[1]["number"], laps[2]["number"]]})["data"]["interval"]
+        self.assertEqual([merged["start"], merged["stop"]], [laps[1]["start"], laps[2]["stop"]])
+        self.assertEqual(self.stored(), before[:1] + [(before[1][0], before[1][1], before[2][2])] + before[3:])
+
+        edited = self.jcall("PATCH", a + "/" + str(merged["number"]), body={"name": "Tempo", "stop": laps[3]["stop"]})["data"]["interval"]
+        self.assertEqual([edited["name"], edited["stop"]], ["Tempo", laps[3]["stop"]])
+
+        added = self.jcall("POST", a, body={"name": "Surge", "start": "10:00", "stop": "10:30"})["data"]["interval"]
+        deleted = self.jcall("DELETE", a + "/%d,%d" % (added["number"], merged["number"]))["data"]["deleted"]
+        self.assertEqual([d["name"] for d in deleted], ["Surge", "Tempo"])
+        self.assertEqual(self.stored(), before[:1] + before[3:])
+
+        doc = self.jcall("GET", "/openapi.json")
+        self.assertIn("post", doc["paths"]["/v1/athletes/{athlete}/activities/{activity}/intervals/merge"])
+        self.assertIn("delete", doc["paths"]["/v1/athletes/{athlete}/activities/{activity}/intervals/{interval}"])
+
+
 class TestRestShutdown(Headless):
     """ctrl-c while requests wait their turn stops the server, and no client is told a dropped call succeeded"""
 
