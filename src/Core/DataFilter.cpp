@@ -8311,13 +8311,14 @@ Result Leaf::eval(DataFilterRuntime *df, Leaf *leaf, const Result &x, long it, R
 
                     double value = 0;
 
+                    // element by element
                     switch (leaf->op) {
-                    case EQ:  value = lhs.isNumber ? lhs.number() == rhs.number() : lhs.string() == rhs.string(); break;
-                    case NEQ: value = lhs.isNumber ? lhs.number() != rhs.number() : lhs.string() != rhs.string(); break;
-                    case LT:  value = lhs.isNumber ? lhs.number() < rhs.number() : lhs.string() < rhs.string(); break;
-                    case LTE: value = lhs.isNumber ? lhs.number() <= rhs.number() : lhs.string() <= rhs.string(); break;
-                    case GT:  value = lhs.isNumber ? lhs.number() > rhs.number() : lhs.string() > rhs.string(); break;
-                    case GTE: value = lhs.isNumber ? lhs.number() >= rhs.number() : lhs.string() >= rhs.string(); break;
+                    case EQ:  value = lhs.isNumber ? lhs.asNumeric()[i] == rhs.asNumeric()[i] : lhs.asString()[i] == rhs.asString()[i]; break;
+                    case NEQ: value = lhs.isNumber ? lhs.asNumeric()[i] != rhs.asNumeric()[i] : lhs.asString()[i] != rhs.asString()[i]; break;
+                    case LT:  value = lhs.isNumber ? lhs.asNumeric()[i] < rhs.asNumeric()[i] : lhs.asString()[i] < rhs.asString()[i]; break;
+                    case LTE: value = lhs.isNumber ? lhs.asNumeric()[i] <= rhs.asNumeric()[i] : lhs.asString()[i] <= rhs.asString()[i]; break;
+                    case GT:  value = lhs.isNumber ? lhs.asNumeric()[i] > rhs.asNumeric()[i] : lhs.asString()[i] > rhs.asString()[i]; break;
+                    case GTE: value = lhs.isNumber ? lhs.asNumeric()[i] >= rhs.asNumeric()[i] : lhs.asString()[i] >= rhs.asString()[i]; break;
                     }
                     returning.asNumeric() << value;
                     returning.number() += value;
