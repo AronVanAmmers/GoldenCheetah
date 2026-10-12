@@ -52,7 +52,7 @@ Saving an activity lives in `RideCache::saveSilent` (formerly `MainWindow::saveS
    - `httpMethod` and `httpPath`
 3. Add tests: the unit tests under `unittests/Headless` for anything that doesn't need an athlete, and `unittests/Headless/integration/test_headless.py` for behaviour end to end.
 
-The command then appears in `--help`, `commands`, the REST API and `openapi.json` without further work.
+The command then appears in `--help`, `help all`, `commands`, the REST API and `openapi.json` without further work.
 
 ## Tests
 

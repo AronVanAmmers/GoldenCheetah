@@ -59,6 +59,9 @@ class CliParser
         static QString commandHelp(const CommandSpec &spec, const QString &program);
         static QString groupHelp(const CommandRegistry &registry, const QString &group, const QString &program);
 
+        // usage and every command's help, as markdown
+        static QString allHelp(const CommandRegistry &registry, const QString &program);
+
         // "dry-run" <-> "--dry-run"
         static QString optionName(const ParamSpec &p) { return "--" + p.name; }
 };

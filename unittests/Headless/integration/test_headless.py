@@ -217,6 +217,36 @@ class TestBasics(Headless):
         self.assertIn(b"--filter", r.out)
         self.assertIn(b"REST: POST /v1/athletes/{athlete}/processors/{name}/runs", r.out)
 
+        # Windows writes stdout in text mode and the console's code page
+        one = r.out.decode(errors="replace").replace("\r\n", "\n")
+        r = self.gc("help", "all")
+        self.assertEqual(r.code, 0, r)
+        text = r.out.decode(errors="replace").replace("\r\n", "\n")
+        self.assertTrue(text.startswith("# GoldenCheetah --cli reference\n\n```text\nUsage:"), text[:80])
+        self.assertIn("\n## processor run\n\n```text\n" + one + "```\n", text)
+        self.assertEqual(text.count("```") % 2, 0)
+        self.assertClosed()
+
+        path = os.path.join(self.tmp, "cli-help.md")
+        r = self.gc("help", "all", "-o", path)
+        self.assertEqual(r.code, 0, r)
+        self.assertIn(b"wrote", r.out)
+        self.assertNotIn(b"## processor run", r.out)
+        with open(path, encoding="utf-8", newline="") as f:
+            saved = f.read()
+        if os.name == "nt":
+            self.assertEqual(saved.count("\n## "), text.count("\n## "))
+        else:
+            self.assertEqual(saved, text)
+        # quiet, as a build step or a wrapper runs it
+        r = self.gc("-q", "help", "all", "-o", path)
+        self.assertEqual((r.code, r.out, r.err), (0, b"", b""), r)
+        r = self.gc("help", "all", "-o", os.path.join(self.tmp, "missing-dir", "cli-help.md"))
+        self.assertEqual(r.code, 5, r)
+        self.assertIn(b"can't write", r.err)
+        r = self.gc("help", "all", "extra")
+        self.assertEqual(r.code, 2, r)
+
     def test_usage_errors_exit_2(self):
         self.assertEqual(self.gc("fly").code, 2)
         self.assertEqual(self.gc("activity").code, 2)

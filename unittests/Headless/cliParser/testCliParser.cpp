@@ -132,6 +132,29 @@ private slots:
         QVERIFY(!group.contains("import"));
     }
 
+    void helpAll() {
+        CliParse p = parse({ "help", "all" });
+        QVERIFY(p.help);
+        QCOMPARE(p.helpTopic, QString("all"));
+        QVERIFY(p.error.isEmpty());
+        QVERIFY(p.command.isEmpty());
+        p = parse({ "--help", "all", "-o", "ref.md" });
+        QCOMPARE(p.helpTopic, QString("all"));
+        QCOMPARE(p.global.output, QString("ref.md"));
+        QVERIFY(parse({ "all" }).error.contains("unknown command 'all'"));
+        QVERIFY(parse({ "help", "all", "extra" }).error.contains("unknown command"));
+
+        QString all = CliParser::allHelp(r, "gc");
+        QVERIFY(all.startsWith("# gc reference\n\n```text\n"));
+        QCOMPARE(all.count("```") % 2, 0);
+        QVERIFY(all.contains(CliParser::usage(r, "gc")));
+        QVERIFY(all.contains("--filter"));
+        for (const Command *c : r.commands()) {
+            QVERIFY(all.contains("\n## " + c->spec.cliName() + "\n\n```text\n"
+                                 + CliParser::commandHelp(c->spec, "gc") + "```\n"));
+        }
+    }
+
     void parsedArgsValidate() {
         CliParse p = parse({ "chart", "activity", "last", "--width", "800", "--as", "SVG" });
         QJsonObject args = p.args;

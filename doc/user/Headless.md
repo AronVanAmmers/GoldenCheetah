@@ -62,7 +62,7 @@ gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > inte
 | 5 | the command failed |
 | 6 | internal error |
 
-`GoldenCheetah --cli --help` lists every command. `GoldenCheetah --cli help <command>` describes one command. `commands --format json` describes them all in machine-readable form.
+`GoldenCheetah --cli --help` lists every command. `GoldenCheetah --cli help <command>` describes one command. `GoldenCheetah --cli help all` prints every command's help as one markdown reference, and `-o FILE` writes it to a file; a Linux build keeps one in `doc/user/cli-help.md`. `commands --format json` describes them all in machine-readable form.
 
 ## Commands
 

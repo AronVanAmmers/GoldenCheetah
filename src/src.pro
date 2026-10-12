@@ -871,3 +871,11 @@ for(src, SOURCES) {
         eval($${src}.CONFIG -= precompile_header)
     }
 }
+
+# Command reference, generated from this binary so a rebuild cannot leave
+# doc/user/cli-help.md describing an older CLI. The file is gitignored. A
+# binary that can't run here (cross builds) only skips it, with a warning.
+unix:!macx {
+    CLI_HELP = $$shell_quote($$clean_path($$PWD/../doc/user/cli-help.md))
+    QMAKE_POST_LINK += ./$$TARGET --cli help all -q -o $$CLI_HELP || echo "warning: $$CLI_HELP not updated"
+}

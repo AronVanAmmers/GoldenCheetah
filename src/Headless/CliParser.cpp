@@ -165,6 +165,12 @@ CliParser::parse(const QStringList &argv, const CommandRegistry &registry)
         plain << w;
     }
 
+    // "help all" is the full reference. It is not a command named all.
+    if (out.help && plain.count() == 1 && plain.first() == "all" && options.isEmpty()) {
+        out.helpTopic = "all";
+        return out;
+    }
+
     int used = 0;
     for (int n = plain.count(); n > 0; n--) {
         QString candidate = plain.mid(0, n).join(".");
@@ -348,7 +354,7 @@ CliParser::usage(const CommandRegistry &registry, const QString &program)
         << "  --lock-wait SECS        wait up to SECS for another process to release the athlete\n"
         << "  --force                 open an athlete that GoldenCheetah did not close cleanly\n"
         << "  --no-python             do not start embedded Python\n"
-        << "  -h, --help              show help, 'help <command>' for a command\n"
+        << "  -h, --help              show help; 'help <command>' for one, 'help all' for every command\n"
         << "  --version               print version information\n\n"
         << "Commands:\n";
 
@@ -362,6 +368,20 @@ CliParser::usage(const CommandRegistry &registry, const QString &program)
     }
     out << "\nExit status: 0 ok, 1 some items failed, 2 usage error, 3 not found,\n"
         << "4 athlete in use, 5 failed, 6 internal error.\n";
+    return text;
+}
+
+QString
+CliParser::allHelp(const CommandRegistry &registry, const QString &program)
+{
+    QString text;
+    QTextStream out(&text);
+    // fenced, so a markdown viewer keeps the help's line breaks and columns
+    out << "# " << program << " reference\n\n```text\n" << usage(registry, program) << "```\n";
+    for (const Command *c : registry.commands()) {
+        out << "\n## " << c->spec.cliName() << "\n\n```text\n";
+        out << commandHelp(c->spec, program) << "```\n";
+    }
     return text;
 }
 

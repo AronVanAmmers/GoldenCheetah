@@ -87,6 +87,42 @@ writeErr(const QString &text)
     fflush(stderr);
 }
 
+// the whole body to path, or false with the error on stderr
+static bool
+writeFile(const QString &path, const QByteArray &body)
+{
+    QFile out(path);
+    if (!out.open(QFile::WriteOnly) || out.write(body) != body.size()) {
+        writeErr(QString("error: can't write %1\n").arg(path));
+        return false;
+    }
+    out.close();
+    return true;
+}
+
+// "wrote /abs/path (N bytes)", the path as the platform writes it (C:\... on Windows)
+static QString
+wroteMessage(const QString &path, qint64 bytes)
+{
+    return QString("wrote %1 (%2 bytes)\n")
+        .arg(QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath())).arg(bytes);
+}
+
+// help returns before the app starts, so -o is handled here. The file is
+// UTF-8, stdout is in the terminal's encoding as all other text output.
+static int
+emitHelp(const QString &text, const GlobalOptions &g)
+{
+    if (g.output.isEmpty() || g.output == "-") {
+        writeOut(text.toLocal8Bit());
+        return int(Status::Ok);
+    }
+    QByteArray body = text.toUtf8();
+    if (!writeFile(g.output, body)) return int(Status::Failed);
+    if (!g.quiet) writeOut(wroteMessage(g.output, body.size()).toLocal8Bit());
+    return int(Status::Ok);
+}
+
 // the serve command belongs to the command line, not the core: it runs the
 // REST adapter over the same core
 static Command
@@ -148,11 +184,11 @@ cliMain(int argc, char **argv)
 
     if (parsed.help || (parsed.command.isEmpty() && !parsed.version)) {
         QString text;
-        if (parsed.helpTopic.isEmpty()) text = CliParser::usage(registry, program);
+        if (parsed.helpTopic == "all") text = CliParser::allHelp(registry, program);
+        else if (parsed.helpTopic.isEmpty()) text = CliParser::usage(registry, program);
         else if (registry.find(parsed.helpTopic)) text = CliParser::commandHelp(registry.find(parsed.helpTopic)->spec, program);
         else text = CliParser::groupHelp(registry, parsed.helpTopic, program);
-        writeOut(text.toLocal8Bit());
-        return int(Status::Ok);
+        return emitHelp(text, g);
     }
 
     if (parsed.version) parsed.command = "version";
@@ -244,12 +280,7 @@ cliMain(int argc, char **argv)
             writeOut(result.payload);
             return finish(int(result.status));
         }
-        QFile out(target);
-        if (!out.open(QFile::WriteOnly) || out.write(result.payload) != result.payload.size()) {
-            writeErr(QString("error: can't write %1\n").arg(target));
-            return finish(int(Status::Failed));
-        }
-        out.close();
+        if (!writeFile(target, result.payload)) return finish(int(Status::Failed));
         // as the platform writes paths (C:\... on Windows)
         written = QDir::toNativeSeparators(QFileInfo(target).absoluteFilePath());
         result.data.insert("output", written);
@@ -265,16 +296,9 @@ cliMain(int argc, char **argv)
             writeOut(body);
             return true;
         }
-        QFile out(g.output);
-        if (!out.open(QFile::WriteOnly) || out.write(body) != body.size()) {
-            writeErr(QString("error: can't write %1\n").arg(g.output));
-            return false;
-        }
-        out.close();
+        if (!writeFile(g.output, body)) return false;
         if (!g.quiet) {
-            QString msg = QString("wrote %1 (%2 bytes)\n")
-                .arg(QDir::toNativeSeparators(QFileInfo(g.output).absoluteFilePath()))
-                .arg(body.size());
+            QString msg = wroteMessage(g.output, body.size());
             if (wroteOnStderr) writeErr(msg);
             else writeOut(msg.toLocal8Bit());
         }
