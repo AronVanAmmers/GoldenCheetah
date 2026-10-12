@@ -245,6 +245,11 @@ class RideCache : public QObject
         int lastStaleCount_ = 0;
         QThread *saveThread_ = nullptr;
         QObject *saveWorker_ = nullptr;
+
+        // digest of rideDB.json as last loaded or saved, save() leaves
+        // the file alone when it would write the same bytes again
+        QMutex saveMutex_;
+        QByteArray savedDigest_;
 };
 
 class AthleteBest

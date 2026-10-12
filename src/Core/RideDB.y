@@ -21,6 +21,7 @@
 #include "RideFileCache.h"
 #include "SpecialFields.h"
 #include "Settings.h"
+#include <QCryptographicHash>
 #ifdef GC_WANT_HTTP
 #include "APIWebService.h"
 #endif
@@ -334,7 +335,12 @@ RideCache::load()
         // Read the entire file into a QString -- we avoid using fopen since it
         // doesn't handle foreign characters well. Instead we use QFile and parse
         // from a QString
-        QString contents = QString(rideDB.readAll());
+        QByteArray bytes = rideDB.readAll();
+        QString contents = QString(bytes);
+        {
+            QMutexLocker locker(&saveMutex_);
+            savedDigest_ = QCryptographicHash::hash(bytes, QCryptographicHash::Md5);
+        }
         rideDB.close();
 
         // create scanner context for reentrant parsing
@@ -485,12 +491,20 @@ void RideCache::save(bool opendata, QString filename)
     QFile rideDB(QString("%1/%2").arg(context->athlete->home->cache().canonicalPath()).arg("rideDB.json"));
     if (filename != "") rideDB.setFileName(filename);
 
-    if (rideDB.open(QFile::WriteOnly)) {
+    // the athlete's own cache, not an export
+    bool own = !opendata && filename == "";
+
+    // the cache is written to memory first and then to disk in one go, and
+    // only when it changed: on a large library it is tens of megabytes, and
+    // is mostly unchanged since it was loaded or last saved (when a headless
+    // command, or the GUI, closes the athlete without changing anything)
+    QByteArray bytes;
+    {
 
         const RideMetricFactory &factory = RideMetricFactory::instance();
 
         // ok, lets write out the cache
-        QTextStream stream(&rideDB);
+        QTextStream stream(&bytes, QIODevice::WriteOnly);
 
         // no BOM needed for opendata as it doesn't contain textual data
         if (!opendata) stream.setGenerateByteOrderMark(true);
@@ -847,7 +861,17 @@ void RideCache::save(bool opendata, QString filename)
 
         stream << "\n  ]\n}";
 
+        stream.flush();
+    }
+
+    QByteArray digest = QCryptographicHash::hash(bytes, QCryptographicHash::Md5);
+    QMutexLocker locker(&saveMutex_);
+    if (own && digest == savedDigest_ && rideDB.exists()) return;
+
+    if (rideDB.open(QFile::WriteOnly)) {
+        bool written = rideDB.write(bytes) == bytes.size();
         rideDB.close();
+        if (own) savedDigest_ = written ? digest : QByteArray();
     }
 }
 
