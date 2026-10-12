@@ -728,36 +728,8 @@ void
 AnalysisSidebar::sortIntervals()
 {
     // sort them chronologically
-    QList<IntervalItem*> userIntervals = context->rideItem()->intervals(RideFileInterval::USER);
-    QList<IntervalItem*> intervals = context->rideItem()->intervals();
-
-    bool change = false;
-
-    for (int i=0; i<userIntervals.count()-1;i++) {
-        int min = i;
-
-        for (int j=i+1; j<userIntervals.count();j++) {
-            if (userIntervals.at(j)->start < userIntervals.at(min)->start) {
-                min = j;
-            }
-        }
-
-        if (min != i) {
-            int indexFrom = intervals.indexOf(userIntervals.at(min));
-            int indexTo = intervals.indexOf(userIntervals.at(i));
-
-            userIntervals.move(min, i);
-            intervals.move(indexFrom, indexTo);
-
-            context->rideItem()->moveInterval(indexFrom, indexTo);
-            change = true;
-        }
-    }
-
-    if (change) {
+    if (context->rideItem()->sortIntervals())
         context->notifyIntervalsUpdate(context->rideItem());
-        context->rideItem()->setDirty(true);
-    }
 }
 
 // mark *first selected* USER intervals as a performance test
@@ -822,19 +794,10 @@ AnalysisSidebar::renameIntervalsSelected()
 
         if (dialog.exec()) {
 
-            int number = 1;
+            // renumber the selected intervals with prefix 'string'
+            RideItem *rideItem = const_cast<RideItem*>(context->currentRideItem());
+            rideItem->renameIntervals(rideItem->intervalsSelected(RideFileInterval::USER), string);
 
-            // does it end in a number?
-            // if so we use that to renumber from
-            QRegExp ends("^(.*)([0-9]+)$");
-            if (ends.exactMatch(string)) {
-
-                string = ends.cap(1);
-                number = ends.cap(2).toInt();
-
-            } else if (!string.endsWith(" ")) string += " ";
-
-            // now go and renumber from 'number' with prefix 'string'
             for(int j=0; j<userIntervals->childCount(); j++) {
 
                 // get pointer to the IntervalItem for this item
@@ -843,20 +806,11 @@ AnalysisSidebar::renameIntervalsSelected()
                 // make the IntervalItem selected flag reflect the current selection state
                 IntervalItem *item = static_cast<IntervalItem*>(v.value<void*>());
 
-                // is it selected and linked ?
-                if (item && item->selected && item->rideInterval) {
-
-                    // set item and ride
-                    item->rideInterval->name = item->name = 
-                    QString("%1%2").arg(string).arg(number++);
-
-                    // update tree to reflect changes!
-                    userIntervals->child(j)->setText(0, item->name);
-                }
+                // update tree to reflect changes!
+                if (item && item->selected && item->rideInterval) userIntervals->child(j)->setText(0, item->name);
             }
 
-            // mark dirty and tell the charts it changed
-            const_cast<RideItem*>(context->currentRideItem())->setDirty(true);
+            // tell the charts it changed
             context->notifyIntervalsChanged();
         }
     }

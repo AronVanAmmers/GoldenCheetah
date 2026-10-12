@@ -186,6 +186,17 @@ class RideItem : public QObject
         bool removeInterval(IntervalItem *x);
         void moveInterval(int from, int to);
 
+        // an interval over the whole activity when the entire activity is
+        // discovered: that takes its place, the interval isn't listed
+        bool isEntireActivity(double start, double stop);
+
+        // user intervals in time order, true when any moved
+        bool sortIntervals();
+
+        // user intervals named name, numbered from the number it ends in
+        // ("Lap 3" gives Lap 3, Lap 4 ...) or from 1 ("Lap" gives Lap 1 ...)
+        void renameIntervals(const QList<IntervalItem*> &intervals, QString name);
+
         // metadata
         QMap<QString, QString> &metadata() { return metadata_; }
 

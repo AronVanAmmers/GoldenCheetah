@@ -39,6 +39,7 @@
 #include <QMap>
 #include <QMapIterator>
 #include <QByteArray>
+#include <QRegularExpression>
 
 // used to create a temporary ride item that is not in the cache and just
 // used to enable using the same calling semantics in things like the
@@ -316,6 +317,91 @@ RideItem::moveInterval(int from, int to)
 
     // Move in RideItem
     intervals_.move(from, to);
+}
+
+bool
+RideItem::isEntireActivity(double start, double stop)
+{
+    // DO NOT USE ride() since it will call a refresh !
+    RideFile *f = ride_;
+    if (!f || f->dataPoints().isEmpty()) return false;
+
+    int discovery = appsettings->cvalue(context->athlete->cyclist, GC_DISCOVERY, 57).toInt(); // 57 does not include search for PEAKS
+    if (!(discovery & RideFileInterval::intervalTypeBits(RideFileInterval::ALL))) return false;
+
+    // ride start and end
+    RideFilePoint *begin = f->dataPoints().first();
+    RideFilePoint *end = f->dataPoints().last();
+
+    return (start <= begin->secs && stop >= end->secs) ||
+           (((start - f->recIntSecs()) <= begin->secs && (stop-f->recIntSecs()) >= end->secs) ||
+           (start <= begin->secs && (stop+f->recIntSecs()) >= end->secs));
+}
+
+bool
+RideItem::sortIntervals()
+{
+    // sort them chronologically
+    QList<IntervalItem*> userIntervals = intervals(RideFileInterval::USER);
+    QList<IntervalItem*> all = intervals_;
+
+    bool change = false;
+
+    for (int i=0; i<userIntervals.count()-1;i++) {
+        int min = i;
+
+        for (int j=i+1; j<userIntervals.count();j++) {
+            if (userIntervals.at(j)->start < userIntervals.at(min)->start) {
+                min = j;
+            }
+        }
+
+        if (min != i) {
+            int indexFrom = all.indexOf(userIntervals.at(min));
+            int indexTo = all.indexOf(userIntervals.at(i));
+
+            userIntervals.move(min, i);
+            all.move(indexFrom, indexTo);
+
+            moveInterval(indexFrom, indexTo);
+            change = true;
+        }
+    }
+
+    if (change) setDirty(true);
+    return change;
+}
+
+void
+RideItem::renameIntervals(const QList<IntervalItem*> &intervals, QString name)
+{
+    int number = 1;
+
+    // does it end in a number?
+    // if so we use that to renumber from
+    QRegularExpression ends(QRegularExpression::anchoredPattern("(.*?)([0-9]+)"));
+    QRegularExpressionMatch match = ends.match(name);
+    if (match.hasMatch()) {
+
+        name = match.captured(1);
+        number = match.captured(2).toInt();
+
+    } else if (!name.endsWith(" ")) name += " ";
+
+    // now go and renumber from 'number' with prefix 'name'
+    bool change = false;
+    foreach(IntervalItem *item, intervals) {
+
+        // is it linked ?
+        if (item && item->rideInterval) {
+
+            // set item and ride
+            item->rideInterval->name = item->name = QString("%1%2").arg(name).arg(number++);
+            change = true;
+        }
+    }
+
+    if (change) setDirty(true);
 }
 
 void
@@ -977,11 +1063,7 @@ RideItem::updateIntervals()
         if (discovery & RideFileInterval::intervalTypeBits(RideFileInterval::EFFORT) && interval->isMatch()) continue;
 
         // skip entire ride when autodiscovered
-        if (discovery & RideFileInterval::intervalTypeBits(RideFileInterval::ALL) && 
-           ((interval->start <= begin->secs && interval->stop >= end->secs) ||
-           (((interval->start - f->recIntSecs()) <= begin->secs && (interval->stop-f->recIntSecs()) >= end->secs) ||
-           (interval->start <= begin->secs && (interval->stop+f->recIntSecs()) >= end->secs))))
-             continue;
+        if (isEntireActivity(interval->start, interval->stop)) continue;
 
         // skip empty backward intervals
         if (interval->start > interval->stop) continue;
