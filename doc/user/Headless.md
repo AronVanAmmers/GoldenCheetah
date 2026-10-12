@@ -70,7 +70,7 @@ gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > inte
 |---|---|
 | Athletes | `athlete list`, `athlete create`, `athlete show`, `athlete set`, `athlete refresh [--rebuild]` |
 | Import | `import FILE-OR-FOLDER... [--recursive] [--dry-run]`, `formats` |
-| Activities | `activity list`, `activity show`, `activity add` (manual entry), `activity overview [--tile NAME]`, `layout list`, `layout tile list|show|set`, `activity export --as tcx`, `activity set --set 'Field=value'`, `activity delete`, `activity eval --expression '...'`, `activity column list|add|remove` |
+| Activities | `activity list`, `activity show`, `activity add` (manual entry), `activity overview [--tile NAME]`, `layout list`, `layout tile list|show|set`, `activity export --as tcx`, `activity set --set 'Field=value'`, `activity series show|set` (see [Editing a data series](#editing-a-data-series)), `activity delete`, `activity eval --expression '...'`, `activity column list|add|remove` |
 | Intervals | `interval list ACTIVITY [--type user,effort] [--metric ...] [--display]`, `interval show ACTIVITY NUMBER-OR-NAME` |
 | Fields | `field list`, `field add NAME... --type double --tab TAB`, `field remove` |
 | Processors | `processor list`, `processor show`, `processor install NAME --file script.py`, `processor configure`, `processor remove`, `processor run NAME ...` |
@@ -105,6 +105,38 @@ All given criteria must match. `processor run` and `activity set` change nothing
 - Fields linked by a default (Preferences, Data Fields, Defaults) are filled in when they are empty, as in the GUI.
 - `Summary` is computed and fields of intervals can't be set here.
 
+### Editing a data series
+
+`activity series show ACTIVITY SERIES...` gives an activity's samples, one row per sample with `SECS` and the series asked for. `activity series set ACTIVITY SERIES` writes one series and saves the activity. Series are named as in formulas: `POWER`, `SPEED`, `HEARTRATE`, `CADENCE`, `ALTITUDE`, `DISTANCE`, `TORQUE`, `HEADWIND`, `SLOPE`, `TEMPERATURE` ... (an unknown name lists them all). Any of them except `SECS` can be written.
+
+There are two ways to give the new values.
+
+**Values worked out elsewhere** (`--values FILE`): take the samples out, work on them with your own tools, and write back the rows you changed. The file is what `activity series show` writes with `--format csv` or `--format json`, edited: each value goes to the sample at its `SECS`, and samples that aren't in the file stay as they are. Other columns are ignored.
+
+```sh
+gc-cli -a Joe --format csv -o power.csv activity series show 2026_10_09_13_08_56 POWER SPEED --where 'SECS < 135'
+# ... change the POWER column, drop the rows you don't change ...
+gc-cli -a Joe activity series set 2026_10_09_13_08_56 POWER --values power.csv
+```
+
+**A formula** (`--expression`), in the GUI's formula language: worked out once for the activity, it gives a number for every sample, or one value per sample from `samples(SERIES)` and the vector functions. `--where` picks the samples it is written to (every sample without it); it is worked out at each sample, where `SECS`, `POWER`, `SPEED` ... are that sample's values, as in the activity chart's User Data series. For example, power at the start rebuilt from speed and the ratio of power to speed in the rest of the activity:
+
+```sh
+gc-cli -a Joe activity series set 2026_10_09_13_08_56 POWER --where 'SECS < 135' --expression \
+  '{ secs <- samples(SECS); kph <- samples(SPEED);
+     ratio <- mean((samples(POWER) / kph)[secs[i] >= 135 && kph[i] >= 1]);
+     round(kph * ratio); }'
+```
+
+In formulas, dividing by 0 gives 0, the mean of no values is 0, and `round` rounds halves away from zero, so a formula can quietly write zeros where you expected values. Check with `--dry-run`, or use `--values` when that matters.
+
+Either way:
+
+- The new values are worked out from the samples as they were before the edit, and stored as given.
+- Nothing is written, and the command says why, when a value isn't a finite number, a `SECS` in the file has no sample or is given twice, `--where` matches no sample, or the formula gives a different number of values than the activity has samples.
+- Other series, XData, intervals and fields stay as they are. A series the activity doesn't have yet can be written; it then has that series.
+- The edit is applied as a data processor applies its edits, as one undoable change, and the activity is saved; saving adds it to the Change History. Metrics are then recomputed, so `activity list` shows the new values. `--dry-run` reports what would change without saving.
+
 ### What the activity view shows
 
 `activity overview ACTIVITY` returns the activity's overview as the GUI draws it. It uses the athlete's own layout, the same one the GUI switches to for that activity: the first layout whose expression matches (for example `isRun`), or else the first layout. Each tile is worked out the way the GUI works it out:
@@ -130,7 +162,7 @@ For raw numbers:
 | Power, heart rate, pace and W' balance (fatigue) zone tables | `activity show` (`zones`: name, description, low, high, time and % of the recording time, as the GUI) |
 | Form, Fitness, Fatigue and Risk | `activity show` (`pmc`: `tsb`, `ctl`, `atl`, `rr` on the day, from GOVSS for runs, SwimScore for swims and TSS otherwise; `--pmc-metric` to choose) |
 | Intervals | `interval list` (the intervals sidebar's metrics, or `--metric`), `interval show` (every relevant metric) |
-| Route and data series | `activity export --as gpx`, `--as csv` or `--as json` |
+| Route and data series | `activity series show` (samples by series), `activity export --as gpx`, `--as csv` or `--as json` |
 | Zone and PMC charts | `chart zones`, `chart pmc`, `chart activity` |
 
 Wherever a command takes `--metric`, a metric can be given by its symbol (`average_power`, `skiba_wprime_exp`) or by the name used in formulas and in the GUI's table definitions (`Average_Power`, `W'_Work`). `metric list` shows both, including this athlete's user metrics, and `--search` matches either. `--display` on `interval list` and `interval show` returns values as the GUI formats them rather than as numbers.

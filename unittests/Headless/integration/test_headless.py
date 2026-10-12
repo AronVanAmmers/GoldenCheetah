@@ -22,6 +22,7 @@ import datetime
 import html
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -710,6 +711,198 @@ class TestLivesWithOtherTools(Headless):
 
 
 
+class TestSeriesSet(Headless):
+    """activity series show and set: one series of one activity read out and rewritten"""
+
+    imports = [RUN_STRYD, RIDE_POWER]
+    # the first 2:15 of power rebuilt from speed and the rest of the activity
+    FORMULA = ("{ secs <- samples(SECS); kph <- samples(SPEED); "
+               "ratio <- mean((samples(POWER) / kph)[secs[i] >= 135 && kph[i] >= 1]); round(kph * ratio); }")
+
+    def setUp(self):
+        sports = {a["sport"]: a["id"] for a in self.gcj("activity", "list")["data"]["activities"]}
+        self.run, self.bike = sports["Run"], sports["Bike"]
+        self.keep(os.path.join(self.folder, "activities"))
+
+    def path(self, activity):
+        return os.path.join(self.folder, "activities", activity + ".json")
+
+    def ride(self, activity):
+        with open(self.path(activity), encoding="utf-8-sig") as f:
+            return json.load(f)["RIDE"]
+
+    def average_power(self, activity):
+        return self.gcj("activity", "list", activity, "--metric", "average_power")["data"]["activities"][0]["metrics"]["average_power"]
+
+    def assertOnlyPowerChanged(self, before, after, expected, history):
+        """the samples in expected hold their new power, everything else is as it was"""
+        self.assertEqual(len(after["SAMPLES"]), len(before["SAMPLES"]))
+        for old, new in zip(before["SAMPLES"], after["SAMPLES"]):
+            if old["SECS"] in expected:
+                self.assertEqual(new["WATTS"], expected[old["SECS"]], old)
+                old = dict(old, WATTS=new["WATTS"])
+            self.assertEqual(new, old)
+        for key in before:
+            if key not in ("SAMPLES", "TAGS"):
+                self.assertEqual(after[key], before[key], key)
+        # every save records its changes; File Format is the format of the file
+        # last read, as on any save (activity set too): blank for a JSON file
+        self.assertEqual(set(after["TAGS"]), set(before["TAGS"]) | {"Change History"})
+        for tag, value in before["TAGS"].items():
+            if tag not in ("Change History", "File Format"):
+                self.assertEqual(after["TAGS"][tag], value, tag)
+        self.assertIn(history, after["TAGS"]["Change History"])
+
+    def test_power_corrected_with_a_formula(self):
+        before = self.ride(self.run)
+        power_before = self.average_power(self.run)
+
+        # worked out here from the samples on disk, rounding as the formula language does
+        samples = before["SAMPLES"]
+        ratios = [p["WATTS"] / p["KPH"] for p in samples if p["SECS"] >= 135 and p.get("KPH", 0) >= 1]
+        ratio = sum(ratios) / len(ratios)
+        expected = {p["SECS"]: math.floor(p.get("KPH", 0) * ratio + 0.5) for p in samples if p["SECS"] < 135}
+        self.assertIn(135, [p["SECS"] for p in samples])
+
+        env = self.gcj("activity", "series", "set", self.run, "POWER", "--where", "SECS < 135", "--expression", self.FORMULA)
+        data = env["data"]
+        self.assertEqual(data["status"], "updated")
+        self.assertTrue(data["saved"])
+        self.assertEqual(data["series"], "POWER")
+        self.assertEqual(data["written"], len(expected))
+        self.assertEqual(data["samples"], len(samples))
+        self.assertEqual(data["to_secs"], 134)
+        self.assertOnlyPowerChanged(before, self.ride(self.run), expected, "Set POWER where SECS < 135")
+
+        # the cache follows: as a rebuild from the files works it out
+        power_after = self.average_power(self.run)
+        self.assertNotEqual(power_after, power_before)
+        self.gcj("athlete", "refresh", "--rebuild")
+        self.assertEqual(self.average_power(self.run), power_after)
+        self.assertClosed()
+
+        # again: nothing to change
+        r = self.gca("activity", "series", "set", self.run, "power", "--where", "SECS < 135", "--expression", self.FORMULA)
+        self.assertEqual(r.code, 0, r)
+        self.assertIn(b"unchanged  %s  POWER on %d of %d samples (0 changed)" % (self.run.encode(), len(expected), len(samples)), r.out)
+
+    def test_values_worked_out_elsewhere(self):
+        before = self.ride(self.run)
+
+        # out as CSV, changed here, back in: only the rows given are written
+        out = os.path.join(self.tmp, "power.csv")
+        r = self.gca("--format", "csv", "-o", out, "activity", "series", "show", self.run, "POWER", "SPEED", "--where", "SECS < 135")
+        self.assertEqual(r.code, 0, r)
+        with open(out, newline="") as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual(list(rows[0]), ["SECS", "POWER", "SPEED"])
+        self.assertEqual(len(rows), len([p for p in before["SAMPLES"] if p["SECS"] < 135]))
+        self.assertEqual(float(rows[10]["SPEED"]), before["SAMPLES"][10]["KPH"])
+        expected = {float(r["SECS"]): round(float(r["SPEED"]) * 30) for r in rows[:100]}
+        with open(out, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["SECS", "SPEED", "POWER"])
+            for r in rows[:100]:
+                w.writerow([r["SECS"], r["SPEED"], expected[float(r["SECS"])]])
+        env = self.gcj("activity", "series", "set", self.run, "POWER", "--values", out)
+        self.assertEqual(env["data"]["written"], 100)
+        self.assertEqual(env["data"]["values"], out)
+        after = self.ride(self.run)
+        self.assertOnlyPowerChanged(before, after, expected, "Set POWER from power.csv")
+
+        # and as JSON, the result as it comes out or just its rows
+        out = os.path.join(self.tmp, "power.json")
+        r = self.gca("--format", "json", "-o", out, "activity", "series", "show", self.run, "POWER", "--where", "SECS >= 3000")
+        self.assertEqual(r.code, 0, r)
+        with open(out) as f:
+            result = json.load(f)
+        tail = {p["SECS"]: p["POWER"] + 1 for p in result["data"]["samples"]}
+        for p in result["data"]["samples"]:
+            p["POWER"] += 1
+        with open(out, "w") as f:
+            json.dump(result, f)
+        self.gcj("activity", "series", "set", self.run, "POWER", "--values", out)
+        with open(out, "w") as f:
+            json.dump(result["data"]["samples"][:5], f)
+        self.assertEqual(self.gcj("activity", "series", "set", self.run, "POWER", "--values", out)["data"]["status"], "unchanged")
+        self.assertOnlyPowerChanged(after, self.ride(self.run), tail, "from power.json")
+        self.assertClosed()
+
+    def test_dry_run_and_no_change_save_nothing(self):
+        saved = open(self.path(self.run), "rb").read()
+        env = self.gcj("activity", "series", "set", self.run, "POWER", "--where", "SECS < 135", "--expression", self.FORMULA, "--dry-run")
+        self.assertEqual(env["data"]["status"], "dry run")
+        self.assertFalse(env["data"]["saved"])
+        self.assertGreater(env["data"]["changed"], 0)
+        env = self.gcj("activity", "series", "set", self.run, "HEARTRATE", "--expression", "samples(HEARTRATE)")
+        self.assertEqual(env["data"]["status"], "unchanged")
+        self.assertEqual(env["data"]["written"], env["data"]["samples"])
+        self.assertEqual(open(self.path(self.run), "rb").read(), saved)
+
+    def test_vectors_compare_element_by_element(self):
+        # was: every element compared the vectors' sums
+        env = self.gcj("activity", "series", "set", self.run, "POWER", "--where", "SECS < 5",
+                       "--expression", "samples(SECS) < 2", "--dry-run")
+        self.assertEqual(env["data"]["mean_after"], 0.4)
+
+    def test_nothing_is_written_when_it_cant_be_done(self):
+        saved = open(self.path(self.run), "rb").read()
+        written = []
+
+        def file(text):
+            path = os.path.join(self.tmp, "values%d.csv" % len(written))
+            with open(path, "w") as f:
+                f.write(text)
+            written.append(path)
+            return path
+
+        for args, code, message in [
+            (["--where", "SECS < 0", "--expression", "0"], 5, b"no sample has SECS < 0, nothing was written"),
+            (["--expression", "c(1, 2)"], 5, b"--expression gives 2 values for"),
+            (["--expression", "POWER * 2"], 5, b"use samples(POWER) for the series"),
+            (["--expression", "sqrt(-1)"], 5, b"--expression is nan at SECS = 0, nothing was written"),
+            (["--where", "SECS <", "--expression", "0"], 2, b"--where:"),
+            (["--expression", "0", "--values", file("SECS,POWER\n0,1\n")], 2, b"either --values or --expression"),
+            ([], 2, b"either --values or --expression"),
+            (["--values", file("SECS,POWER\n0,1\n"), "--where", "SECS < 1"], 2, b"--where is for --expression"),
+            (["--values", file("SECS,POWER\n0,1\n0.5,1\n")], 5, b"no sample has SECS = 0.5, nothing was written"),
+            (["--values", file("SECS,POWER\n0,1\n0,2\n")], 5, b"SECS = 0 is given twice"),
+            (["--values", file("SECS,POWER\n0,1\n1,\n")], 2, b"row 2 of %s: POWER is not a number" % written[-1].encode()),
+            (["--values", file("SECS,WATTS\n0,1\n")], 2, b"needs a header with the columns SECS and POWER"),
+            (["--values", file("[]")], 2, b"has no values"),
+            (["--values", os.path.join(self.tmp, "missing.csv")], 2, b""),
+        ]:
+            with self.subTest(args=args):
+                r = self.gca("activity", "series", "set", self.run, "POWER", *args)
+                self.assertEqual(r.code, code, r)
+                self.assertIn(message, r.err)
+        r = self.gca("activity", "series", "set", self.run, "SECS", "--expression", "1")
+        self.assertEqual(r.code, 2, r)
+        self.assertIn(b"SECS is when each sample was recorded", r.err)
+        r = self.gca("activity", "series", "set", self.run, "watts", "--expression", "1")
+        self.assertEqual(r.code, 2, r)
+        self.assertIn(b"unknown series 'watts', the series are: SECS, DISTANCE, POWER", r.err)
+        r = self.gca("activity", "series", "set", "1999_01_01_00_00_00", "POWER", "--expression", "1")
+        self.assertEqual(r.code, 3, r)
+        self.assertEqual(open(self.path(self.run), "rb").read(), saved)
+
+        # an indoor ride has no speed to show
+        r = self.gca("activity", "series", "show", self.bike, "SPEED")
+        self.assertEqual(r.code, 5, r)
+        self.assertIn(b"the activity has no SPEED samples", r.err)
+        self.assertClosed()
+
+    def test_a_series_the_activity_lacks_is_added(self):
+        before = self.ride(self.bike)
+        self.assertNotIn("HEADWIND", before["SAMPLES"][0])
+        env = self.gcj("activity", "series", "set", self.bike, "HEADWIND", "--expression", "-5")
+        self.assertEqual(env["data"]["changed"], env["data"]["samples"])
+        self.assertNotIn("mean_before", env["data"])
+        after = self.ride(self.bike)
+        for old, new in zip(before["SAMPLES"], after["SAMPLES"]):
+            self.assertEqual(new, dict(old, HEADWIND=-5))
+
+
 class TestActivityFields(Headless):
     """activity set edits a field as the Details tab does"""
 
@@ -1245,6 +1438,7 @@ class TestRest(Headless):
     def test_openapi(self):
         doc = self.jcall("GET", "/openapi.json")
         self.assertIn("/v1/athletes/{athlete}/processors/{name}/runs", doc["paths"])
+        self.assertIn("patch", doc["paths"]["/v1/athletes/{athlete}/activities/{activity}/series/{series}"])
         self.assertIn("post", doc["paths"]["/v1/athletes/{athlete}/imports"])
 
     def test_workflow_over_http(self):
@@ -1386,6 +1580,24 @@ class TestRest(Headless):
                                         headers={"Content-Type": "application/octet-stream"})
         self.assertEqual(status, 200, data)
         self.assertEqual(json.loads(data)["data"]["files"][0]["status"], "imported")
+
+    def test_series_over_http(self):
+        # a file no other test here imports
+        with open(TCX_RIDE, "rb") as f:
+            status, _, data = self.call("POST", "/athletes/%s/imports?filename=ride.tcx" % self.athlete, raw=f.read(),
+                                        headers={"Content-Type": "application/octet-stream"})
+        self.assertEqual(status, 200, data)
+        a = "/athletes/%s/activities/%s/series" % (self.athlete, json.loads(data)["data"]["files"][0]["activity"])
+        rows = self.jcall("GET", a + "?series=HEARTRATE&where=" + urllib.parse.quote("SECS < 60"))["data"]["samples"][:3]
+        self.assertEqual(len(rows), 3)
+        csv_text = "SECS,HEARTRATE\n" + "".join("%s,%s\n" % (r["SECS"], r["HEARTRATE"] + 1) for r in rows)
+        status, _, data = self.call("PATCH", a + "/HEARTRATE?filename=hr.csv", raw=csv_text.encode(),
+                                    headers={"Content-Type": "text/csv"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(json.loads(data)["data"]["values"], "hr.csv")
+        self.assertEqual(json.loads(data)["data"]["written"], 3)
+        after = self.jcall("GET", a + "?series=HEARTRATE&where=" + urllib.parse.quote("SECS < 60"))["data"]["samples"][:3]
+        self.assertEqual([r["HEARTRATE"] for r in after], [r["HEARTRATE"] + 1 for r in rows])
 
     def test_chart_library_routes(self):
         a = "/athletes/%s/charts" % self.athlete
