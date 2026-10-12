@@ -203,7 +203,7 @@ RideCache::~RideCache()
     delete saveWorker_;
 
     // save to store
-    save();
+    if (saveOnClose_) save();
 }
 
 void

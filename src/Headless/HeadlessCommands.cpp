@@ -103,6 +103,7 @@ CommandRunner::run(const CommandRegistry &registry, CommandRequest request, cons
         CommandResult failure;
         std::unique_ptr<AthleteSession> session = AthleteSession::open(request.home, athlete, options.session, failure);
         if (!session) return failure;
+        session->setReadOnly(!command->spec.modifies);
 
         env.session = session.get();
         CommandResult result = command->handler(env, request);

@@ -129,6 +129,7 @@ AthleteSession::open(const QString &home, const QString &name, const Options &op
 
     session->waitForRefresh();
     session->refreshedOnOpen_ = session->rideCache()->lastStaleCount();
+    session->recomputed_ = session->refreshedOnOpen_ > 0;
     return session;
 }
 
@@ -140,6 +141,7 @@ AthleteSession::~AthleteSession()
         if (athlete_->rideCache) {
             athlete_->rideCache->cancel();
             athlete_->close();
+            if (readOnly_ && !recomputed_) athlete_->rideCache->skipSaveOnClose();
         }
 
         // Athlete and RideCache leave these to the process exit: in the GUI
@@ -223,6 +225,7 @@ AthleteSession::refresh()
     RideCache *cache = rideCache();
     if (!cache) return;
     cache->refresh();
+    if (cache->lastStaleCount() > 0) recomputed_ = true;
     waitForRefresh();
 }
 

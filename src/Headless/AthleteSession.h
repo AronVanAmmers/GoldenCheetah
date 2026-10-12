@@ -75,6 +75,11 @@ class AthleteSession
         // number of activities that were recomputed when the session opened
         int refreshedOnOpen() const { return refreshedOnOpen_; }
 
+        // the command only reads the athlete: closing leaves the ride cache
+        // on disk alone (tens of megabytes on a large library) unless a
+        // refresh recomputed activities, which is worth keeping
+        void setReadOnly(bool readOnly) { readOnly_ = readOnly; }
+
         // wait for the model estimates (CP, W' ...) to be computed
         void waitForEstimates();
 
@@ -91,6 +96,8 @@ class AthleteSession
         Athlete *athlete_ = nullptr;
         std::unique_ptr<AthleteLock> lock_;
         int refreshedOnOpen_ = 0;
+        bool readOnly_ = false;
+        bool recomputed_ = false;   // a refresh found activities out of date
 };
 
 // finds activities by id as findActivity does, with the rides indexed

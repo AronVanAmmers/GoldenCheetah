@@ -90,6 +90,10 @@ class RideCache : public QObject
         // how many activities the last refresh() found out of date
         int lastStaleCount() const { return lastStaleCount_; }
 
+        // the destructor saves the cache to disk, unless told it is the
+        // same as when it was loaded (a headless command that only read it)
+        void skipSaveOnClose() { saveOnClose_ = false; }
+
         // model estimates (CP, W' ...) for the athlete
         Estimator *getEstimator() const { return estimator; }
 
@@ -243,6 +247,7 @@ class RideCache : public QObject
 
         bool isCancelled = false;
         int lastStaleCount_ = 0;
+        bool saveOnClose_ = true;
         QThread *saveThread_ = nullptr;
         QObject *saveWorker_ = nullptr;
 

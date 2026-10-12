@@ -1116,6 +1116,47 @@ class TestIntervalEditing(Headless, IntervalHelpers):
         self.assertClosed()
 
 
+class TestRideCacheSave(Headless):
+    """the ride cache (rideDB.json, tens of megabytes on a large library) is
+    written back only when a command changed it"""
+
+    imports = [RUN_STRYD]
+
+    def setUp(self):
+        self.ride_id = self.gcj("activity", "list")["data"]["activities"][0]["id"]
+        self.keep(os.path.join(self.folder, "cache"))
+        self.db = os.path.join(self.folder, "cache", "rideDB.json")
+
+    def snapshot(self):
+        with open(self.db, "rb") as f:
+            return os.stat(self.db).st_mtime_ns, f.read()
+
+    def test_reads_leave_it_alone(self):
+        before = self.snapshot()
+        self.gcj("activity", "list")
+        self.gcj("interval", "list", self.ride_id)
+        self.gcj("metric", "list")
+        self.assertEqual(self.snapshot(), before)
+        self.assertClosed()
+
+    def test_recomputed_on_open_is_kept(self):
+        # without the cache every activity is recomputed, even for a read
+        os.remove(self.db)
+        self.gcj("activity", "list")
+        self.assertTrue(os.path.exists(self.db))
+        before = self.snapshot()
+        self.gcj("activity", "list")
+        self.assertEqual(self.snapshot(), before)
+
+    def test_a_change_is_saved(self):
+        before = self.snapshot()
+        self.gcj("interval", "add", self.ride_id, "--name", "Cached surge", "--start", "60", "--stop", "120")
+        after = self.snapshot()
+        self.assertNotEqual(after[1], before[1])
+        self.assertIn(b"Cached surge", after[1])
+        self.assertClosed()
+
+
 class TestActivityFields(Headless):
     """activity set edits a field as the Details tab does"""
 
