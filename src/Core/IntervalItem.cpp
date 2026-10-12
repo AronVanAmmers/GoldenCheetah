@@ -78,6 +78,8 @@ IntervalItem::setValues(QString name, double duration1, double duration2,
     if (type == RideFileInterval::USER && rideInterval && rideItem_) {
 
         // update us and our ridefileinterval
+        rideInterval->name = name;
+        rideInterval->test = test;
         rideInterval->start = start = duration1;
         rideInterval->stop = stop = duration2;
         rideInterval->color = color;

@@ -208,7 +208,7 @@ interval_test:
                 ;
 
 interval_color:
-                | ',' COLOR ':' string      { jc->JsonInterval.color.fromString(jc->JsonString); }
+                | ',' COLOR ':' string      { jc->JsonInterval.color = QColor::fromString(jc->JsonString); }
                 ;
 
 interval: '{' NAME ':' string ','       { jc->JsonInterval.name = jc->JsonString; }
