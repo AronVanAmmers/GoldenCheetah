@@ -102,9 +102,7 @@ listIntervals(CommandEnvironment &env, const CommandRequest &request)
     QList<RideFileInterval::IntervalType> types;
     for (const QString &t : splitList(request.args.value("type"))) {
         RideFileInterval::IntervalType type;
-        if (!intervalTypeFromName(t, type))
-            return CommandResult::failure(Status::Usage,
-                        QString("unknown interval type '%1', choose from: %2").arg(t).arg(intervalTypeNames().join(", ")));
+        if (!intervalTypeFromName(t, type, error)) return CommandResult::failure(Status::Usage, error);
         types << type;
     }
 
@@ -120,7 +118,6 @@ listIntervals(CommandEnvironment &env, const CommandRequest &request)
     IntervalCensus census = intervalCensus(item);
     QJsonObject data;
     data.insert("activity", QFileInfo(item->fileName).completeBaseName());
-    data.insert("recorded_laps", census.recordedLaps);
     data.insert("user_intervals", census.userIntervals);
     data.insert("discovered_efforts", census.discoveredEfforts);
     data.insert("intervals", list);
@@ -129,7 +126,6 @@ listIntervals(CommandEnvironment &env, const CommandRequest &request)
     // filters the table. The text report leads with that one line.
     // CSV is the table, starting at the header.
     QJsonObject table = data;
-    table.remove("recorded_laps");
     table.remove("user_intervals");
     table.remove("discovered_efforts");
     CommandResult result = CommandResult::success(data);
@@ -715,8 +711,9 @@ registerIntervalCommands(CommandRegistry &registry)
     list.spec.summary = "list an activity's intervals (laps, efforts, climbs ...) with metrics";
     list.spec.description = "Metrics default to the ones the GUI's intervals sidebar shows. For the interval "
                             "tables on the activity overview, as the GUI draws them, see 'activity overview'. "
-                            "The result counts recorded laps, user intervals and discovered efforts, including "
-                            "zeros. Those counts are for the whole activity, even when --type filters the rows.";
+                            "The result counts user intervals (laps, from the device or marked in GoldenCheetah) "
+                            "and discovered efforts, including zeros. Those counts are for the whole activity, "
+                            "even when --type filters the rows.";
     list.spec.scope = Scope::Athlete;
     list.spec.params << ParamSpec("activity", ParamType::String, "activity id, start time, date, 'first' or 'last'").req().pos();
     // checked by the handler, so a comma separated list works too

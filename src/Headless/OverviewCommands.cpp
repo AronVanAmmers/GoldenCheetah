@@ -618,7 +618,6 @@ overviewCommand(CommandEnvironment &env, const CommandRequest &request)
     QJsonObject data;
     data.insert("activity", QFileInfo(item->fileName).completeBaseName());
     data.insert("layout", layout.name);
-    data.insert("recorded_laps", census.recordedLaps);
     data.insert("user_intervals", census.userIntervals);
     data.insert("discovered_efforts", census.discoveredEfforts);
     data.insert("tiles", tiles);

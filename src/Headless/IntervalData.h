@@ -36,11 +36,12 @@ namespace Headless {
 QString intervalTypeKey(int type);
 
 // how many intervals of each kind an activity has, including zeros.
-// recorded laps are from the device, user intervals were marked in
-// GoldenCheetah, discovered efforts are the ones it found (efforts,
-// peaks, climbs, segments). The entire activity is none of these.
+// user intervals are the laps and marked intervals stored in the activity
+// file: laps recorded by a device are among them, GoldenCheetah lists them
+// as user intervals and keeps no record of where they came from.
+// Discovered efforts are the ones it found (efforts, peaks, climbs,
+// segments). The entire activity is neither.
 struct IntervalCensus {
-    int recordedLaps = 0;
     int userIntervals = 0;
     int discoveredEfforts = 0;
 };
@@ -48,8 +49,9 @@ struct IntervalCensus {
 IntervalCensus intervalCensus(RideItem *item);
 QString intervalCensusLine(const IntervalCensus &census);
 
-// a type by its key or by the group title the GUI shows (EFFORTS, PEAK POWER)
-bool intervalTypeFromName(const QString &name, RideFileInterval::IntervalType &type);
+// a type by its key or by the group title the GUI shows (EFFORTS, PEAK POWER),
+// else error says why not
+bool intervalTypeFromName(const QString &name, RideFileInterval::IntervalType &type, QString &error);
 
 // the keys, as interval list --type takes them
 QStringList intervalTypeNames();
