@@ -546,6 +546,20 @@ AthleteDirectoryStructure::~AthleteDirectoryStructure() {
 
 }
 
+QString
+AthleteDirectoryStructure::canonicalPath(const QDir &dir)
+{
+    QMutexLocker locker(&canonicalMutex);
+    QString absolute = dir.absolutePath();
+    QString canonical = canonicalPaths.value(absolute);
+    if (canonical.isEmpty()) {
+        // empty while the folder doesn't exist, look again next time
+        canonical = dir.canonicalPath();
+        if (!canonical.isEmpty()) canonicalPaths.insert(absolute, canonical);
+    }
+    return canonical;
+}
+
 void
 AthleteDirectoryStructure::createAllSubdirs() {
 

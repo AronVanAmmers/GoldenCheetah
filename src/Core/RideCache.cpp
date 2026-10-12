@@ -100,12 +100,13 @@ RideCache::RideCache(Context *context) : context(context)
     // set the list
     // populate ride list
     RideItem *last = NULL;
+    QString path = context->athlete->home->canonicalPath(directory);
     QStringListIterator i(RideFileFactory::instance().listRideFiles(directory));
     while (i.hasNext()) {
         QString name = i.next();
         QDateTime dt;
         if (RideFile::parseRideFileName(name, &dt)) {
-            last = new RideItem(directory.canonicalPath(), name, dt, context, false);
+            last = new RideItem(path, name, dt, context, false);
 
             connect(last, SIGNAL(rideDataChanged()), this, SLOT(itemChanged()));
             connect(last, SIGNAL(rideMetadataChanged()), this, SLOT(itemChanged()));
@@ -116,12 +117,13 @@ RideCache::RideCache(Context *context) : context(context)
 
     // set the list
     // populate the planned ride list
+    QString plannedPath = context->athlete->home->canonicalPath(plannedDirectory);
     QStringListIterator j(RideFileFactory::instance().listRideFiles(plannedDirectory));
     while (j.hasNext()) {
         QString name = j.next();
         QDateTime dt;
         if (RideFile::parseRideFileName(name, &dt)) {
-            last = new RideItem(plannedDirectory.canonicalPath(), name, dt, context, true);
+            last = new RideItem(plannedPath, name, dt, context, true);
 
             connect(last, SIGNAL(rideDataChanged()), this, SLOT(itemChanged()));
             connect(last, SIGNAL(rideMetadataChanged()), this, SLOT(itemChanged()));

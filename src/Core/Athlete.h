@@ -194,6 +194,11 @@ class AthleteDirectoryStructure : public QObject {
             QDir media() { return QDir(myhome.absolutePath()+"/"+athlete_media);}
             QDir root() { return myhome; }
 
+            // dir.canonicalPath(), resolved once while the athlete is open: it
+            // looks up every folder in the path on disk, which adds up when it
+            // is done for each of hundreds of activities on a slow file system
+            QString canonicalPath(const QDir &dir);
+
             // supporting functions to work with the subDirs
             void createAllSubdirs();            // create all new SubDirectories (or create only missing ones)
             bool subDirsExist();                // check for all new SubDirectories
@@ -219,6 +224,9 @@ class AthleteDirectoryStructure : public QObject {
             QString athlete_planned;
             QString athlete_snippets;
             QString athlete_media;
+
+            QMutex canonicalMutex;
+            QHash<QString, QString> canonicalPaths; // absolute path -> canonical
 
 };
 
