@@ -66,9 +66,9 @@ allDates(Context *context)
 }
 
 // The dates to draw. With none given, the sidebar's All Dates season: the
-// plot then runs from the first activity to the last one, planned ones
-// included (LTMPlot::setData crops the season to them). The GUI opens on the
-// season picked last, Last 3 months when none was.
+// plot then runs from the first activity (LTMPlot::setData crops the season
+// to the data). The GUI opens on the season picked last, Last 3 months when
+// none was. A season ends today at the latest (prepareChart).
 //
 // the dates the chart covers: a season (named, so the chart leaves it
 // unmarked as the GUI does), --from/--to, or all dates
@@ -159,7 +159,10 @@ prepareChart(CommandEnvironment &env, const QJsonObject &args, TrendsChart &char
     chart.settings.showData = false;
     chart.settings.stack = false;
     chart.settings.title = range.name;
-    chart.settings.prepare(context, range, false, filters, chart.bests);
+    // the Library tab draws "Current selection thru today" (useSelected 4 in
+    // home-perspectives.xml), so planned activities after today stay out;
+    // a --to is Chart Setup's custom dates, which aren't cut
+    chart.settings.prepare(context, range, !args.contains("to"), filters, chart.bests);
     return true;
 }
 
@@ -293,7 +296,7 @@ chartParams(CommandSpec &spec)
 {
     spec.params << ParamSpec("name", ParamType::String, "chart name, from 'chart library list'").req().pos();
     spec.params << ParamSpec("from", ParamType::Date, "first day (default: all dates)");
-    spec.params << ParamSpec("to", ParamType::Date, "last day (default: all dates)");
+    spec.params << ParamSpec("to", ParamType::Date, "last day (default: today, or the season's end if earlier)");
     spec.params << seasonParam();
     ParamSpec by("by", ParamType::String, "group by " + groups().either() + " (default: the chart's own)");
     by.oneOf(groups().names);
@@ -310,8 +313,9 @@ registerTrendsChartCommands(CommandRegistry &registry)
     render.spec.description =
         "The chart is drawn by the GUI's own Trends plot, in the GUI's colours, with\n"
         "its curves, axes, legend, and season and event markers. With no dates, it\n"
-        "covers all dates, as the All Dates season: from the first activity to the\n"
-        "last, planned ones included.\n"
+        "covers all dates, as the All Dates season, through today, as the Trends\n"
+        "view's Library tab: planned activities after today count only with a --to\n"
+        "that reaches them.\n"
         "--by changes the grouping for this drawing only.";
     render.spec.scope = Scope::Athlete;
     chartParams(render.spec);

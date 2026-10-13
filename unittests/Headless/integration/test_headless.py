@@ -3468,6 +3468,23 @@ class TestTrendsLibraryCharts(Headless):
         self.gcj("season", "remove", "Winter20")
         self.assertClosed()
 
+    def test_planned_activities_after_today_need_a_to(self):
+        # the Library tab draws "Current selection thru today"
+        planned = datetime.date.today() + datetime.timedelta(days=10)
+        month = planned.replace(day=1).isoformat()
+        self.gcj("plan", "add", "--date", planned.isoformat(), "--sport", "Run", "--duration", "0:45:00", "--distance", "9")
+        self.gcj("chart", "library", "add", "--name", "Monthly speed", "--metric", "average_speed", "--by", "month")
+
+        def months(*args):
+            rows = self.gcj("chart", "library", "data", "Monthly speed", *args)["data"]["rows"]
+            return {r["date"]: r["values"][0] for r in rows}
+        self.assertNotIn(month, months())
+        self.assertNotIn(month, months("--season", "This Year"))
+        self.assertNotIn(month, months("--from", "2020-01-01"))
+        later = months("--to", (planned + datetime.timedelta(days=31)).isoformat())
+        self.assertAlmostEqual(later[month], 12.0, places=1)    # 9 km in 45 minutes
+        self.assertClosed()
+
     def test_data_matches_metric_aggregate_per_week(self):
         self.gcj("chart", "library", "add", "--name", "Weekly", "--by", "week",
                  "--metric", "Average_Speed", "--metric", "total_distance")
