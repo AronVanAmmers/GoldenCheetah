@@ -182,6 +182,9 @@ class RideCache : public QObject
         void postLoad();
         void save(bool opendata=false, QString filename="");
 
+        // returns when a save running in the background (after a refresh) is done
+        void waitForSave();
+
         // clean up refresh threads
         void cleanupThread(RideCacheRefreshThread *thread);
 
@@ -202,6 +205,9 @@ class RideCache : public QObject
 
         // clear deleted objects
         void garbageCollect();
+
+        // the last refresh thread is done: tell everyone, clean up and save
+        void refreshFinished();
 
         // first run to initialise estimates
         void initEstimates();

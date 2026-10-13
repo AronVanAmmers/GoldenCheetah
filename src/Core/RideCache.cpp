@@ -653,20 +653,39 @@ RideCache::cleanupThread(RideCacheRefreshThread *thread)
 void
 RideCache::threadCompleted(RideCacheRefreshThread*thread)
 {
-    updateMutex.lock();
+    // The end of the refresh runs on the cache's thread, not this one: it
+    // changes delete_, which that thread changes too. It is posted before
+    // this thread leaves the list, so whoever waits for the list to empty
+    // (cancel(), the destructor) also waits until this thread is done with
+    // the cache. A cache deleted before then drops the posted call.
+    QMutexLocker locker(&updateMutex);
+    bool isLast = refreshThreads.count() == 1 && refreshThreads.contains(thread);
+    if (isLast && ! isCancelled)
+        QMetaObject::invokeMethod(this, [this]() { refreshFinished(); }, Qt::QueuedConnection);
     refreshThreads.removeOne(thread);
-    bool isLast = refreshThreads.isEmpty();
-    bool cancelled = isCancelled;
-    updateMutex.unlock();
+}
 
-    if (isLast && ! cancelled) {
-        //fprintf(stderr,"refresh ended\n"); fflush(stderr);
-        context->notifyRefreshEnd();
-        garbageCollect();
-        QMetaObject::invokeMethod(saveWorker_, [this]() {
-            save();
-        }, Qt::QueuedConnection);
-    }
+void
+RideCache::refreshFinished()
+{
+    // a refresh started since then ends on its own
+    if (isRunning()) return;
+
+    //fprintf(stderr,"refresh ended\n"); fflush(stderr);
+    context->notifyRefreshEnd();
+    garbageCollect();
+    QMetaObject::invokeMethod(saveWorker_, [this]() {
+        save();
+    }, Qt::QueuedConnection);
+}
+
+void
+RideCache::waitForSave()
+{
+    // the save thread takes its work in turn: an empty call queued behind a
+    // save returns once that save is done
+    if (saveThread_ && saveThread_->isRunning() && QThread::currentThread() != saveThread_)
+        QMetaObject::invokeMethod(saveWorker_, []() {}, Qt::BlockingQueuedConnection);
 }
 
 void

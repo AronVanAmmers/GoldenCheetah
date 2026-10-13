@@ -217,6 +217,11 @@ AthleteSession::waitForRefresh()
         if (cache->isRunning()) loop.exec();
     }
     QCoreApplication::processEvents();
+
+    // the end of a refresh saves the cache in the background, reading every
+    // activity: a command must not change them while it does (the GUI
+    // takes that chance, a command changes them straight away)
+    cache->waitForSave();
 }
 
 void
