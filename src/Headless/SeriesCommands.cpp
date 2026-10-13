@@ -376,9 +376,10 @@ setSeries(CommandEnvironment &env, const CommandRequest &request)
     // metrics, trends and CP estimates follow the file on disk
     if (status == "updated") env.session->refresh();
 
+    // points went with the ride when the activity was closed: counts from data
     CommandResult result = CommandResult::success(data);
     result.text = QString("%1  %2  %3 on %4 of %5 samples (%6 changed)%7\n")
-                  .arg(status, id, name).arg(rows.count()).arg(points.count()).arg(changed)
+                  .arg(status, id, name).arg(rows.count()).arg(data.value("samples").toInt()).arg(changed)
                   .arg(dryRun && changed ? ", dry run, nothing saved" : "");
     result.text += QString("  %1 on the samples written: mean %2 -> %3\n").arg(name)
                    .arg(present ? QString::number(data.value("mean_before").toDouble()) : QString("(none)"))
