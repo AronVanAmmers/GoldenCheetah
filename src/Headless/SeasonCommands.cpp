@@ -260,6 +260,26 @@ rangeInOrder(const Season &season, QString &error)
     return true;
 }
 
+// as the Edit Date Range dialog: the range covers the season's phases and events
+static bool
+coversPhasesAndEvents(const Season &season, QString &error)
+{
+    QDate first, last;
+    for (const Phase &phase : season.phases) {
+        if (!first.isValid() || phase.getStart() < first) first = phase.getStart();
+        if (!last.isValid() || phase.getEnd() > last) last = phase.getEnd();
+    }
+    for (const SeasonEvent &event : season.events) {
+        if (!first.isValid() || event.date < first) first = event.date;
+        if (!last.isValid() || event.date > last) last = event.date;
+    }
+    if (first.isValid() && (season.getStart() > first || season.getEnd() < last)) {
+        error = QString("the season covers its phases and events, %1 to %2").arg(day(first), day(last));
+        return false;
+    }
+    return true;
+}
+
 static bool
 userSeason(const QList<Season> &seasons, const QJsonObject &args, const QString &key, int &index,
            QString &error, Status &status)
@@ -404,6 +424,7 @@ editSeason(CommandEnvironment &env, const CommandRequest &request)
     if (args.contains("seed")) season.setSeed(args.value("seed").toInt());
     if (args.contains("low")) season.setLow(args.value("low").toInt());
     if (!rangeInOrder(season, error)) return CommandResult::failure(Status::Usage, error);
+    if (!coversPhasesAndEvents(season, error)) return CommandResult::failure(Status::Usage, error);
 
     QList<Season> before = seasons->seasons;
     seasons->seasons[index] = season;
@@ -833,7 +854,8 @@ static const char *rangeHelp =
     "or --length before the end. The end is --to DATE, --end-ago N\n"
     "(--end-unit), --length after the start, or --ytd. These are the choices of\n"
     "the GUI's Edit Date Range dialog. A cycle or an adhoc range has fixed\n"
-    "dates; a season with phases or events can't move with today.";
+    "dates; a season with phases or events can't move with today, and its\n"
+    "dates cover them.";
 
 void
 registerSeasonCommands(CommandRegistry &registry)

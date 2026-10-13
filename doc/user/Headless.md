@@ -356,7 +356,7 @@ gc-cli -a Joe season edit "2026 Season" --name "Season 2026" --to 2026-10-31
 gc-cli -a Joe season remove "Last quarter"
 ```
 
-`season edit` changes the side it is given and keeps the other; `--length` alone changes the length, or makes the end a length after the start. Phases and events go on seasons you made with fixed dates, and such a season can't be changed to move with today (`--start-ago`, `--end-ago`, `--ytd`), as in the GUI.
+`season edit` changes the side it is given and keeps the other; `--length` alone changes the length, or makes the end a length after the start. Phases and events go on seasons you made with fixed dates, and such a season can't be changed to move with today (`--start-ago`, `--end-ago`, `--ytd`), or shrunk so it no longer covers them, as in the GUI.
 
 A phase lies within its season and lasts at least a day. `--from` and `--to` default to the season's dates, and `--type` is `phase`, `prep`, `base`, `build` or `camp`. An event is on a day within its season, the season's last day unless `--date` says otherwise, with a priority `A` to `E` or `none`. Events get an id as the GUI gives them; `event edit` and `event remove` take the id, or the name with `--season` when another season has an event of that name. `event list` lists the events by date, `--season`, `--from` and `--to` narrow it.
 
