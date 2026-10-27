@@ -23,6 +23,7 @@
 #include "RideCache.h"
 #include "HelpWhatsThis.h"
 #include "CloudService.h"
+#include "Settings.h"
 
 #include <QList>
 #include <QMutableListIterator>
@@ -491,4 +492,80 @@ void MeasuresDownload::autoDownload(Context *context) {
             }
         }
     }
+}
+
+bool
+MeasuresDownload::fetch(Context *context,
+                        MeasuresGroup *measuresGroup,
+                        const QString &source,
+                        const QDateTime &from,
+                        const QDateTime &to,
+                        bool fromExclusive,
+                        QString &error,
+                        QList<Measure> *received)
+{
+    error.clear();
+    if (received) received->clear();
+    if (!context || !context->athlete || !measuresGroup) {
+        error = tr("No measures group to download into");
+        return false;
+    }
+
+    const QString group = measuresGroup->getSymbol();
+    const bool withings = source.compare("Withings", Qt::CaseInsensitive) == 0;
+    const bool tredict = source.compare("Tredict", Qt::CaseInsensitive) == 0;
+    if (!withings && !tredict) {
+        error = tr("Measures can be downloaded from Withings or Tredict");
+        return false;
+    }
+
+    QList<Measure> measures;
+    bool downloadOk = false;
+    if (withings) {
+        if (group != "Body") {
+            error = tr("Withings downloads Body measures only");
+            return false;
+        }
+        const QString token = appsettings->cvalue(context->athlete->cyclist, GC_NOKIA_REFRESH_TOKEN, "").toString();
+        if (token.isEmpty() || token == "0") {
+            error = tr("Withings is not authorized. Complete the Withings authorization in Preferences, then try again.");
+            return false;
+        }
+        // the same second as the latest stored reading is already stored
+        const QDateTime apiFrom = fromExclusive ? from.addSecs(1) : from;
+        downloadOk = WithingsDownload(context).getBodyMeasures(error, apiFrom, to, measures);
+    } else {
+        if (group != "Body" && group != "Hrv") {
+            error = tr("Tredict downloads Body and Hrv measures");
+            return false;
+        }
+        const QString token = appsettings->cvalue(context->athlete->cyclist, GC_TREDICT_REFRESH_TOKEN, "").toString();
+        if (token.isEmpty()) {
+            error = tr("Tredict is not authorized. Complete the Tredict authorization in Preferences, then try again.");
+            return false;
+        }
+        const QDateTime apiFrom = fromExclusive ? from.addSecs(1) : from;
+        TredictMeasuresDownload downloader(context);
+        if (group == "Hrv") downloadOk = downloader.getHrvMeasures(error, apiFrom, to, measures);
+        else downloadOk = downloader.getBodyMeasures(error, apiFrom, to, measures);
+    }
+
+    if (!downloadOk) {
+        if (error.isEmpty()) error = tr("Downloading measures failed");
+        return false;
+    }
+
+    QMutableListIterator<Measure> i(measures);
+    while (i.hasNext()) {
+        const Measure c = i.next();
+        const bool before = fromExclusive ? c.when <= from : c.when < from;
+        if (before || c.when > to) i.remove();
+    }
+
+    if (received) *received = measures;
+    if (measures.isEmpty()) return true;
+
+    // merges with what is stored, writes the group, and starts one refresh
+    updateMeasures(context, measuresGroup, measures, false);
+    return true;
 }

@@ -33,6 +33,7 @@
 #include "HrZones.h"
 #include "PaceZones.h"
 #include "Measures.h"
+#include "MeasuresDownload.h"
 #include "RideFile.h"
 
 #include <QDir>
@@ -1136,6 +1137,109 @@ removeMeasure(CommandEnvironment &env, const CommandRequest &request)
     return result;
 }
 
+static QJsonObject
+measureRow(MeasuresGroup *g, const Measure &m)
+{
+    QJsonObject row;
+    row.insert("when", m.when.toString(Qt::ISODate));
+    QStringList symbols = g->getFieldSymbols();
+    for (int i = 0; i < symbols.count() && i < MAX_MEASURES; i++) row.insert(symbols.at(i), m.values[i]);
+    if (!m.comment.isEmpty()) row.insert("comment", m.comment);
+    row.insert("source", measureSource(m));
+    return row;
+}
+
+// the latest reading already stored, or an invalid time when there is none
+static QDateTime
+latestMeasure(MeasuresGroup *g)
+{
+    QDateTime latest;
+    for (const Measure &m : g->measures())
+        if (!latest.isValid() || m.when > latest) latest = m.when;
+    return latest;
+}
+
+static CommandResult
+downloadMeasures(CommandEnvironment &env, const CommandRequest &request)
+{
+    AthleteSession &s = *env.session;
+    const QString groupName = request.args.value("group").toString();
+    MeasuresGroup *g = measuresGroup(s.athlete(), groupName);
+    if (!g) return CommandResult::failure(Status::NotFound, QString("no measures group '%1'").arg(groupName));
+
+    QString source = request.args.value("source").toString();
+    if (source.compare("withings", Qt::CaseInsensitive) == 0) source = "Withings";
+    else if (source.compare("tredict", Qt::CaseInsensitive) == 0) source = "Tredict";
+    else return CommandResult::failure(Status::Usage, "--source is withings or tredict");
+
+    QDate fromDay, toDay;
+    QString error;
+    Status status = Status::Ok;
+    if (!dateRangeArgs(s, request.args, fromDay, toDay, error, status)) return CommandResult::failure(status, error);
+    if (toDay.isValid() && fromDay.isValid() && fromDay > toDay)
+        return CommandResult::failure(Status::Usage, "--from is after --to");
+
+    // no dates: after the latest reading already stored, through today
+    bool fromExclusive = false;
+    QDateTime from;
+    if (fromDay.isValid()) {
+        from = QDateTime(fromDay, QTime(0, 0));
+    } else {
+        from = latestMeasure(g);
+        if (from.isValid()) fromExclusive = true;
+        else {
+            QDateTime first;
+            for (const QDateTime &d : s.rideCache()->getAllDates())
+                if (!first.isValid() || d < first) first = d;
+            from = first.isValid() ? first : QDateTime::fromMSecsSinceEpoch(0);
+        }
+    }
+    const QDateTime to = QDateTime(toDay.isValid() ? toDay : QDate::currentDate(), QTime(23, 59, 59));
+    if (from > to) return CommandResult::failure(Status::Usage, "the latest stored reading is after --to");
+
+    env.report(QString("Downloading %1 %2 measures").arg(source, g->getSymbol()));
+
+    QList<Measure> received;
+    if (!MeasuresDownload::fetch(s.context(), g, source, from, to, fromExclusive, error, &received))
+        return CommandResult::failure(Status::Failed, error);
+
+    int refreshed = 0;
+    if (!received.isEmpty()) {
+        // fetch started the one refresh; wait for it, and don't start another
+        s.waitForRefresh();
+        refreshed = s.rideCache()->lastStaleCount();
+    }
+
+    QJsonArray rows;
+    for (const Measure &m : received) rows.append(measureRow(g, m));
+
+    QJsonObject data;
+    data.insert("source", source.toLower());
+    data.insert("group", g->getSymbol());
+    data.insert("from", (fromExclusive ? from.addSecs(1) : from).toString(Qt::ISODate));
+    data.insert("to", to.toString(Qt::ISODate));
+    data.insert("added", received.count());
+    data.insert("refreshed", refreshed);
+    data.insert("measures", rows);
+
+    CommandResult result = CommandResult::success(data);
+    if (received.isEmpty()) {
+        result.text = QString("%1 %2: no new readings\n").arg(source, g->getSymbol());
+    } else {
+        result.text = QString("%1 %2: %3 new reading%4, %5 activities recomputed\n")
+                      .arg(source).arg(g->getSymbol()).arg(received.count())
+                      .arg(received.count() == 1 ? "" : "s").arg(refreshed);
+        for (const QJsonValue &v : rows) {
+            const QJsonObject row = v.toObject();
+            result.text += "  " + row.value("when").toString();
+            const QString weight = row.contains("WEIGHTKG") ? row.value("WEIGHTKG").toVariant().toString() : QString();
+            if (!weight.isEmpty() && weight != "0") result.text += "  WEIGHTKG=" + weight;
+            result.text += "\n";
+        }
+    }
+    return result;
+}
+
 void
 registerAthleteCommands(CommandRegistry &registry)
 {
@@ -1386,6 +1490,28 @@ registerAthleteCommands(CommandRegistry &registry)
     mremove.spec.httpPath = "/athletes/{athlete}/measures";
     mremove.handler = removeMeasure;
     registry.add(mremove);
+
+    Command mdownload;
+    mdownload.spec.name = "measures.download";
+    mdownload.spec.summary = "download body or HRV measures from Withings or Tredict and recompute what depends on them";
+    mdownload.spec.description =
+        "The same download as Share → Get Measures. The stored token is refreshed,\n"
+        "readings are merged with the ones already stored (a reading at the same\n"
+        "time is replaced), and activities whose weight comes from the new readings\n"
+        "are recomputed once. With no dates, readings after the latest one already\n"
+        "stored are fetched, through the end of today. --from and --to are whole\n"
+        "days. --source is withings (Body only) or tredict (Body or Hrv).";
+    mdownload.spec.scope = Scope::Athlete;
+    mdownload.spec.modifies = true;
+    mdownload.spec.params << ParamSpec("source", ParamType::String, "withings or tredict").def("withings").oneOf({ "withings", "tredict" });
+    mdownload.spec.params << ParamSpec("group", ParamType::String, "measures group").def("Body");
+    mdownload.spec.params << ParamSpec("from", ParamType::Date, "first day, inclusive");
+    mdownload.spec.params << ParamSpec("to", ParamType::Date, "last day, inclusive");
+    mdownload.spec.params << seasonParam();
+    mdownload.spec.httpMethod = "POST";
+    mdownload.spec.httpPath = "/athletes/{athlete}/measures/download";
+    mdownload.handler = downloadMeasures;
+    registry.add(mdownload);
 }
 
 } // namespace Headless

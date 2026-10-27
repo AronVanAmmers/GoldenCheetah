@@ -27,6 +27,7 @@
 #include "MeasuresCsvImport.h"
 
 #include <QDialog>
+#include <QDateTime>
 #include <QCheckBox>
 #include <QRadioButton>
 #include <QDateEdit>
@@ -46,6 +47,21 @@ public:
                                QList<Measure>&measures,
                                bool discardExisting=false);
     static void autoDownload(Context *context);
+
+    // Download from Withings or Tredict and merge, as the dialog does.
+    // source is "Withings" or "Tredict". Readings outside from..to are
+    // dropped: at or before `from` when fromExclusive, before `from`
+    // otherwise, and after `to`. Nothing is written when none are in range.
+    // On success the ride-cache refresh has been started when anything was
+    // merged; *received is those readings (not the whole group).
+    static bool fetch(Context *context,
+                      MeasuresGroup *measuresGroup,
+                      const QString &source,
+                      const QDateTime &from,
+                      const QDateTime &to,
+                      bool fromExclusive,
+                      QString &error,
+                      QList<Measure> *received = nullptr);
 
 private:
 

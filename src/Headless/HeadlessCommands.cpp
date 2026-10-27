@@ -41,6 +41,7 @@ buildRegistry()
     registerIntervalCommands(registry);
     registerOverviewCommands(registry);
     registerImportCommands(registry);
+    registerCloudCommands(registry);
     registerFieldCommands(registry);
     registerProcessorCommands(registry);
     registerMetricCommands(registry);

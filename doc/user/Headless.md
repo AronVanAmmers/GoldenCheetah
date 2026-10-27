@@ -2,7 +2,7 @@
 
 GoldenCheetah can run its main jobs without opening a window. You can:
 
-- import activity files
+- import activity files, and download activities and measures from a cloud account
 - run data processors, including Python fixes
 - edit activity fields, zones and measures
 - query metrics, PMC and critical power
@@ -69,17 +69,28 @@ gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > inte
 | Area | Commands |
 |---|---|
 | Athletes | `athlete list`, `athlete create`, `athlete show`, `athlete set`, `athlete refresh [--rebuild]` |
-| Import | `import FILE-OR-FOLDER... [--recursive] [--dry-run]`, `formats` |
+| Import | `import FILE-OR-FOLDER... [--recursive] [--dry-run]`, `activity download [--service NAME]`, `formats` |
 | Activities | `activity list`, `activity show`, `activity add` (manual entry), `activity overview [--tile NAME]`, `layout list`, `layout tile list|show|set`, `activity export --as tcx`, `activity set --set 'Field=value'`, `activity series show|set` (see [Editing a data series](#editing-a-data-series)), `activity delete`, `activity eval --expression '...'`, `activity column list|add|remove` |
 | Intervals | `interval list ACTIVITY [--type user,effort] [--metric ...] [--display]`, `interval show ACTIVITY NUMBER-OR-NAME`, `interval add\|edit\|delete\|rename\|sort\|merge` (see [Changing laps and intervals](#changing-laps-and-intervals)) |
 | Fields | `field list`, `field add NAME... --type double --tab TAB`, `field remove` |
 | Processors | `processor list`, `processor show`, `processor install NAME --file script.py`, `processor configure`, `processor remove`, `processor run NAME ...` |
 | Metrics | `metric list`, `metric user list|show|add|edit|remove`, `metric favourite list|add|remove|set`, `metric aggregate`, `pmc [--series actual\|planned\|expected\|all]`, `meanmax`, `cp`, `cp estimates` |
-| Zones and measures | `zones show`, `zones set`, `zones remove` (`--type power\|hr\|pace`), `zones options`, `zones scheme show\|set`, `measures list`, `measures add`, `measures edit`, `measures remove` |
+| Zones and measures | `zones show`, `zones set`, `zones remove` (`--type power\|hr\|pace`), `zones options`, `zones scheme show\|set`, `measures list`, `measures add`, `measures edit`, `measures remove`, `measures download` |
 | Plans | `plan add`, `plan list`, `plan move\|copy`, `plan link\|unlink`, `plan shift`, `plan repeat`, `plan export\|import`, `plan adherence`, `calendar summary` |
 | Seasons | `season list\|show\|add\|edit\|remove`, `season phase add\|edit\|remove`, `event list\|add\|edit\|remove` |
 | Charts | `chart activity`, `chart meanmax`, `chart pmc`, `chart zones [--type power\|hr\|pace\|fatigue]`, `chart trend` (`--as png\|svg\|pdf`, `--width`, `--height`, `--dark`), `chart library list\|show\|add\|edit\|remove`, `chart library curve add\|edit\|remove`, `chart library render\|data` |
 | Server | `serve` (see [REST API](#rest-api)) |
+
+### Downloading activities
+
+`activity download` fetches activities from a cloud account, as Share → Synchronise Activities… does. It uses the authorization already stored in Preferences. Activities in the date range whose start time is not already stored are saved; one that is already stored is left as it is. With no `--service`, every turned-on account that can list activities is used. With no dates, the last 30 days through today are fetched. `--from` and `--to` are whole days, or `--season` stands for a season's dates. Repeat `--service` to fetch from more than one account.
+
+```sh
+gc-cli -a Joe activity download --service Strava
+gc-cli -a Joe activity download --service "Local Store" --from 2026-01-01 --to 2026-01-31
+```
+
+Run `measures download` first when a new activity should be computed with a weight that is still only on the scale.
 
 ### Choosing activities
 
@@ -90,7 +101,7 @@ Commands that work on several activities accept the same selection options:
 - **`--search TEXT`**: a free text search, as in the GUI search box.
 - **`--named NAME`**: a search or filter saved in the GUI.
 - **`--from DATE --to DATE`**, **`--sport Bike`**, **`--limit N`** (the most recent N), **`--planned`**.
-- **`--season NAME`**: the dates of a season, a phase (`Season/Phase`) or a built-in range such as `"Last 6 weeks"`, instead of `--from` and `--to` (see [Seasons, phases and events](#seasons-phases-and-events)). The commands with dates of their own (`pmc`, `chart pmc`, `cp estimates`, `measures list`, `chart library render|data`, `plan list|export|adherence`, `calendar summary`) take it too.
+- **`--season NAME`**: the dates of a season, a phase (`Season/Phase`) or a built-in range such as `"Last 6 weeks"`, instead of `--from` and `--to` (see [Seasons, phases and events](#seasons-phases-and-events)). The commands with dates of their own (`pmc`, `chart pmc`, `cp estimates`, `measures list`, `measures download`, `activity download`, `chart library render|data`, `plan list|export|adherence`, `calendar summary`) take it too.
 
 All given criteria must match. `processor run` and `activity set` change nothing unless activities are chosen or `--all` is given.
 
@@ -251,6 +262,13 @@ gc-cli -a Joe zones scheme set --type hr --zone "Z1,Easy,0,1" --zone "Z2,Hard,85
 ```
 
 Body weight and other measures are dated readings. `measures add` records one, `measures edit` changes the values you pass of an existing one and keeps the others, and `measures remove` deletes one. `--when` is the time `measures list` prints, or just the date when there is only one reading on it. An edited reading becomes a manual entry (`source` in `measures list`), as in the GUI's measures table; adding a reading at the time of an existing one replaces its values and keeps its source, as the GUI's Add does. Values go from 0 to 9999.99, in metric units. Activities whose weight comes from the changed readings are recomputed.
+
+`measures download` fetches them from Withings or Tredict, as Share → Get Measures… does. The stored token is refreshed, new readings are merged (a reading at the same time is replaced), and activities whose weight comes from the new readings are recomputed once. With no dates it fetches readings after the latest one already stored, through the end of today. `--source withings` downloads Body measures. `--source tredict` downloads Body or Hrv. `--from` and `--to` are whole days, or `--season` stands for a season's dates.
+
+```sh
+gc-cli -a Joe measures download
+gc-cli -a Joe measures download --source tredict --group Hrv --from 2026-01-01
+```
 
 ```sh
 gc-cli -a Joe measures add --when 2026-03-01T07:00:00 --set WEIGHTKG=71.5 --set FATPERCENT=14
@@ -495,6 +513,7 @@ The report lists each activity as processed, skipped (no change) or failed, with
 - **Only one GoldenCheetah at a time.** While the GUI has an athlete open, commands on that athlete refuse to run (exit status 4). The same applies to a command running while another command or the REST server is using the athlete. Add `--lock-wait SECS` to wait instead. Older GoldenCheetah versions don't take the lock, so a command also refuses when the athlete is marked as not closed cleanly. If GoldenCheetah really isn't running (it crashed), use `--force` once. The lock is per machine: it is not kept in the athlete folder, so a folder synced between computers (Dropbox, OneDrive) doesn't carry it, and doesn't stop two computers using the same athlete at once either.
 - **Files on disk are the truth.** Every command starts by bringing the athlete up to date with its activity and zone files, the same refresh the GUI does when it opens an athlete. Tools that edit activity files or zones while GoldenCheetah isn't running are picked up by the next command, and metrics and critical power catch up without opening the window. `athlete refresh --rebuild` recomputes everything.
 - **No questions.** Nothing waits for a dialog. Problems that the GUI would show in a dialog are reported as errors or warnings, and one-off questions such as downloading the default icons are left for the next time the GUI opens.
+- **Cloud accounts stay put until you ask.** Opening the athlete does not download activities or measures. `activity download` and `measures download` do that, using the authorization already stored in Preferences.
 
 ## REST API
 

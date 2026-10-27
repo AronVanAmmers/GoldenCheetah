@@ -32,6 +32,7 @@ void registerSeriesCommands(CommandRegistry &registry);
 void registerIntervalCommands(CommandRegistry &registry);
 void registerOverviewCommands(CommandRegistry &registry);
 void registerImportCommands(CommandRegistry &registry);
+void registerCloudCommands(CommandRegistry &registry);
 void registerFieldCommands(CommandRegistry &registry);
 void registerProcessorCommands(CommandRegistry &registry);
 void registerMetricCommands(CommandRegistry &registry);

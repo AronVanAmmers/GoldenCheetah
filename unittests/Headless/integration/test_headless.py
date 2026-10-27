@@ -4256,5 +4256,64 @@ class TestAthleteSettingsReadOnlyRest(Headless):
             self.assertEqual(env["data"][key], before[key], key)
 
 
+class CloudDownload(Headless):
+    """fetching measures and activities from a cloud account"""
+
+    imports = [RIDE_POWER]     # starts 2020-01-26
+
+    def test_measures_download_needs_authorization(self):
+        # no token: fail before any network call, and do not sit on a dialog
+        env = self.gcj("measures", "download", expect=5, timeout=20)
+        self.assertIn("Withings", env["error"])
+        self.assertIn("not authorized", env["error"])
+        env = self.gcj("measures", "download", "--source", "tredict", expect=5, timeout=20)
+        self.assertIn("Tredict", env["error"])
+        self.gcj("measures", "download", "--source", "nope", expect=2, timeout=20)
+        self.gcj("measures", "download", "--group", "Hrv", expect=5, timeout=20)
+        self.gcj("measures", "download", "--group", "Nope", expect=3, timeout=20)
+        self.gcj("measures", "download", "--from", "2026-02-01", "--to", "2026-01-01", expect=2, timeout=20)
+
+    def test_activity_download_needs_an_account(self):
+        env = self.gcj("activity", "download", expect=5, timeout=20)
+        self.assertIn("turned on", env["error"])
+        self.gcj("activity", "download", "--service", "No Such Cloud", expect=3, timeout=20)
+        env = self.gcj("activity", "download", "--service", "Withings", expect=2, timeout=20)
+        self.assertIn("Withings", env["error"])
+
+    def test_local_store_downloads_a_missing_activity(self):
+        listed = self.gcj("activity", "list")["data"]["activities"]
+        self.assertEqual(len(listed), 1)
+        act = listed[0]["id"]
+        exported = os.path.join(self.tmp, act + ".json")
+        self.gcj("-o", exported, "activity", "export", act, "--as", "json")
+        store = os.path.join(self.tmp, "store")
+        os.makedirs(store)
+        with zipfile.ZipFile(os.path.join(store, act + ".json.zip"), "w") as z:
+            z.write(exported, act + ".json")
+        # a ride-named file outside the dates must be left alone
+        with zipfile.ZipFile(os.path.join(store, "2019_06_01_12_00_00.json.zip"), "w") as z:
+            z.write(exported, "2019_06_01_12_00_00.json")
+
+        self.gcj("activity", "delete", act)
+        self.assertEqual(self.activity_files(), [])
+
+        pref = os.path.join(self.folder, "config", "athlete-preferences.ini")
+        priv = os.path.join(self.folder, "config", "athlete-private.ini")
+        with open(pref, "a", encoding="utf-8") as f:
+            f.write("\n[networkfilestore]\nfolder=%s\n" % store)
+        with open(priv, "a", encoding="utf-8") as f:
+            f.write("\n[Local%20Store]\nactive=true\n")
+
+        day = act[:10].replace("_", "-")
+        env = self.gcj("activity", "download", "--service", "local store", "--from", day, "--to", day)
+        self.assertEqual(env["data"]["downloaded"], 1, env)
+        self.assertEqual(env["data"]["failed"], 0, env)
+        self.assertGreaterEqual(env["data"]["ignored"], 1)
+        self.assertEqual(self.activity_files(), [act + ".json"])
+
+        again = self.gcj("activity", "download", "--service", "Local Store", "--from", day, "--to", day)
+        self.assertEqual((again["data"]["downloaded"], again["data"]["skipped"], again["data"]["failed"]), (0, 1, 0), again)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -25,6 +25,23 @@
 #include "Measures.h"
 #include <QMessageBox>
 
+// a dialog in the GUI; the message only, when there is no window
+static void
+withingsError(QString &error, const QString &title, const QString &text, const QString &detail = QString())
+{
+    error = text;
+    if (!detail.trimmed().isEmpty()) {
+        QString brief = detail.simplified();
+        if (brief.size() > 300) brief = brief.left(300) + "...";
+        error += " " + brief;
+    }
+    if (GlobalContext::isHeadless()) return;
+
+    QMessageBox box(QMessageBox::Critical, title, text);
+    if (!detail.isEmpty()) box.setDetailedText(detail);
+    box.exec();
+}
+
 #ifndef WITHINGS_DEBUG
 #define WITHINGS_DEBUG false
 #endif
@@ -73,8 +90,7 @@ WithingsDownload::getBodyMeasures(QString &error, QDateTime from, QDateTime to, 
         #define GC_PREF tr("Tools->Options")
         #endif
         QString advise = QString(tr("Error fetching OAuth credentials.  Please make sure to complete the Withings authorization procedure found under %1.")).arg(GC_PREF);
-        QMessageBox oautherr(QMessageBox::Critical, tr("OAuth Error"), advise);
-        oautherr.exec();
+        withingsError(error, tr("OAuth Error"), advise);
         return false;
     }
 
@@ -157,21 +173,18 @@ WithingsDownload::getBodyMeasures(QString &error, QDateTime from, QDateTime to, 
     if (response.contains("\"status\":0", Qt::CaseInsensitive)) {
     		parseResult = parse(response, data);
     } else {
-        QMessageBox oautherr(QMessageBox::Critical, tr("Error"),
-                             tr("There was an error during fetching. Please check the error description."));
-        oautherr.setDetailedText(response); // probably blank
-        oautherr.exec();
+        withingsError(error, tr("Error"),
+                      tr("There was an error during fetching. Please check the error description."),
+                      response); // probably blank
         return false;
 
     }
 
     if (QJsonParseError::NoError != parseResult.error) {
-        QMessageBox oautherr(QMessageBox::Critical, tr("Error"),
-                             tr("Error parsing Withings API response. Please check the error description."));
         QString errorStr = parseResult.errorString() + " at offset " + QString::number(parseResult.offset);
-        error = errorStr.simplified();
-        oautherr.setDetailedText(error);
-        oautherr.exec();
+        withingsError(error, tr("Error"),
+                      tr("Error parsing Withings API response. Please check the error description."),
+                      errorStr.simplified());
         return false;
     };
     return true;
