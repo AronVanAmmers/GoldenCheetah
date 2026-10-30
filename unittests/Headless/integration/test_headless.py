@@ -3667,6 +3667,224 @@ def ride_id(date, time="16:00:00"):
     return date.replace("-", "_") + "_" + time.replace(":", "_")
 
 
+class TestSessions(Headless):
+    """session start keeps the athlete open in a process of its own, and the
+    commands that follow run in it until session stop"""
+
+    imports = [RIDE_POWER, RUN_STRYD]
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.ride = "2020_01_26_13_00_38"
+
+    def start(self, *args):
+        env = self.gcj("session", "start", *args)
+        self.addCleanup(self.gca, "session", "stop")
+        return env
+
+    @property
+    def note(self):
+        return os.path.join(self.folder, "in-use.json")
+
+    def notes(self, ride):
+        return self.gcj("activity", "list", ride, "--field", "Notes")["data"]["activities"][0]["metadata"].get("Notes")
+
+    def gone(self, pid, timeout=30):
+        """wait for a process to exit"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return True
+            time.sleep(0.1)
+        return False
+
+    def test_commands_run_in_the_session(self):
+        direct = self.gcj("activity", "list", "--metric", "coggan_tss")["data"]
+        pid = self.start()["data"]["pid"]
+        self.assertEqual(self.gcj("session", "status")["data"]["commands"], 0)
+
+        # the same answer, from the session
+        self.assertEqual(self.gcj("activity", "list", "--metric", "coggan_tss")["data"], direct)
+        status = self.gcj("session", "status")["data"]
+        self.assertEqual((status["pid"], status["commands"]), (pid, 1))
+
+        # it holds the athlete: its lock, and the note for other systems
+        self.assertTrue(any(f.endswith(".lock") for f in os.listdir(self.lock_dir)))
+        with open(self.note) as f:
+            note = json.load(f)
+        self.assertEqual((note["app"], note["pid"]), ("GoldenCheetah command line", pid))
+
+        # a process that keeps its locks elsewhere doesn't find the session,
+        # and is turned away by the note
+        other = dict(self.env)
+        other["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(dir=self.tmp)
+        proc = subprocess.run([BINARY, "--cli", "--home", self.home, "--athlete", self.athlete, "activity", "list"],
+                              env=other, capture_output=True, timeout=180)
+        self.assertEqual(proc.returncode, 4, proc.stderr)
+        self.assertIn(b"GoldenCheetah command line (pid %d" % pid, proc.stderr)
+
+        env = self.gcj("session", "stop")
+        self.assertTrue(env["data"]["stopped"])
+        self.assertEqual(env["data"]["commands"], 1)
+        self.assertClosed()
+        self.assertFalse(os.path.exists(self.note))
+        self.gcj("session", "status", expect=3)
+        self.assertFalse(self.gcj("session", "stop")["data"]["stopped"])
+
+    def test_changes_are_saved(self):
+        self.keep(os.path.join(self.folder, "activities"))
+        self.keep(os.path.join(self.folder, "config"))
+        self.start()
+        self.gcj("activity", "set", self.ride, "--set", "Notes=set in a session")
+        self.gcj("interval", "add", self.ride, "--name", "Session surge", "--start", "60", "--stop", "120")
+        self.gcj("zones", "set", "--from", "2019-06-01", "--cp", "300", "--w", "25000")
+        # seen by the commands that follow
+        self.assertEqual(self.notes(self.ride), "set in a session")
+        self.gcj("session", "stop")
+
+        # and by those after it, which open the athlete themselves
+        self.assertEqual(self.notes(self.ride), "set in a session")
+        names = [i["name"] for i in self.gcj("interval", "list", self.ride)["data"]["intervals"]]
+        self.assertIn("Session surge", names)
+        self.assertIn(300, [r["cp"] for r in self.gcj("zones", "show")["data"]["power"]["ranges"]])
+
+    def test_paths_and_stdin_are_the_callers(self):
+        self.keep(os.path.join(self.folder, "config"))
+        self.start()
+        work = tempfile.mkdtemp(dir=self.tmp)
+        r = self.gca("--format", "csv", "-o", "list.csv", "activity", "list", cwd=work)
+        self.assertEqual(r.code, 0, r)
+        with open(os.path.join(work, "list.csv")) as f:
+            self.assertIn(self.ride, f.read())
+        r = self.gca("-o", "ride.tcx", "activity", "export", self.ride, "--as", "tcx", cwd=work)
+        self.assertEqual(r.code, 0, r)
+        with open(os.path.join(work, "ride.tcx"), "rb") as f:
+            self.assertIn(b"TrainingCenterDatabase", f.read())
+        shutil.copy(TCX_RIDE, work)
+        env = self.gcj("import", "--dry-run", os.path.basename(TCX_RIDE), cwd=work)
+        self.assertEqual(env["data"]["importable"], 1, env)
+
+        # what the command reads from stdin is ours, not the session's
+        r = self.gca("metric", "user", "add", "--symbol", "sessionones", "--name", "Session ones", "--file", "-",
+                     input=ONES.encode())
+        self.assertEqual(r.code, 0, r)
+        metrics = self.gcj("metric", "user", "list")["data"]["metrics"]
+        self.assertIn("sessionones", [m["symbol"] for m in metrics])
+
+    def test_errors_keep_their_exit_status(self):
+        self.start()
+        self.gcj("activity", "show", "nope", expect=3)
+        self.gcj("measures", "add", "--when", "2020-01-20", "--set", "NOPE=1", expect=2)
+        r = self.gca("activity", "list", "--nope")
+        self.assertEqual(r.code, 2, r)
+        # the last never got to the session
+        self.assertEqual(self.gcj("session", "status")["data"]["commands"], 2)
+
+    def test_files_edited_by_other_tools_after_athlete_refresh(self):
+        path = os.path.join(self.folder, "activities", self.ride + ".json")
+        self.keep(path)
+        self.start()
+        self.assertIsNone(self.notes(self.ride))
+        with open(path, encoding="utf-8-sig") as f:
+            doc = json.load(f)
+        doc["RIDE"]["TAGS"]["Notes"] = "edited by another tool"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        # later than the cache's record (an earlier test's change counts),
+        # whatever the file system's mtime resolution
+        later = time.time() + 2
+        os.utime(path, (later, later))
+
+        # the session read it before
+        self.assertIsNone(self.notes(self.ride))
+        self.assertGreaterEqual(self.gcj("athlete", "refresh")["data"]["refreshed"], 1)
+        self.assertEqual(self.notes(self.ride), "edited by another tool")
+
+    def test_settings_shared_by_athletes_change_in_the_session(self):
+        # commands on the athletes folder run in the session too: they
+        # change what its athlete uses, as in the GUI
+        self.keep(os.path.join(self.folder, "activities"))
+        self.start()
+        self.gcj("field", "add", "Session Field", "--type", "shorttext")
+        self.addCleanup(self.gc, "field", "remove", "Session Field")
+        self.gcj("activity", "set", self.ride, "--set", "Session Field=abc")
+        item = self.gcj("activity", "list", self.ride, "--field", "Session Field")["data"]["activities"][0]
+        self.assertEqual(item["metadata"]["Session Field"], "abc")
+        self.assertEqual(self.gcj("session", "status")["data"]["commands"], 3)
+
+    def test_one_session_per_athlete(self):
+        pid = self.start()["data"]["pid"]
+        env = self.gcj("session", "start")
+        self.assertTrue(env["data"]["already_open"])
+        self.assertEqual(env["data"]["pid"], pid)
+
+    def test_closes_when_idle(self):
+        self.start("--idle", "0.02")
+        deadline = time.time() + 30
+        while time.time() < deadline and self.gca("session", "status").code == 0:
+            time.sleep(0.2)
+        self.gcj("session", "status", expect=3)
+        self.assertClosed()
+
+    def test_start_says_why_it_cannot_open_the_athlete(self):
+        self.addCleanup(lambda: os.path.exists(self.note) and os.remove(self.note))
+        with open(self.note, "w") as f:
+            json.dump({"app": "GoldenCheetah", "pid": 4242, "host": "elsewhere", "system": "another-system"}, f)
+        r = self.gca("session", "start")
+        self.assertEqual(r.code, 4, r)
+        self.assertIn(b"pid 4242 on elsewhere", r.err)
+        self.assertIn(b"--force", r.err)
+        self.gcj("session", "status", expect=3)
+
+    @unittest.skipIf(os.name == "nt", "signals a POSIX process")
+    def test_terminated_session_closes_the_athlete(self):
+        self.keep(os.path.join(self.folder, "activities"))
+        pid = self.start()["data"]["pid"]
+        self.gcj("activity", "set", self.ride, "--set", "Notes=before the signal")
+        os.kill(pid, signal.SIGTERM)
+        self.assertTrue(self.gone(pid))
+        self.assertClosed()
+        self.assertFalse(os.path.exists(self.note))
+        self.gcj("session", "status", expect=3)
+        self.assertEqual(self.notes(self.ride), "before the signal")
+
+    @unittest.skipIf(os.name == "nt", "kills a POSIX process")
+    def test_killed_session_is_left_behind(self):
+        pid = self.start()["data"]["pid"]
+        os.kill(pid, signal.SIGKILL)
+        self.assertTrue(self.gone(pid))
+        # commands run on their own again: what it left is stale
+        self.gcj("session", "status", expect=3)
+        self.gcj("activity", "list")
+        self.assertFalse(os.path.exists(self.note))
+        self.assertNotEqual(self.start()["data"]["pid"], pid)
+
+    def test_serve_keeps_athletes_open(self):
+        def held():
+            return os.path.isdir(self.lock_dir) and any(f.endswith(".lock") for f in os.listdir(self.lock_dir))
+
+        server, port = start_server(self.env, self.home, os.path.join(self.tmp, "keep-open.log"), "--keep-open", "0.05")
+        try:
+            path = "/athletes/%s/activities" % self.athlete
+            status, body = call_server(port, "GET", path)
+            self.assertEqual(status, 200, body)
+            self.assertTrue(held(), "the athlete was closed after the request")
+            # closed after 3 s without a request, opened again by the next
+            deadline = time.time() + 30
+            while time.time() < deadline and held():
+                time.sleep(0.2)
+            self.assertFalse(held(), "the athlete stayed open")
+            status, body = call_server(port, "GET", path)
+            self.assertEqual(status, 200, body)
+            self.assertTrue(held())
+        finally:
+            stop_server(server)
+        self.assertClosed()
+
+
 class PlanHelpers:
     def ride(self, rid, planned=False):
         """the RIDE object of an activity file"""

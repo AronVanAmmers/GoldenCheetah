@@ -66,6 +66,7 @@ class RestDispatcher : public QObject
             busy = true;
             CommandRunner::Options run;
             run.session = options.session;
+            if (options.keepOpenMinutes > 0) run.keeper = &keeper;
             CommandResult result = CommandRunner::run(commandRegistry(), request, run);
             busy = false;
             return result;
@@ -81,6 +82,9 @@ class RestDispatcher : public QObject
         }
 
         RestServer::Options options;
+
+        // athletes open between requests (--keep-open), main thread only
+        SessionKeeper keeper;
 
         // one command at a time: athlete sessions run nested event loops on
         // the main thread and must never interleave
@@ -512,10 +516,11 @@ RestServer::run(const Options &options)
     }
 
     if (!options.quiet) {
-        fprintf(stderr, "GoldenCheetah API on http://%s:%d/v1 for %s%s (ctrl-c to stop)\n",
+        fprintf(stderr, "GoldenCheetah API on http://%s:%d/v1 for %s%s%s (ctrl-c to stop)\n",
                 options.host.toLocal8Bit().constData(), options.port,
                 options.home.toLocal8Bit().constData(),
-                options.token.isEmpty() ? "" : ", bearer token required");
+                options.token.isEmpty() ? "" : ", bearer token required",
+                options.keepOpenMinutes > 0 ? ", athletes kept open" : "");
         fflush(stderr);
     }
 
@@ -523,8 +528,12 @@ RestServer::run(const Options &options)
     std::signal(SIGTERM, onSignal);
     QTimer poll;
     // not while a command runs: it may be turning a nested event loop
-    QObject::connect(&poll, &QTimer::timeout, &poll, [&dispatcher]() {
-        if (!stopRequested) return;
+    QObject::connect(&poll, &QTimer::timeout, &poll, [&dispatcher, &options]() {
+        if (!stopRequested) {
+            if (!dispatcher.busy && options.keepOpenMinutes > 0)
+                dispatcher.keeper.closeIdle(qint64(options.keepOpenMinutes * 60000));
+            return;
+        }
         dispatcher.stopping = true;
         if (!dispatcher.busy) QCoreApplication::quit();
     });
@@ -539,6 +548,8 @@ RestServer::run(const Options &options)
     listener.reset();
     handler.reset();
     settings.reset();
+    // saved and unlocked before we say we've stopped
+    dispatcher.keeper.closeAll();
     if (!options.quiet) fprintf(stderr, "GoldenCheetah API stopped\n");
     return ret == 0 ? int(Status::Ok) : int(Status::Failed);
 }

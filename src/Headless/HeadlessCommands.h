@@ -49,7 +49,7 @@ const CommandRegistry &commandRegistry();
 //
 // Runs one command request: validates the arguments, opens (and afterwards
 // closes) the athlete for athlete commands and calls the handler. This is
-// the single place the command line and REST server enter the core.
+// the single place the command line, sessions and REST server enter the core.
 //
 class CommandRunner
 {
@@ -58,6 +58,11 @@ class CommandRunner
         struct Options {
             AthleteSession::Options session;
             std::function<void(const QString &)> progress;
+
+            // keeps the athlete open after the command, and runs the
+            // command on it when it is open already (session start, serve
+            // --keep-open). Without it each command opens and closes it.
+            SessionKeeper *keeper = nullptr;
         };
 
         static CommandResult run(const CommandRegistry &registry, CommandRequest request, const Options &options);

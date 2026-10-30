@@ -5,25 +5,27 @@ User documentation is in [doc/user/Headless.md](../../doc/user/Headless.md). Thi
 ## Layers
 
 ```
- argv ─► CliParser ─► CliMain ─┐                          ┌─► text / JSON / file
-                               ├─► CommandRunner ─► handler ─► CommandResult
- HTTP ─► RestRouter ─► RestServer ┘        │                  └─► JSON / file (HTTP)
-                                           ▼
-                                    AthleteSession  (lock, open, refresh, close)
-                                           │
-                                   Context / Athlete / RideCache  (the existing core)
+ argv ─► CliParser ─► CliMain ──────────────────────────┐                   ┌─► text / JSON / file
+             │ (a session is open)                      │                   │
+             └─► SessionClient ─► SessionServer ────────┼─► CommandRunner ─► handler ─► CommandResult
+ HTTP ─► RestRouter ─► RestServer ──────────────────────┘        │                   │
+                                                                 ▼                   └─► JSON / file (HTTP)
+                                AthleteSession  (lock, open, refresh, close; kept open by a SessionKeeper)
+                                                                 │
+                                         Context / Athlete / RideCache  (the existing core)
 ```
 
 - **The command model** (`HeadlessCommand.h`, `CommandRegistry`). Each command is declared once, as a `CommandSpec`: its dotted name (`activity.list`), typed parameters, and REST method and path. It is implemented once, as a handler that takes a `CommandRequest` and returns a `CommandResult` (structured `data`, optional human `text`, optional binary `payload`). The registry validates and coerces arguments for every entry point, so a typo is reported the same way everywhere. None of this depends on GoldenCheetah internals.
 - **The core**:
-  - `CommandRunner` validates a request. For athlete commands it opens an `AthleteSession` around the handler, which is closed before the result is returned.
+  - `CommandRunner` validates a request. For athlete commands it opens an `AthleteSession` around the handler, which is closed before the result is returned. Given a `SessionKeeper` it runs the command on the athlete the keeper holds open instead (opening it the first time), and the keeper keeps it open afterwards: `AthleteSession::commandEnds()` does what closing would do that the next command must not miss (activities closed, settings synced).
   - `HeadlessApp` does the process-wide start-up that `main()` does for the GUI: settings, metrics, colours, the train DB and Python.
   - `AthleteSession` takes the `AthleteLock`, opens `Context(nullptr)` and `Athlete`, and waits for the ride cache refresh.
   - The `*Commands.cpp` files hold the handlers, one file per area.
 - **Entry points** only translate:
   - `CliParser` and `CliMain` turn argv into a request and print the result.
   - `RestRouter` maps HTTP method, path, query and body onto a request, using each spec's REST binding. `RestServer` runs requests one at a time on the main thread and writes the response.
-  - The `serve` command belongs to the CLI entry point, not the registry.
+  - The `serve` command belongs to the CLI entry point, not the registry. So do `session start|stop|status`.
+  - `SessionServer` is `session start`'s background process: a `SessionKeeper` with one athlete, listening on a `QLocalServer` (a socket next to the athlete lock, a named pipe on Windows, user access only) for length-prefixed JSON messages. It runs one request at a time; requests that arrive while a command turns a nested event loop wait in a queue. `SessionClient` is the command line's side: `CliMain` looks for a live session (its `.session` file next to the lock) before setting up the core, and sends athlete commands, and global commands that modify, to it. The result comes back as a `CommandResult` and is written out as a local one would be. The request carries the caller's working folder, and stdin is passed as a file. `session start` starts the process with `QProcess::startDetached` and waits on a second local socket until the athlete is open or failed to open.
 
 ## Headless changes in the existing core
 

@@ -468,9 +468,9 @@ SOURCES +=  Headless/SeasonDefinition.cpp Headless/SeasonRange.cpp Headless/Seas
 SOURCES +=  Headless/PlanCommands.cpp
 SOURCES +=  Headless/SeriesCommands.cpp
 
-# the entry points: command line and REST
-HEADERS +=  Headless/CliParser.h Headless/CliMain.h Headless/RestRouter.h Headless/RestServer.h
-SOURCES +=  Headless/CliParser.cpp Headless/CliMain.cpp Headless/RestRouter.cpp Headless/RestServer.cpp
+# the entry points: command line, sessions and REST
+HEADERS +=  Headless/CliParser.h Headless/CliMain.h Headless/RestRouter.h Headless/RestServer.h Headless/SessionServer.h
+SOURCES +=  Headless/CliParser.cpp Headless/CliMain.cpp Headless/RestRouter.cpp Headless/RestServer.cpp Headless/SessionServer.cpp
 
 HEADERS +=  $$HTPATH/httpglobal.h \
             $$HTPATH/httplistener.h \

@@ -88,6 +88,10 @@ CommandRunner::run(const CommandRegistry &registry, CommandRequest request, cons
     env.home = request.home;
     env.progress = options.progress;
 
+    // a kept athlete a command threw out of is closed, not kept
+    AthleteSession *kept = nullptr;
+    auto closeKept = [&]() { if (kept) options.keeper->close(kept); };
+
     try {
         if (command->spec.scope == Scope::Global) {
             return command->handler(env, request);
@@ -102,9 +106,20 @@ CommandRunner::run(const CommandRegistry &registry, CommandRequest request, cons
         request.athlete = athlete;
 
         CommandResult failure;
+        if (options.keeper) {
+            kept = options.keeper->open(request.home, athlete, options.session, failure);
+            if (!kept) return failure;
+            kept->commandStarts(command->spec.modifies);
+            env.session = kept;
+            CommandResult result = command->handler(env, request);
+            env.session = nullptr;
+            options.keeper->done(kept, result);
+            return result;
+        }
+
         std::unique_ptr<AthleteSession> session = AthleteSession::open(request.home, athlete, options.session, failure);
         if (!session) return failure;
-        session->setReadOnly(!command->spec.modifies);
+        session->commandStarts(command->spec.modifies);
 
         env.session = session.get();
         CommandResult result = command->handler(env, request);
@@ -116,8 +131,10 @@ CommandRunner::run(const CommandRegistry &registry, CommandRequest request, cons
         return result;
 
     } catch (const std::exception &e) {
+        closeKept();
         return CommandResult::failure(Status::Internal, QString("internal error: %1").arg(e.what()));
     } catch (...) {
+        closeKept();
         return CommandResult::failure(Status::Internal, "internal error");
     }
 }

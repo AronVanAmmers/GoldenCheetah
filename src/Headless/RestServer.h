@@ -31,7 +31,8 @@ namespace Headless {
 // Requests are run one at a time on the main thread through the same
 // CommandRunner the command line uses, so each request opens, refreshes
 // and closes the athlete exactly as a command line run does, and the GUI
-// can open the athlete between requests.
+// can open the athlete between requests. With keepOpenMinutes an athlete
+// stays open (and locked) after a request, until none came for that long.
 //
 class RestServer
 {
@@ -44,6 +45,7 @@ class RestServer
             qint64 maxUploadBytes = 64LL * 1024 * 1024;
             QString home;                   // athletes folder
             AthleteSession::Options session;
+            double keepOpenMinutes = 0;     // keep athletes open between requests, 0 = don't
             bool quiet = false;             // no request log on stderr
         };
 

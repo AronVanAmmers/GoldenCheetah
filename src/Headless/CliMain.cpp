@@ -28,13 +28,14 @@
 #include "HeadlessCommands.h"
 #include "ResultFormat.h"
 #include "RestServer.h"
-
+#include "SessionServer.h"
 
 #include <QApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QTemporaryFile>
 #include <cstdio>
 #include <cstdlib>
 
@@ -134,13 +135,54 @@ serveCommand()
     serve.spec.description =
         "Serves every command under /v1 as JSON over HTTP until interrupted. Each\n"
         "request opens the athlete, runs and closes it again, exactly like a command\n"
-        "line run. GET /v1/openapi.json describes the API.";
+        "line run, unless --keep-open keeps it open (and locked) between requests.\n"
+        "GET /v1/openapi.json describes the API.";
     serve.spec.scope = Scope::Global;
     serve.spec.params << ParamSpec("port", ParamType::Int, "TCP port").def(12022);
     serve.spec.params << ParamSpec("host", ParamType::String, "address to listen on").def("127.0.0.1");
     serve.spec.params << ParamSpec("token", ParamType::String, "require 'Authorization: Bearer TOKEN' (default: $GC_API_TOKEN)");
     serve.spec.params << ParamSpec("max-upload", ParamType::Int, "largest request body in MB").def(64);
+    serve.spec.params << ParamSpec("keep-open", ParamType::Double,
+                                   "keep athletes open between requests, closing one after this many minutes "
+                                   "without a request (0: each request opens and closes the athlete)").def(0);
     return serve;
+}
+
+// so are the session commands: they start, ask and stop a process
+static QList<Command>
+sessionCommands()
+{
+    Command start;
+    start.spec.name = "session.start";
+    start.spec.summary = "keep the athlete open for the commands that follow, until session stop";
+    start.spec.description =
+        "Opens the athlete once, in a background process, and returns when it is open.\n"
+        "Until session stop, commands on this athlete (and those changing settings\n"
+        "shared by the athletes in its folder, such as field add) run in that process\n"
+        "instead of opening the athlete themselves. On a large library or a slow\n"
+        "folder (a Windows drive seen from WSL, a network share) opening is most of a\n"
+        "command's time. Commands are given and answer as without a session, in the\n"
+        "session's environment (time zone, umask). The athlete stays locked while the\n"
+        "session is open.\n\n"
+        "Tools that edit the athlete folder directly: run athlete refresh after one\n"
+        "edited activity files; zones and other settings are read when a session\n"
+        "starts. --force, --lock-wait and --no-python apply to the session.";
+    start.spec.scope = Scope::Athlete;
+    start.spec.params << ParamSpec("idle", ParamType::Double, "close after this many minutes without a command, 0 = never").def(30);
+    start.spec.params << ParamSpec("foreground", ParamType::Bool, "run the session in this process until stopped (ctrl-c)");
+
+    Command stop;
+    stop.spec.name = "session.stop";
+    stop.spec.summary = "close the athlete's session, saved and unlocked when this returns";
+    stop.spec.scope = Scope::Athlete;
+
+    Command status;
+    status.spec.name = "session.status";
+    status.spec.summary = "is a session open for the athlete, and since when";
+    status.spec.description = "Exits 3 when no session is open.";
+    status.spec.scope = Scope::Athlete;
+
+    return { start, stop, status };
 }
 
 static int
@@ -156,6 +198,84 @@ finish(int code)
     return code;
 }
 
+// the result as the command line writes it, and the exit status: a binary
+// payload to -o (or the file name the command suggests), text, JSON or CSV
+// to stdout or -o
+static int
+writeResult(const GlobalOptions &g, const QString &command, CommandResult result)
+{
+    bool json = g.format == "json", csv = g.format == "csv";
+
+    // binary output: a chart or an exported activity. -o names the file;
+    // without it, the command's suggested name is used
+    QString written;
+    if (!result.payload.isEmpty()) {
+        QString target = g.output.isEmpty() ? result.payloadName : g.output;
+        if (target == "-") {
+#ifdef Q_OS_WIN
+            // images and exports are bytes, don't let the C runtime add \r
+            _setmode(_fileno(stdout), _O_BINARY);
+#endif
+            writeOut(result.payload);
+            return int(result.status);
+        }
+        if (!writeFile(target, result.payload)) return int(Status::Failed);
+        // as the platform writes paths (C:\... on Windows)
+        written = QDir::toNativeSeparators(QFileInfo(target).absoluteFilePath());
+        result.data.insert("output", written);
+    }
+
+    // text, json and csv go to -o when there is no binary payload. A failed
+    // command keeps its own error and does not create the file. "-" is stdout.
+    const bool fileText = result.payload.isEmpty() && !g.output.isEmpty() && g.output != "-"
+                          && (result.ok() || result.status == Status::Partial);
+    // false: the body was not saved. The error is already on stderr.
+    auto saveText = [&](const QByteArray &body, bool wroteOnStderr) -> bool {
+        if (!fileText) {
+            writeOut(body);
+            return true;
+        }
+        if (!writeFile(g.output, body)) return false;
+        if (!g.quiet) {
+            QString msg = wroteMessage(g.output, body.size());
+            if (wroteOnStderr) writeErr(msg);
+            else writeOut(msg.toLocal8Bit());
+        }
+        return true;
+    };
+
+    if (json) {
+        QByteArray body = QJsonDocument(ResultFormat::envelope(command, result)).toJson(QJsonDocument::Indented);
+        if (!saveText(body, true)) return int(Status::Failed);
+    } else if (csv) {
+        // only data on stdout, so it can go straight into a file or a pipe
+        if (!result.ok() && result.status != Status::Partial) {
+            writeErr(QString("error: %1\n").arg(result.error));
+        } else {
+            if (!saveText(ResultFormat::csv(result).toUtf8(), true)) return int(Status::Failed);
+            if (result.status == Status::Partial) writeErr(QString("warning: %1\n").arg(result.error));
+        }
+        for (const QString &w : result.warnings) writeErr(QString("warning: %1\n").arg(w));
+    } else {
+        if (!result.ok() && result.status != Status::Partial) {
+            // a per item report says what went wrong where
+            if (!g.quiet && !result.text.isEmpty()) writeOut(result.text.toLocal8Bit());
+            writeErr(QString("error: %1\n").arg(result.error));
+        } else if (!written.isEmpty()) {
+            if (!g.quiet) writeOut(QString("wrote %1 (%2 bytes)\n").arg(written).arg(result.payload.size()).toLocal8Bit());
+            if (result.status == Status::Partial) writeErr(QString("warning: %1\n").arg(result.error));
+        } else if (!g.quiet || fileText) {
+            if (!saveText(ResultFormat::text(result).toLocal8Bit(), false)) return int(Status::Failed);
+            if (result.status == Status::Partial) writeErr(QString("warning: %1\n").arg(result.error));
+        } else if (result.status == Status::Partial) {
+            writeErr(QString("warning: %1\n").arg(result.error));
+        }
+        for (const QString &w : result.warnings) writeErr(QString("warning: %1\n").arg(w));
+    }
+    return int(result.status);
+}
+
+
 int
 cliMain(int argc, char **argv)
 {
@@ -166,9 +286,10 @@ cliMain(int argc, char **argv)
         args << QString::fromLocal8Bit(argv[i]);
     }
 
-    // the core's commands and serve, for parsing and help
+    // the core's commands, serve and session, for parsing and help
     CommandRegistry registry = commandRegistry();
     registry.add(serveCommand());
+    for (const Command &c : sessionCommands()) registry.add(c);
     const CommandSpec &serveSpec = registry.find("serve")->spec;
 
     CliParse parsed = CliParser::parse(args, registry);
@@ -207,6 +328,114 @@ cliMain(int argc, char **argv)
     if (home.isEmpty()) home = HeadlessApp::defaultHome();
     home = QDir::cleanPath(QFileInfo(home).absoluteFilePath());
 
+    AthleteSession::Options sessionOptions;
+    sessionOptions.lockWaitSeconds = g.lockWait;
+    sessionOptions.force = g.force;
+
+    // on stderr as it goes, when someone is watching
+    std::function<void(const QString &)> progress;
+    if (!g.quiet && !json && !csv && isatty(fileno(stderr)))
+        progress = [](const QString &message) { writeErr(message + "\n"); };
+
+    // the session commands, and any other while a session is open, need
+    // no core here: the session's process has it
+    SessionServer::Options session;
+    if (parsed.command.startsWith("session.")) {
+        QJsonObject sessionArgs = parsed.args;
+        QString error = CommandRegistry::validate(registry.find(parsed.command)->spec, sessionArgs);
+        session.idleMinutes = sessionArgs.value("idle").toDouble(30);
+        if (error.isEmpty() && !(session.idleMinutes >= 0 && session.idleMinutes < 1e6))
+            error = QString("--idle must be 0 or more minutes, not %1").arg(session.idleMinutes);
+        if (!error.isEmpty()) {
+            writeErr(QString("error: %1\n").arg(error));
+            return finish(int(Status::Usage));
+        }
+        session.home = home;
+        session.athlete = CommandRunner::resolveAthlete(home, athlete, error);
+        session.session = sessionOptions;
+        session.quiet = g.quiet;
+        if (session.athlete.isEmpty())
+            return finish(writeResult(g, parsed.command, CommandResult::failure(Status::NotFound, error)));
+
+        QString server = SessionClient::find(home, session.athlete);
+        if (parsed.command == "session.status") {
+            if (server.isEmpty())
+                return finish(writeResult(g, parsed.command, CommandResult::failure(Status::NotFound,
+                                  QString("no session is open for athlete '%1'").arg(session.athlete))));
+            return finish(writeResult(g, parsed.command, SessionClient::status(server)));
+        }
+        if (parsed.command == "session.stop") {
+            if (!server.isEmpty()) return finish(writeResult(g, parsed.command, SessionClient::stop(server)));
+            QJsonObject data;
+            data.insert("athlete", session.athlete);
+            data.insert("stopped", false);
+            CommandResult none = CommandResult::success(data);
+            none.text = QString("no session is open for %1\n").arg(session.athlete);
+            return finish(writeResult(g, parsed.command, none));
+        }
+        if (!sessionArgs.value("foreground").toBool()) {
+            // this command again, in a process of its own that stays
+            QStringList child = { "--cli", "--home", home, "--athlete", session.athlete };
+            if (g.force) child << "--force";
+            if (g.lockWait > 0) child << "--lock-wait" << QString::number(g.lockWait);
+            if (g.noPython) child << "--no-python";
+            if (g.verbose) child << "--verbose";
+            child << "session" << "start" << "--foreground" << "--idle" << QString::number(session.idleMinutes);
+            return finish(writeResult(g, parsed.command,
+                                      SessionServer::start(session, QCoreApplication::applicationFilePath(), child)));
+        }
+
+    } else if (parsed.command != "serve") {
+        // commands on the athlete, and those changing settings its athletes
+        // folder holds for every athlete: they are refused while an athlete
+        // is open elsewhere, and change what the session's athlete uses.
+        // Other commands on the folder only read files, here as well as
+        // there, and a new athlete is none of the session's business.
+        const Command *command = registry.find(parsed.command);
+        bool athleteCommand = command && command->spec.scope == Scope::Athlete;
+        bool forward = athleteCommand || (command && command->spec.modifies && command->spec.name != "athlete.create");
+        QString target, error;
+        if (athleteCommand && QFileInfo(home).isDir()) target = CommandRunner::resolveAthlete(home, athlete, error);
+        QString server = forward && (!athleteCommand || !target.isEmpty()) ? SessionClient::find(home, target) : QString();
+        if (!server.isEmpty()) {
+            CommandRequest request;
+            request.command = parsed.command;
+            request.args = parsed.args;
+            request.home = home;
+            request.athlete = target;
+
+            // stdin is this process's: what the command would read from it
+            // (- for a file) goes to the session in a file
+            QTemporaryFile input;
+            for (const ParamSpec &p : command ? command->spec.params : QList<ParamSpec>()) {
+                if (p.type != ParamType::Path || !request.args.contains(p.name)) continue;
+                QJsonValue v = request.args.value(p.name);
+                QJsonArray values = v.isArray() ? v.toArray() : QJsonArray{ v };
+                bool changed = false;
+                for (int i = 0; i < values.count(); i++) {
+                    if (values.at(i).toString() != "-") continue;
+                    if (!input.isOpen()) {
+                        QFile in;
+                        if (!input.open() || !in.open(stdin, QIODevice::ReadOnly)) {
+                            writeErr("error: can't pass stdin to the session\n");
+                            return finish(int(Status::Failed));
+                        }
+                        input.write(in.readAll());
+                        input.flush();
+                    }
+                    values[i] = input.fileName();
+                    changed = true;
+                }
+                if (changed) request.args.insert(p.name, v.isArray() ? QJsonValue(values) : values.at(0));
+            }
+
+            CommandResult result;
+            if (SessionClient::run(server, request, progress, result))
+                return finish(writeResult(g, request.command, result));
+            // gone (or going) meanwhile: run here, as without one
+        }
+    }
+
     HeadlessApp::Options appOptions;
     appOptions.python = !g.noPython;
     appOptions.verbose = g.verbose;
@@ -222,18 +451,26 @@ cliMain(int argc, char **argv)
         HeadlessApp::initialiseMetrics();
     }
 
-    AthleteSession::Options sessionOptions;
-    sessionOptions.lockWaitSeconds = g.lockWait;
-    sessionOptions.force = g.force;
+    // session start --foreground: the session is this process
+    if (parsed.command == "session.start") {
+        if (!HeadlessApp::isInitialised()) {
+            writeErr(QString("error: %1\n").arg(HeadlessApp::missingHome(home)));
+            return finish(int(Status::NotFound));
+        }
+        return finish(SessionServer::run(session));
+    }
 
     if (parsed.command == "serve") {
         QJsonObject serveArgs = parsed.args;
         QString error = CommandRegistry::validate(serveSpec, serveArgs);
         // httpserver reads the size as an int of bytes
         int port = serveArgs.value("port").toInt(), maxUpload = serveArgs.value("max-upload").toInt();
+        double keepOpen = serveArgs.value("keep-open").toDouble();
         if (error.isEmpty() && (port < 1 || port > 65535)) error = QString("--port must be 1 to 65535, not %1").arg(port);
         if (error.isEmpty() && (maxUpload < 1 || maxUpload > 2047))
             error = QString("--max-upload must be 1 to 2047 (MB), not %1").arg(maxUpload);
+        if (error.isEmpty() && !(keepOpen >= 0 && keepOpen < 1e6))
+            error = QString("--keep-open must be 0 or more minutes, not %1").arg(keepOpen);
         if (!error.isEmpty()) {
             writeErr(QString("error: %1\n").arg(error));
             return finish(int(Status::Usage));
@@ -249,6 +486,7 @@ cliMain(int argc, char **argv)
         options.maxUploadBytes = qint64(serveArgs.value("max-upload").toInt()) * 1024 * 1024;
         options.home = home;
         options.session = sessionOptions;
+        options.keepOpenMinutes = keepOpen;
         options.quiet = g.quiet;
         return finish(RestServer::run(options));
     }
@@ -261,79 +499,10 @@ cliMain(int argc, char **argv)
 
     CommandRunner::Options runOptions;
     runOptions.session = sessionOptions;
-    if (!g.quiet && !json && !csv && isatty(fileno(stderr))) {
-        runOptions.progress = [](const QString &message) { writeErr(message + "\n"); };
-    }
+    runOptions.progress = progress;
 
     CommandResult result = CommandRunner::run(commandRegistry(), request, runOptions);
-
-    // binary output: a chart or an exported activity. -o names the file;
-    // without it, the command's suggested name is used
-    QString written;
-    if (!result.payload.isEmpty()) {
-        QString target = g.output.isEmpty() ? result.payloadName : g.output;
-        if (target == "-") {
-#ifdef Q_OS_WIN
-            // images and exports are bytes, don't let the C runtime add \r
-            _setmode(_fileno(stdout), _O_BINARY);
-#endif
-            writeOut(result.payload);
-            return finish(int(result.status));
-        }
-        if (!writeFile(target, result.payload)) return finish(int(Status::Failed));
-        // as the platform writes paths (C:\... on Windows)
-        written = QDir::toNativeSeparators(QFileInfo(target).absoluteFilePath());
-        result.data.insert("output", written);
-    }
-
-    // text, json and csv go to -o when there is no binary payload. A failed
-    // command keeps its own error and does not create the file. "-" is stdout.
-    const bool fileText = result.payload.isEmpty() && !g.output.isEmpty() && g.output != "-"
-                          && (result.ok() || result.status == Status::Partial);
-    // false: the body was not saved. The error is already on stderr.
-    auto saveText = [&](const QByteArray &body, bool wroteOnStderr) -> bool {
-        if (!fileText) {
-            writeOut(body);
-            return true;
-        }
-        if (!writeFile(g.output, body)) return false;
-        if (!g.quiet) {
-            QString msg = wroteMessage(g.output, body.size());
-            if (wroteOnStderr) writeErr(msg);
-            else writeOut(msg.toLocal8Bit());
-        }
-        return true;
-    };
-
-    if (json) {
-        QByteArray body = QJsonDocument(ResultFormat::envelope(request.command, result)).toJson(QJsonDocument::Indented);
-        if (!saveText(body, true)) return finish(int(Status::Failed));
-    } else if (csv) {
-        // only data on stdout, so it can go straight into a file or a pipe
-        if (!result.ok() && result.status != Status::Partial) {
-            writeErr(QString("error: %1\n").arg(result.error));
-        } else {
-            if (!saveText(ResultFormat::csv(result).toUtf8(), true)) return finish(int(Status::Failed));
-            if (result.status == Status::Partial) writeErr(QString("warning: %1\n").arg(result.error));
-        }
-        for (const QString &w : result.warnings) writeErr(QString("warning: %1\n").arg(w));
-    } else {
-        if (!result.ok() && result.status != Status::Partial) {
-            // a per item report says what went wrong where
-            if (!g.quiet && !result.text.isEmpty()) writeOut(result.text.toLocal8Bit());
-            writeErr(QString("error: %1\n").arg(result.error));
-        } else if (!written.isEmpty()) {
-            if (!g.quiet) writeOut(QString("wrote %1 (%2 bytes)\n").arg(written).arg(result.payload.size()).toLocal8Bit());
-            if (result.status == Status::Partial) writeErr(QString("warning: %1\n").arg(result.error));
-        } else if (!g.quiet || fileText) {
-            if (!saveText(ResultFormat::text(result).toLocal8Bit(), false)) return finish(int(Status::Failed));
-            if (result.status == Status::Partial) writeErr(QString("warning: %1\n").arg(result.error));
-        } else if (result.status == Status::Partial) {
-            writeErr(QString("warning: %1\n").arg(result.error));
-        }
-        for (const QString &w : result.warnings) writeErr(QString("warning: %1\n").arg(w));
-    }
-    return finish(int(result.status));
+    return finish(writeResult(g, request.command, result));
 }
 
 } // namespace Headless

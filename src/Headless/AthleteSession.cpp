@@ -136,6 +136,40 @@ AthleteSession::open(const QString &home, const QString &name, const Options &op
     return session;
 }
 
+void
+AthleteSession::commandStarts(bool modifies)
+{
+    if (commands_ == 0) {
+        readOnly_ = !modifies;
+    } else {
+        readOnly_ = readOnly_ && !modifies;
+        refreshedOnOpen_ = 0;
+    }
+    commands_++;
+}
+
+void
+AthleteSession::commandEnds()
+{
+    RideCache *cache = rideCache();
+    if (!cache) return;
+
+    // a refresh or a save a command started is finished before the next one
+    waitForRefresh();
+
+    // activities the cache let go of go now, as the session's end has it
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+    // the next command reads activities from their files, as a command
+    // that opens the athlete would: one left open holds its file as it was
+    // read, and the samples (and .cpx bests) of a whole library would pile
+    // up in memory
+    for (RideItem *item : cache->rides()) item->close();
+
+    // other processes read the settings from disk
+    appsettings->syncQSettings();
+}
+
 AthleteSession::~AthleteSession()
 {
     if (athlete_) {
@@ -329,6 +363,70 @@ ActivityLookup::find(const QString &id, QString &error) const
     }
 
     error = QString("%1activity '%2' not found").arg(planned ? "planned " : "").arg(key);
+    return nullptr;
+}
+
+AthleteSession *
+SessionKeeper::open(const QString &home, const QString &name, const AthleteSession::Options &options,
+                    CommandResult &failure)
+{
+    if (AthleteSession *session = find(home, name)) {
+        for (Kept &k : kept) if (k.session.get() == session) k.used.start();
+        return session;
+    }
+    std::unique_ptr<AthleteSession> session = AthleteSession::open(home, name, options, failure);
+    if (!session) return nullptr;
+    Kept k;
+    k.session = std::move(session);
+    k.used.start();
+    kept.push_back(std::move(k));
+    return kept.back().session.get();
+}
+
+void
+SessionKeeper::done(AthleteSession *session, const CommandResult &result)
+{
+    if (result.status == Status::Internal) {
+        close(session);
+        return;
+    }
+    session->commandEnds();
+    for (Kept &k : kept) if (k.session.get() == session) k.used.start();
+}
+
+void
+SessionKeeper::close(AthleteSession *session)
+{
+    for (auto it = kept.begin(); it != kept.end(); ++it) {
+        if (it->session.get() != session) continue;
+        // out of the list first: closing turns the event loop
+        std::unique_ptr<AthleteSession> closing = std::move(it->session);
+        kept.erase(it);
+        closing.reset();
+        return;
+    }
+}
+
+void
+SessionKeeper::closeAll()
+{
+    while (!kept.empty()) close(kept.back().session.get());
+}
+
+int
+SessionKeeper::closeIdle(qint64 idleMs)
+{
+    QList<AthleteSession *> idle;
+    for (const Kept &k : kept) if (k.used.elapsed() >= idleMs) idle << k.session.get();
+    for (AthleteSession *session : idle) close(session);
+    return idle.count();
+}
+
+AthleteSession *
+SessionKeeper::find(const QString &home, const QString &name) const
+{
+    QString folder = QFileInfo(QDir(home).absoluteFilePath(name)).canonicalFilePath();
+    for (const Kept &k : kept) if (k.session->folder() == folder) return k.session.get();
     return nullptr;
 }
 

@@ -79,7 +79,8 @@ gc-cli -a Joe --format csv activity overview last --tile "Intervals Data" > inte
 | Plans | `plan add`, `plan list`, `plan move\|copy`, `plan link\|unlink`, `plan shift`, `plan repeat`, `plan export\|import`, `plan adherence`, `calendar summary` |
 | Seasons | `season list\|show\|add\|edit\|remove`, `season phase add\|edit\|remove`, `event list\|add\|edit\|remove` |
 | Charts | `chart activity`, `chart meanmax`, `chart pmc`, `chart zones [--type power\|hr\|pace\|fatigue]`, `chart trend` (`--as png\|svg\|pdf`, `--width`, `--height`, `--dark`), `chart library list\|show\|add\|edit\|remove`, `chart library curve add\|edit\|remove`, `chart library render\|data` |
-| Server | `serve` (see [REST API](#rest-api)) |
+| Sessions | `session start [--idle MINUTES]`, `session status`, `session stop` (see [Sessions](#sessions)) |
+| Server | `serve [--keep-open MINUTES]` (see [REST API](#rest-api)) |
 
 ### Downloading activities
 
@@ -508,9 +509,26 @@ gc-cli -a Joe processor run estimate-power --filter 'isRun = 0 and Sport = "Bike
 
 The report lists each activity as processed, skipped (no change) or failed, with the script's output and errors. Processed activities are saved, so the trends and critical power charts use the new values. Use `--dry-run` to run without saving.
 
+## Sessions
+
+Every command opens the athlete: it reads the ride cache (`rideDB.json`, tens of megabytes on a large library) and checks each activity file against it. On a local disk that takes a few seconds. On a slow folder, such as a Windows drive seen from WSL or a network share, it can take most of a minute, for every command. A session opens the athlete once and keeps it open for the commands that follow:
+
+```sh
+gc-cli -a Joe session start          # returns once the athlete is open
+gc-cli -a Joe zones show --sport Run # these run in the session,
+gc-cli -a Joe activity set last ...  # one after the other, as usual
+gc-cli -a Joe session stop           # saved and unlocked when it returns
+```
+
+`session start` opens the athlete in a background process. Until `session stop`, the command line sends every command on that athlete to it, and writes the result out as the command would have: the same output, `-o` files and exit status. Relative paths and `-` for stdin are the caller's. Commands that change settings shared by all athletes in the folder (`field add`, `processor install`) run in the session too, because they change what its athlete uses. The session closes after 30 minutes without a command (`--idle MINUTES`, 0 for never), on SIGINT or SIGTERM, and when `session stop` asks. `session status` says whether one is open (exit status 3 when not). `--force`, `--lock-wait` and `--no-python` given to `session start` apply to the session. The session also has its own environment: the time zone and umask of `session start`.
+
+While a session is open the athlete is locked, as if the GUI had it open. Other tools that edit the athlete folder directly aren't seen by the session as they are by a command that opens the athlete itself:
+- After another tool edited activity files, run `athlete refresh`. It checks the files again, as opening the athlete does.
+- Zones, settings and other files under `config`, and activity files that were added or removed, are read when the session starts. Stop the session before such a tool runs and start it again after.
+
 ## Living with other tools and the GUI
 
-- **Only one GoldenCheetah at a time.** While the GUI has an athlete open, commands on that athlete refuse to run (exit status 4). The same applies to a command running while another command or the REST server is using the athlete. Add `--lock-wait SECS` to wait instead. Older GoldenCheetah versions don't take the lock, so a command also refuses when the athlete is marked as not closed cleanly. If GoldenCheetah really isn't running (it crashed), use `--force` once.
+- **Only one GoldenCheetah at a time.** While the GUI has an athlete open, commands on that athlete refuse to run (exit status 4). The same applies to a command running while another command, a session or the REST server is using the athlete. Add `--lock-wait SECS` to wait instead. Older GoldenCheetah versions don't take the lock, so a command also refuses when the athlete is marked as not closed cleanly. If GoldenCheetah really isn't running (it crashed), use `--force` once.
 - **Other systems are told too.** The lock is kept on the machine, not in the athlete folder, so a folder synced between computers (Dropbox, OneDrive) never carries a lock from one to the other. Processes that can't see each other's lock, such as the command line in WSL and the GUI on Windows on the same computer, a container and its host, or two computers sharing a folder, see a note instead: whoever has the athlete open leaves `in-use.json` in the athlete folder and removes it on closing. A note from another system can't be checked from here, so a command refuses (exit status 4) and says who left it. If that process really isn't running any more, use `--force` (in the GUI: open the athlete anyway). GoldenCheetah versions older than this one don't leave the note.
 - **Files on disk are the truth.** Every command starts by bringing the athlete up to date with its activity and zone files, the same refresh the GUI does when it opens an athlete. Tools that edit activity files or zones while GoldenCheetah isn't running are picked up by the next command, and metrics and critical power catch up without opening the window. `athlete refresh --rebuild` recomputes everything.
 - **No questions.** Nothing waits for a dialog. Problems that the GUI would show in a dialog are reported as errors or warnings, and one-off questions such as downloading the default icons are left for the next time the GUI opens.
@@ -522,7 +540,7 @@ The report lists each activity as processed, skipped (no change) or failed, with
 GoldenCheetah --cli --home ~/.goldencheetah serve --port 12022 [--token SECRET]
 ```
 
-This serves every command as JSON under `http://127.0.0.1:12022/v1` until interrupted. Each request opens the athlete, runs the command and closes the athlete again, exactly like a command line run, so the GUI can open the athlete between requests.
+This serves every command as JSON under `http://127.0.0.1:12022/v1` until interrupted. Each request opens the athlete, runs the command and closes the athlete again, exactly like a command line run, so the GUI can open the athlete between requests. With `--keep-open MINUTES` an athlete stays open (and locked) after a request instead, and is closed after that many minutes without one, as in a [session](#sessions).
 
 `GET /v1/openapi.json` describes all routes. Some examples:
 

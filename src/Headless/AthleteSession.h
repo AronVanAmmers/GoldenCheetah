@@ -25,7 +25,9 @@
 #include <QString>
 #include <QHash>
 #include <QStringList>
+#include <QElapsedTimer>
 #include <memory>
+#include <vector>
 
 class Context;
 class Athlete;
@@ -75,10 +77,22 @@ class AthleteSession
         // number of activities that were recomputed when the session opened
         int refreshedOnOpen() const { return refreshedOnOpen_; }
 
-        // the command only reads the athlete: closing leaves the ride cache
-        // on disk alone (tens of megabytes on a large library) unless a
-        // refresh recomputed activities, which is worth keeping
-        void setReadOnly(bool readOnly) { readOnly_ = readOnly; }
+        // every command starts with this. A command that only reads the
+        // athlete leaves the ride cache on disk alone when the session closes
+        // (tens of megabytes on a large library) unless a refresh recomputed
+        // activities, which is worth keeping. In a session kept open for
+        // several commands (SessionKeeper) the cache is saved when any of
+        // them changed something, and only the first one reports the
+        // refresh made when the athlete was opened.
+        void commandStarts(bool modifies);
+
+        // ...and a command in a kept session ends with this: what closing
+        // the athlete would do that the next command must not miss
+        void commandEnds();
+
+        // the athlete was opened for the running command, not kept open
+        // from an earlier one (whose refresh the files may have outlived)
+        bool openedForThisCommand() const { return commands_ <= 1; }
 
         // wait for the model estimates (CP, W' ...) to be computed
         void waitForEstimates();
@@ -96,8 +110,53 @@ class AthleteSession
         Athlete *athlete_ = nullptr;
         std::unique_ptr<AthleteLock> lock_;
         int refreshedOnOpen_ = 0;
+        int commands_ = 0;          // started in this session
         bool readOnly_ = false;
         bool recomputed_ = false;   // a refresh changed what the cache holds
+};
+
+//
+// Athletes kept open from one command to the next, for the session server
+// (session start) and serve --keep-open: opening a large athlete reads the
+// ride cache and checks every activity file, which takes long on a slow
+// folder (a network share, a Windows drive seen from WSL).
+//
+// A kept athlete stays locked, so no other GoldenCheetah changes it in
+// between. Tools that edit its files directly are not seen until athlete
+// refresh (activity files) or the athlete is opened again (anything else).
+//
+class SessionKeeper
+{
+    public:
+
+        ~SessionKeeper() { closeAll(); }
+
+        // the athlete, opened now when it isn't open already; nullptr with
+        // failure set when it can't be opened
+        AthleteSession *open(const QString &home, const QString &name,
+                             const AthleteSession::Options &options, CommandResult &failure);
+
+        // after each command. One that failed unexpectedly may have left the
+        // athlete in any state: it is closed, the next command opens it afresh
+        void done(AthleteSession *session, const CommandResult &result);
+
+        // closed and saved, as at the end of a single command
+        void close(AthleteSession *session);
+        void closeAll();
+
+        // those no command has used for idleMs, returns how many
+        int closeIdle(qint64 idleMs);
+
+        AthleteSession *find(const QString &home, const QString &name) const;
+        int count() const { return int(kept.size()); }
+
+    private:
+
+        struct Kept {
+            std::unique_ptr<AthleteSession> session;
+            QElapsedTimer used;
+        };
+        std::vector<Kept> kept;
 };
 
 // finds activities by id as findActivity does, with the rides indexed

@@ -402,6 +402,13 @@ refreshAthlete(CommandEnvironment &env, const CommandRequest &request)
     AthleteSession &s = *env.session;
     int refreshed = s.refreshedOnOpen();
 
+    // opening it refreshed it; kept open since, the files are checked now
+    // (another tool may have edited them)
+    if (!s.openedForThisCommand()) {
+        s.refresh();
+        refreshed = s.rideCache()->lastStaleCount();
+    }
+
     if (request.args.value("rebuild").toBool(false)) {
         // every activity's metrics recomputed, marked stale as the core
         // does for a changed one (its .cpx is rebuilt when out of date
@@ -1319,7 +1326,10 @@ registerAthleteCommands(CommandRegistry &registry)
     refresh.spec.description =
         "Every command already does this when it opens the athlete: activities and\n"
         "zones changed on disk since the last run are recomputed, the same as opening\n"
-        "the athlete in the GUI. Use --rebuild to recompute everything.";
+        "the athlete in the GUI. Use --rebuild to recompute everything.\n\n"
+        "In a session (session start) the athlete stays open between commands: run\n"
+        "this after another tool edited activity files. Zones and other settings\n"
+        "files edited outside GoldenCheetah are read when the session starts again.";
     refresh.spec.scope = Scope::Athlete;
     refresh.spec.modifies = true;
     refresh.spec.params << ParamSpec("rebuild", ParamType::Bool, "recompute every activity");
