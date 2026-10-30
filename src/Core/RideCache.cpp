@@ -1853,9 +1853,11 @@ RideCache::saveSilent(RideItem *rideItem, QString *error)
         } else removeWhenSaved = currentFile.fileName();
         convert = false; // we just did it already!
 
-        // set the new filename & Start time everywhere
+        // set the new filename & Start time everywhere (not written yet, so
+        // it has no canonical path: that would leave the activity with none,
+        // and reading it again from its file would fail)
         currentFile.setFileName(rideItem->path + QDir::separator() + targetnosuffix + ".json");
-        rideItem->setFileName(QFileInfo(currentFile).canonicalPath(), QFileInfo(currentFile).fileName());
+        rideItem->setFileName(QFileInfo(currentFile).absolutePath(), QFileInfo(currentFile).fileName());
     }
 
     // set target filename
