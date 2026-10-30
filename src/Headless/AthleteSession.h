@@ -97,7 +97,7 @@ class AthleteSession
         std::unique_ptr<AthleteLock> lock_;
         int refreshedOnOpen_ = 0;
         bool readOnly_ = false;
-        bool recomputed_ = false;   // a refresh found activities out of date
+        bool recomputed_ = false;   // a refresh changed what the cache holds
 };
 
 // finds activities by id as findActivity does, with the rides indexed

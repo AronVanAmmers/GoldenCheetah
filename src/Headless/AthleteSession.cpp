@@ -129,7 +129,7 @@ AthleteSession::open(const QString &home, const QString &name, const Options &op
 
     session->waitForRefresh();
     session->refreshedOnOpen_ = session->rideCache()->lastStaleCount();
-    session->recomputed_ = session->refreshedOnOpen_ > 0;
+    session->recomputed_ = session->refreshedOnOpen_ > 0 || session->rideCache()->lastTouchedCount() > 0;
     return session;
 }
 
@@ -230,7 +230,7 @@ AthleteSession::refresh()
     RideCache *cache = rideCache();
     if (!cache) return;
     cache->refresh();
-    if (cache->lastStaleCount() > 0) recomputed_ = true;
+    if (cache->lastStaleCount() > 0 || cache->lastTouchedCount() > 0) recomputed_ = true;
     waitForRefresh();
 }
 

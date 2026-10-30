@@ -605,7 +605,8 @@ RideItem::checkStale()
                 QFile file(fullPath);
 
                 // has timestamp changed ?
-                if (timestamp < QFileInfo(file).lastModified().toSecsSinceEpoch()) {
+                qint64 modified = QFileInfo(file).lastModified().toSecsSinceEpoch();
+                if (timestamp < modified) {
 
                     // if timestamp has changed then check crc
                     unsigned long fcrc = RideFile::computeFileCRC(fullPath);
@@ -613,6 +614,11 @@ RideItem::checkStale()
                     if (crc == 0 || crc != fcrc) {
                         crc = fcrc; // update as expensive to calculate
                         isstale = true;
+                    } else {
+                        // touched but the same (copied, restored from a
+                        // backup, synced): remember when, or every open
+                        // reads the whole file again to find that out
+                        timestamp = static_cast<unsigned long>(modified);
                     }
                 }
 

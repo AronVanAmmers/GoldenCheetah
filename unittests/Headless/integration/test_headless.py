@@ -1156,6 +1156,22 @@ class TestRideCacheSave(Headless):
         self.assertIn(b"Cached surge", after[1])
         self.assertClosed()
 
+    def test_touched_but_unchanged_files_are_read_once(self):
+        # a copy, a restored backup, a sync: the file is newer than the
+        # cache's record but the same. Its new time is kept, or every
+        # command after would read the whole file again to find that out
+        path = os.path.join(self.folder, "activities", self.ride_id + ".json")
+        self.keep(path)
+        later = int(os.stat(path).st_mtime) + 10
+        os.utime(path, (later, later))
+        self.gcj("activity", "list")
+        with open(self.db, encoding="utf-8-sig") as f:
+            ride = [r for r in json.load(f)["RIDES"] if r["filename"] == self.ride_id + ".json"][0]
+        self.assertEqual(int(ride["timestamp"]), later)
+        before = self.snapshot()
+        self.gcj("activity", "list")
+        self.assertEqual(self.snapshot(), before)
+
 
 class TestActivityFields(Headless):
     """activity set edits a field as the Details tab does"""

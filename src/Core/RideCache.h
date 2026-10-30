@@ -87,8 +87,11 @@ class RideCache : public QObject
         // is running ?
         bool isRunning() { QMutexLocker locker(&updateMutex); return refreshThreads.count() != 0; }
 
-        // how many activities the last refresh() found out of date
+        // how many activities the last refresh() found out of date, and
+        // how many it found touched but unchanged (their new timestamp is
+        // worth saving: else each open reads the files again to check)
         int lastStaleCount() const { return lastStaleCount_; }
+        int lastTouchedCount() const { return lastTouchedCount_; }
 
         // the destructor saves the cache to disk, unless told it is the
         // same as when it was loaded (a headless command that only read it)
@@ -253,6 +256,7 @@ class RideCache : public QObject
 
         bool isCancelled = false;
         int lastStaleCount_ = 0;
+        int lastTouchedCount_ = 0;
         bool saveOnClose_ = true;
         QThread *saveThread_ = nullptr;
         QObject *saveWorker_ = nullptr;

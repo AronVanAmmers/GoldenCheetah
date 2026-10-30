@@ -734,15 +734,19 @@ RideCache::refresh()
     if (isRunning()) return;
 
     // how many need refreshing ?
-    int staleCount = 0;
+    int staleCount = 0, touchedCount = 0;
 
     foreach(RideItem *item, rides_) {
         // ok set stale so we refresh
+        unsigned long timestamp = item->timestamp;
         if (item->checkStale())
             staleCount++;
+        else if (item->timestamp != timestamp)
+            touchedCount++;
     }
 
     lastStaleCount_ = staleCount;
+    lastTouchedCount_ = touchedCount;
 
     // start if there is work to do
     // and future watcher can notify of updates
