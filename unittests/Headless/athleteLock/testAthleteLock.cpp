@@ -7,6 +7,8 @@
 #include <QElapsedTimer>
 #include <QDir>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QThread>
 
 // run as a helper process: take the lock on HOLD_LOCK and wait to be killed
@@ -17,6 +19,20 @@ static int holdLock(const QString &dir)
     fprintf(stdout, "locked\n");
     fflush(stdout);
     for (;;) QThread::sleep(1);
+}
+
+static void writeNote(const QString &dir, const QJsonObject &note)
+{
+    QFile file(AthleteLock::notePath(dir));
+    file.open(QFile::WriteOnly);
+    file.write(QJsonDocument(note).toJson());
+}
+
+static QJsonObject readNote(const QString &dir)
+{
+    QFile file(AthleteLock::notePath(dir));
+    if (!file.open(QFile::ReadOnly)) return QJsonObject();
+    return QJsonDocument::fromJson(file.readAll()).object();
 }
 
 class TestAthleteLock : public QObject
@@ -137,6 +153,71 @@ private slots:
         holder->waitForFinished();
         QVERIFY(QFile::exists(AthleteLock::lockFilePath(dir.path())));
 
+        AthleteLock lock(dir.path());
+        QVERIFY(lock.tryLock(0));
+    }
+
+    void noteInTheAthleteFolderWhileLocked() {
+        QTemporaryDir dir;
+        AthleteLock::setHolderName("Lock test");
+        AthleteLock lock(dir.path());
+        QVERIFY(lock.tryLock());
+        QJsonObject note = readNote(dir.path());
+        QCOMPARE(note.value("app").toString(), QString("Lock test"));
+        QCOMPARE(qint64(note.value("pid").toDouble()), QCoreApplication::applicationPid());
+        QCOMPARE(note.value("system").toString(), AthleteLock::systemId());
+        QVERIFY(AthleteLock::notePath(dir.path()).startsWith(QDir(dir.path()).canonicalPath()));
+        lock.unlock();
+        QVERIFY(!QFile::exists(AthleteLock::notePath(dir.path())));
+        AthleteLock::setHolderName(QString());
+    }
+
+    void noteFromAnotherSystemStopsTheLock() {
+        // WSL and Windows, a container and its host: they can't see each
+        // other's lock file, only the note
+        QTemporaryDir dir;
+        writeNote(dir.path(), QJsonObject{ { "app", "GoldenCheetah" }, { "pid", 42 }, { "host", "elsewhere" },
+                                           { "os", "Windows 11" }, { "system", "another-system" } });
+        AthleteLock lock(dir.path());
+        QVERIFY(!lock.tryLock(0));
+        QVERIFY(lock.heldElsewhere());
+        QCOMPARE(lock.holder(), QString("GoldenCheetah (pid 42 on elsewhere, Windows 11)"));
+        QString who;
+        QCOMPARE(AthleteLock::peek(dir.path(), &who), AthleteLock::State::InUse);
+        QCOMPARE(who, lock.holder());
+
+        // it can't be checked, so it waits as long as asked to
+        QElapsedTimer t;
+        t.start();
+        QVERIFY(!lock.tryLock(300));
+        QVERIFY(t.elapsed() >= 250);
+
+        // forced: the note is ours, and goes with the lock
+        QVERIFY(lock.tryLock(0, true));
+        QCOMPARE(readNote(dir.path()).value("system").toString(), AthleteLock::systemId());
+        lock.unlock();
+        QVERIFY(!QFile::exists(AthleteLock::notePath(dir.path())));
+    }
+
+    void staleNoteOfThisSystemIsReplaced() {
+        QTemporaryDir dir;
+        QProcess gone;
+        gone.start(QCoreApplication::applicationFilePath(), QStringList() << "-functions");
+        gone.waitForFinished();
+        writeNote(dir.path(), QJsonObject{ { "app", "GoldenCheetah" }, { "pid", double(gone.processId()) },
+                                           { "system", AthleteLock::systemId() } });
+        QCOMPARE(AthleteLock::peek(dir.path()), AthleteLock::State::Free);
+        AthleteLock lock(dir.path());
+        QVERIFY(lock.tryLock(0));
+        QCOMPARE(qint64(readNote(dir.path()).value("pid").toDouble()), QCoreApplication::applicationPid());
+    }
+
+    void unreadableNoteIsIgnored() {
+        QTemporaryDir dir;
+        QFile file(AthleteLock::notePath(dir.path()));
+        file.open(QFile::WriteOnly);
+        file.write("{ half written");
+        file.close();
         AthleteLock lock(dir.path());
         QVERIFY(lock.tryLock(0));
     }

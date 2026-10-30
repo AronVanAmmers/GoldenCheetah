@@ -98,9 +98,12 @@ AthleteSession::open(const QString &home, const QString &name, const Options &op
 
     // one process at a time: the GUI and other command line runs hold this
     session->lock_.reset(new AthleteLock(folder));
-    if (!session->lock_->tryLock(options.lockWaitSeconds * 1000)) {
+    if (!session->lock_->tryLock(options.lockWaitSeconds * 1000, options.force)) {
+        // another system's note can't be checked: it may be left over
+        QString hint = session->lock_->heldElsewhere() ? "; close it there first, or use --force if it is not running"
+                                                        : "; close it there first";
         failure = CommandResult::failure(Status::Locked,
-                    QString("athlete '%1' is in use by %2; close it there first").arg(name).arg(session->lock_->holder()));
+                    QString("athlete '%1' is in use by %2%3").arg(name).arg(session->lock_->holder()).arg(hint));
         return nullptr;
     }
 

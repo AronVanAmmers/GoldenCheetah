@@ -704,6 +704,27 @@ class TestLivesWithOtherTools(Headless):
             if os.path.exists(old):
                 os.remove(old)
 
+    def test_refuses_while_another_system_has_it(self):
+        # Windows and WSL, a container and its host: each keeps its locks
+        # where the other can't see them, but the note in the athlete folder
+        note = os.path.join(self.folder, "in-use.json")
+        self.addCleanup(lambda: os.path.exists(note) and os.remove(note))
+        with open(note, "w") as f:
+            json.dump({"app": "GoldenCheetah", "pid": 4242, "host": "elsewhere", "os": "Windows 11",
+                       "system": "another-system"}, f)
+        r = self.gca("activity", "list")
+        self.assertEqual(r.code, 4, r)
+        self.assertIn(b"GoldenCheetah (pid 4242 on elsewhere, Windows 11)", r.err)
+        self.assertIn(b"--force", r.err)
+        athlete = self.gcj("athlete", "list")["data"]["athletes"][0]
+        self.assertEqual(athlete["in_use_by"], "GoldenCheetah (pid 4242 on elsewhere, Windows 11)")
+
+        # it can't be checked from here: --force says it's gone
+        r = self.gca("--force", "activity", "list")
+        self.assertEqual(r.code, 0, r)
+        self.assertFalse(os.path.exists(note))
+        self.assertClosed()
+
     def test_refuses_when_gui_did_not_close_cleanly(self):
         ini = os.path.join(self.folder, "config", "athlete-general.ini")
         text = open(ini).read()

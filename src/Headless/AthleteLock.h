@@ -40,6 +40,13 @@
 // folder synced between machines never carries a lock from one to the
 // other. It excludes processes of the same user on the same machine.
 //
+// Processes on different systems can't see each other's lock file: Windows
+// and WSL on one computer, a container and its host, two computers sharing
+// a folder. For those the holder also leaves a note in the athlete folder
+// (in-use.json, removed when it unlocks). A note from another system can't
+// be checked, so it stops the lock being taken until that system removes
+// it, or the user says the athlete isn't open there after all (force).
+//
 class AthleteLock
 {
     public:
@@ -51,8 +58,9 @@ class AthleteLock
         AthleteLock& operator=(const AthleteLock&) = delete;
 
         // try to acquire, waiting up to timeoutMs (0 = don't wait)
-        // returns true if this process now holds the lock
-        bool tryLock(int timeoutMs = 0);
+        // returns true if this process now holds the lock. With force a
+        // note left in the athlete folder by another system is overruled.
+        bool tryLock(int timeoutMs = 0, bool force = false);
 
         // release (only if we acquired it)
         void unlock();
@@ -61,11 +69,35 @@ class AthleteLock
 
         // who holds the lock when tryLock() failed, human readable
         QString holder() const;
-        static QString describe(qint64 pid, const QString &hostname, const QString &appname);
+        static QString describe(qint64 pid, const QString &hostname, const QString &appname,
+                                const QString &system = QString());
         qint64 holderPid() const { return pid; }
+
+        // tryLock() failed because of another system's note, which can't be
+        // checked: the holder may have gone without removing it
+        bool heldElsewhere() const { return elsewhere; }
 
         // the file used for locking, named by a hash of the folder's path
         static QString lockFilePath(const QString &athleteDir);
+
+        // another file of this machine's for the athlete, next to the lock,
+        // and the folder they are in
+        static QString runtimeFilePath(const QString &athleteDir, const QString &suffix);
+        static QString runtimeDirectory();
+
+        // is there a process with this id on this machine
+        static bool processRunning(qint64 pid);
+
+        // the note left in the athlete folder for other systems
+        static QString notePath(const QString &athleteDir);
+
+        // this system, as the note identifies it: a hash of the machine id
+        // and kernel (WSL has its Windows host's computer name)
+        static QString systemId();
+
+        // how the note names this process, e.g. "GoldenCheetah command line"
+        // (default: the application name)
+        static void setHolderName(const QString &name);
 
         // does this process already hold the lock for this athlete?
         static bool heldByThisProcess(const QString &athleteDir);
@@ -81,7 +113,8 @@ class AthleteLock
         QString key;          // canonical athlete path
         bool locked = false;
         qint64 pid = 0;
-        QString hostname, appname;
+        QString hostname, appname, system;
+        bool elsewhere = false;
 };
 
 #endif

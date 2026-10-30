@@ -79,7 +79,13 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
                         .arg(cyclist).arg(lock->holder()),
                         QMessageBox::Retry | QMessageBox::Ignore);
         box.setDefaultButton(QMessageBox::Retry);
-        if (box.exec() != QMessageBox::Retry) break;
+        if (box.exec() != QMessageBox::Retry) {
+            // opened anyway: a note left by another system (the command line
+            // in WSL, another computer on a shared folder) is replaced by
+            // ours, a process on this machine keeps its lock
+            lock->tryLock(0, true);
+            break;
+        }
     }
 
     // get id and set id all at one

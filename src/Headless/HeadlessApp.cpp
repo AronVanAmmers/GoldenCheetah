@@ -24,6 +24,7 @@
 #include "Context.h"
 #include "GcStartup.h"
 #include "Colors.h"
+#include "AthleteLock.h"
 
 #ifdef GC_WANT_PYTHON
 #include "PythonEmbed.h"
@@ -133,6 +134,9 @@ HeadlessApp::createApplication(int &argc, char **argv)
     application = new QApplication(argc, argv);
     application->setApplicationName("GoldenCheetah");
     application->installEventFilter(new DialogGuard(application));
+
+    // what the GUI on another system says is using an athlete
+    AthleteLock::setHolderName("GoldenCheetah command line");
 }
 
 QString

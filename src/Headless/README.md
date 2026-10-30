@@ -37,7 +37,9 @@ A `Context` with a null main window is headless (`Context::isHeadless()`), and `
 
 Saving an activity lives in `RideCache::saveSilent` (formerly `MainWindow::saveSilent`), so the GUI and headless sessions save the same way.
 
-`AthleteLock` (a `QLockFile`) is taken by `Athlete` itself, so the GUI and headless sessions exclude each other. Within one process the lock is shared. The lock file is kept on this machine (`$XDG_RUNTIME_DIR/GoldenCheetah/locks`, else the user's cache folder, named by a hash of the athlete folder's path), not in the athlete folder: athlete folders are often synced between machines, and a lock synced from another machine would never be stale. So it excludes processes of the same user on one machine, not two machines sharing a synced folder.
+`AthleteLock` (a `QLockFile`) is taken by `Athlete` itself, so the GUI and headless sessions exclude each other. Within one process the lock is shared. The lock file is kept on this machine (`$XDG_RUNTIME_DIR/GoldenCheetah/locks`, else the user's cache folder, named by a hash of the athlete folder's path), not in the athlete folder: athlete folders are often synced between machines, and a lock synced from another machine would never be stale. So it excludes processes of the same user on one machine.
+
+For processes that can't see each other's lock file (WSL and Windows on one computer, which also share a host name; a container and its host; two computers on a synced folder), the holder also writes `in-use.json` in the athlete folder: its pid, host, OS and a system id (a hash of `QSysInfo::machineUniqueId()` and the kernel type). A note from another system id stops `tryLock` until it is removed or overruled with `force` (`--force`, the GUI's "open anyway"). One of this system whose process is gone is stale; one whose process is alive counts (a process with another runtime folder). A folder that can't be written gets no note.
 
 ## Adding a command
 

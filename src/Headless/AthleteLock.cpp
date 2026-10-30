@@ -18,12 +18,17 @@
 
 #include "AthleteLock.h"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QThread>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
 #include <QSysInfo>
 #include <QHash>
 #include <QMutex>
@@ -90,6 +95,12 @@ lockDirectory()
 QString
 AthleteLock::lockFilePath(const QString &athleteDir)
 {
+    return runtimeFilePath(athleteDir, ".lock");
+}
+
+QString
+AthleteLock::runtimeFilePath(const QString &athleteDir, const QString &suffix)
+{
     QString key = canonicalKey(athleteDir);
 #ifdef Q_OS_WIN
     // one lock whatever the spelling: long names for 8.3 ones (RUNNER~1),
@@ -104,7 +115,7 @@ AthleteLock::lockFilePath(const QString &athleteDir)
     key = key.toLower();
 #endif
     QByteArray hash = QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha1).toHex().left(16);
-    return lockDirectory() + "/" + QString::fromLatin1(hash) + ".lock";
+    return lockDirectory() + "/" + QString::fromLatin1(hash) + suffix;
 }
 
 // earlier builds of this branch kept the lock in the athlete folder;
@@ -144,29 +155,140 @@ processAlive(qint64 pid)
 #endif
 }
 
+QString
+AthleteLock::runtimeDirectory()
+{
+    return lockDirectory();
+}
+
+bool
+AthleteLock::processRunning(qint64 pid)
+{
+    return processAlive(pid);
+}
+
+QString
+AthleteLock::notePath(const QString &athleteDir)
+{
+    return canonicalKey(athleteDir) + "/in-use.json";
+}
+
+QString
+AthleteLock::systemId()
+{
+    static const QString id = []() {
+        QByteArray machine = QSysInfo::machineUniqueId();
+        if (machine.isEmpty()) machine = QSysInfo::machineHostName().toUtf8();
+        machine += "/" + QSysInfo::kernelType().toUtf8();
+        return QString::fromLatin1(QCryptographicHash::hash(machine, QCryptographicHash::Sha1).toHex().left(16));
+    }();
+    return id;
+}
+
+static QString &holderName()
+{
+    static QString name;
+    return name;
+}
+
+void
+AthleteLock::setHolderName(const QString &name)
+{
+    holderName() = name;
+}
+
+// the note in the athlete folder, for processes that can't see our lock
+struct Note {
+    qint64 pid = 0;
+    QString host, app, system, os;
+};
+
+static bool
+readNote(const QString &key, Note &note)
+{
+    QFile file(AthleteLock::notePath(key));
+    if (!file.open(QFile::ReadOnly)) return false;
+    QJsonObject o = QJsonDocument::fromJson(file.readAll()).object();
+    note.pid = qint64(o.value("pid").toDouble());
+    note.host = o.value("host").toString();
+    note.app = o.value("app").toString();
+    note.system = o.value("system").toString();
+    note.os = o.value("os").toString();
+    // half written, or not ours to read: nobody we can name
+    return !note.system.isEmpty();
+}
+
+// a folder that can't be written (read only, a backup) gets no note: the
+// lock on this machine still holds
+static void
+writeNote(const QString &key)
+{
+    QJsonObject o;
+    o.insert("app", holderName().isEmpty() ? QCoreApplication::applicationName() : holderName());
+    o.insert("pid", double(QCoreApplication::applicationPid()));
+    o.insert("host", QSysInfo::machineHostName());
+    o.insert("os", QSysInfo::prettyProductName());
+    o.insert("system", AthleteLock::systemId());
+    o.insert("since", QDateTime::currentDateTime().toString(Qt::ISODate));
+    QSaveFile file(AthleteLock::notePath(key));
+    if (!file.open(QFile::WriteOnly)) return;
+    file.write(QJsonDocument(o).toJson(QJsonDocument::Indented));
+    file.commit();
+}
+
+// ours only: one that overruled us (force) stays
+static void
+removeNote(const QString &key)
+{
+    Note note;
+    if (!readNote(key, note)) return;
+    if (note.system == AthleteLock::systemId() && note.pid == QCoreApplication::applicationPid())
+        QFile::remove(AthleteLock::notePath(key));
+}
+
+// is the athlete held according to its note: another system's, which can't
+// be checked, or a live process of this system's that keeps its lock
+// elsewhere (another runtime folder). One of this system's whose process
+// has gone is stale.
+static bool
+heldByNote(const QString &key, Note &note)
+{
+    if (!readNote(key, note)) return false;
+    if (note.system != AthleteLock::systemId()) return true;
+    return note.pid != QCoreApplication::applicationPid() && processAlive(note.pid);
+}
+
 AthleteLock::State
 AthleteLock::peek(const QString &athleteDir, QString *holder)
 {
     if (heldByThisProcess(athleteDir)) return State::Free;
 
     QString path = lockFilePath(athleteDir);
-    if (!QFile::exists(path)) return State::Free;
+    if (QFile::exists(path)) {
+        qint64 pid = 0;
+        QString hostname, appname;
+        QLockFile file(path);
+        // being written this moment, or unreadable: assume it's held
+        if (!file.getLockInfo(&pid, &hostname, &appname)) {
+            if (holder) *holder = describe(0, QString(), QString());
+            return State::InUse;
+        }
 
-    qint64 pid = 0;
-    QString hostname, appname;
-    QLockFile file(path);
-    // being written this moment, or unreadable: assume it's held
-    if (!file.getLockInfo(&pid, &hostname, &appname)) {
-        if (holder) *holder = describe(0, QString(), QString());
-        return State::InUse;
+        // a dead local process's lock is stale, the next tryLock removes it.
+        // Another machine's can't be checked, so it counts, as QLockFile has it.
+        bool local = hostname.isEmpty() || hostname == QSysInfo::machineHostName();
+        if (!local || processAlive(pid)) {
+            if (holder) *holder = describe(pid, hostname, appname);
+            return State::InUse;
+        }
     }
 
-    // a dead local process's lock is stale, the next tryLock removes it.
-    // Another machine's can't be checked, so it counts, as QLockFile has it.
-    bool local = hostname.isEmpty() || hostname == QSysInfo::machineHostName();
-    if (local && !processAlive(pid)) return State::Free;
-    if (holder) *holder = describe(pid, hostname, appname);
-    return State::InUse;
+    Note note;
+    if (heldByNote(canonicalKey(athleteDir), note)) {
+        if (holder) *holder = describe(note.pid, note.host, note.app, note.os);
+        return State::InUse;
+    }
+    return State::Free;
 }
 
 AthleteLock::AthleteLock(const QString &athleteDir) : key(canonicalKey(athleteDir))
@@ -179,9 +301,10 @@ AthleteLock::~AthleteLock()
 }
 
 bool
-AthleteLock::tryLock(int timeoutMs)
+AthleteLock::tryLock(int timeoutMs, bool force)
 {
     if (locked) return true;
+    elsewhere = false;
 
     std::shared_ptr<QLockFile> file = std::make_shared<QLockFile>(lockFilePath(key));
 
@@ -194,7 +317,10 @@ AthleteLock::tryLock(int timeoutMs)
     // process may take the lock meanwhile, and then it's shared
     QElapsedTimer waited;
     waited.start();
+    Note note;
+    bool byNote = false;
     for (;;) {
+        byNote = false;
         {
             QMutexLocker locker(&registryMutex);
 
@@ -207,13 +333,21 @@ AthleteLock::tryLock(int timeoutMs)
             }
 
             if (file->tryLock(0)) {
-                removeOldLock(key);
-                LockEntry &entry = registry()[key];
-                entry.count = 1;
-                entry.file = file;
-                locked = true;
-                pid = 0;
-                return true;
+                // nobody here has it, but a process that can't see our
+                // lock may have left a note
+                if (!force && heldByNote(key, note)) {
+                    file->unlock();
+                    byNote = true;
+                } else {
+                    removeOldLock(key);
+                    writeNote(key);
+                    LockEntry &entry = registry()[key];
+                    entry.count = 1;
+                    entry.file = file;
+                    locked = true;
+                    pid = 0;
+                    return true;
+                }
             }
         }
         qint64 left = timeoutMs - waited.elapsed();
@@ -225,7 +359,16 @@ AthleteLock::tryLock(int timeoutMs)
     pid = 0;
     hostname.clear();
     appname.clear();
-    file->getLockInfo(&pid, &hostname, &appname);
+    system.clear();
+    if (byNote) {
+        pid = note.pid;
+        hostname = note.host;
+        appname = note.app;
+        system = note.os;
+        elsewhere = note.system != systemId();
+    } else {
+        file->getLockInfo(&pid, &hostname, &appname);
+    }
     return false;
 }
 
@@ -238,6 +381,9 @@ AthleteLock::unlock()
 
     auto it = registry().find(key);
     if (it != registry().end() && --(it->count) <= 0) {
+        // the note goes first: a process that only sees the note must not
+        // find it after the lock is free
+        removeNote(key);
         if (it->file) it->file->unlock();
         registry().erase(it);
     }
@@ -247,15 +393,17 @@ AthleteLock::unlock()
 QString
 AthleteLock::holder() const
 {
-    return describe(pid, hostname, appname);
+    return describe(pid, hostname, appname, system);
 }
 
 QString
-AthleteLock::describe(qint64 pid, const QString &hostname, const QString &appname)
+AthleteLock::describe(qint64 pid, const QString &hostname, const QString &appname, const QString &system)
 {
     if (pid == 0) return QString("another process");
 
     QString who = appname.isEmpty() ? QString("process") : appname;
-    if (hostname.isEmpty()) return QString("%1 (pid %2)").arg(who).arg(pid);
-    return QString("%1 (pid %2 on %3)").arg(who).arg(pid).arg(hostname);
+    QString where = hostname;
+    if (!system.isEmpty()) where = where.isEmpty() ? system : QString("%1, %2").arg(where).arg(system);
+    if (where.isEmpty()) return QString("%1 (pid %2)").arg(who).arg(pid);
+    return QString("%1 (pid %2 on %3)").arg(who).arg(pid).arg(where);
 }
