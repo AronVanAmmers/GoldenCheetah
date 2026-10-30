@@ -166,7 +166,10 @@ sessionCommands()
         "session is open.\n\n"
         "Tools that edit the athlete folder directly: run athlete refresh after one\n"
         "edited activity files; zones and other settings are read when a session\n"
-        "starts. --force, --lock-wait and --no-python apply to the session.";
+        "starts. --force, --lock-wait and --no-python apply to the session.\n\n"
+        "With a session already open for the athlete this succeeds and says so\n"
+        "(already_open), and leaves it as it is. After a session closes, by session\n"
+        "stop or --idle, commands open the athlete themselves again.";
     start.spec.scope = Scope::Athlete;
     start.spec.params << ParamSpec("idle", ParamType::Double, "close after this many minutes without a command, 0 = never").def(30);
     start.spec.params << ParamSpec("foreground", ParamType::Bool, "run the session in this process until stopped (ctrl-c)");
@@ -174,12 +177,14 @@ sessionCommands()
     Command stop;
     stop.spec.name = "session.stop";
     stop.spec.summary = "close the athlete's session, saved and unlocked when this returns";
+    stop.spec.description = "Succeeds when no session is open too, and says so (stopped: false).";
     stop.spec.scope = Scope::Athlete;
 
     Command status;
     status.spec.name = "session.status";
     status.spec.summary = "is a session open for the athlete, and since when";
-    status.spec.description = "Exits 3 when no session is open.";
+    status.spec.description = "Says since when it is open and how many commands it ran. Exits 3 when no\n"
+                              "session is open.";
     status.spec.scope = Scope::Athlete;
 
     return { start, stop, status };

@@ -10,7 +10,7 @@ GoldenCheetah can run its main jobs without opening a window. You can:
 
 The same commands are available from the command line and, over HTTP, as a REST API.
 
-Each command opens the athlete, runs, saves and closes the athlete again before it exits. GoldenCheetah does not stay running.
+Each command opens the athlete, runs, saves and closes the athlete again before it exits. GoldenCheetah does not stay running. (On a slow folder, such as a Windows drive seen from WSL, a [session](#sessions) keeps the athlete open for a series of commands. You don't need one otherwise.)
 
 ```sh
 GoldenCheetah --cli --athlete Joe import ~/Downloads/morning-ride.fit
@@ -509,6 +509,8 @@ gc-cli -a Joe processor run estimate-power --filter 'isRun = 0 and Sport = "Bike
 
 The report lists each activity as processed, skipped (no change) or failed, with the script's output and errors. Processed activities are saved, so the trends and critical power charts use the new values. Use `--dry-run` to run without saving.
 
+Each of these commands opens the athlete on its own. If that is slow where your athletes are, run them in a [session](#sessions); the commands stay the same.
+
 ## Sessions
 
 Every command opens the athlete: it reads the ride cache (`rideDB.json`, tens of megabytes on a large library) and checks each activity file against it. On a local disk that takes a few seconds. On a slow folder, such as a Windows drive seen from WSL or a network share, it can take most of a minute, for every command. A session opens the athlete once and keeps it open for the commands that follow:
@@ -520,9 +522,21 @@ gc-cli -a Joe activity set last ...  # one after the other, as usual
 gc-cli -a Joe session stop           # saved and unlocked when it returns
 ```
 
-`session start` opens the athlete in a background process. Until `session stop`, the command line sends every command on that athlete to it, and writes the result out as the command would have: the same output, `-o` files and exit status. Relative paths and `-` for stdin are the caller's. Commands that change settings shared by all athletes in the folder (`field add`, `processor install`) run in the session too, because they change what its athlete uses. The session closes after 30 minutes without a command (`--idle MINUTES`, 0 for never), on SIGINT or SIGTERM, and when `session stop` asks. `session status` says whether one is open (exit status 3 when not). `--force`, `--lock-wait` and `--no-python` given to `session start` apply to the session. The session also has its own environment: the time zone and umask of `session start`.
+`session start` opens the athlete in a background process. Until the session closes, the command line sends every command on that athlete to it, and writes the result out as the command would have: the same output, `-o` files and exit status. In a session:
+
+- Relative paths and `-` for stdin are the caller's, as without a session.
+- Commands that change settings shared by all athletes in the folder (`field add`, `processor install`) run in the session too, because they change what its athlete uses. Other commands on the athletes folder (`athlete list`, `athlete create`) run on their own.
+- `--force`, `--lock-wait` and `--no-python` given to `session start` apply to the session. The session also has its own environment: the time zone and umask of `session start`.
+
+Starting, checking and stopping:
+
+- `session start` when a session is already open for the athlete succeeds, says so (`already_open` in JSON) and leaves that session as it is. It doesn't read the files again: use `athlete refresh` for that.
+- `session status` says whether a session is open, since when and how many commands it ran. It exits with status 3 when none is open.
+- `session stop` returns once the athlete is saved and unlocked. When no session is open it succeeds too, and says so (`stopped: false`).
+- A session also closes after 30 minutes without a command (`--idle MINUTES`, 0 for never), and on SIGINT or SIGTERM. Commands after that open the athlete themselves again, as without a session. So does a command that finds the session gone or closing.
 
 While a session is open the athlete is locked, as if the GUI had it open. Other tools that edit the athlete folder directly aren't seen by the session as they are by a command that opens the athlete itself:
+
 - After another tool edited activity files, run `athlete refresh`. It checks the files again, as opening the athlete does.
 - Zones, settings and other files under `config`, and activity files that were added or removed, are read when the session starts. Stop the session before such a tool runs and start it again after.
 
