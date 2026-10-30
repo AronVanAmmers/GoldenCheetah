@@ -538,11 +538,18 @@ class TestEstimatePowerWorkflow(Headless):
         self.assertEqual(env["data"]["activities"][0]["output"], "looked")
 
     def step_5_dry_run_saves_nothing(self):
-        path = os.path.join(self.folder, "activities", self.activity_files()[0])
+        # a wind the estimate changes the anchor for
+        bike = [a["id"] for a in self.gcj("activity", "list", "--filter", "isRun=0")["data"]["activities"]][0]
+        self.gcj("activity", "set", bike, "--set", "EP Wind Speed=7")
+        path = os.path.join(self.folder, "activities", bike + ".json")
         before = open(path, "rb").read()
+        listed = self.gcj("activity", "list", "--field", "EP Anchor W")["data"]["activities"]
         env = self.gcj("processor", "run", "estimate-power", "--all", "--dry-run")
         self.assertFalse(env["data"]["saved"])
+        self.assertIn("processed", [a["status"] for a in env["data"]["activities"]])
         self.assertEqual(open(path, "rb").read(), before)
+        # nor does the ride cache keep what the script set
+        self.assertEqual(self.gcj("activity", "list", "--field", "EP Anchor W")["data"]["activities"], listed)
 
     def step_6_builtin_processor(self):
         env = self.gcj("processor", "run", "fixspikes", "--sport", "Bike")

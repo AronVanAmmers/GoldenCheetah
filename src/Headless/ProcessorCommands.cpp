@@ -300,6 +300,19 @@ runOn(DataProcessor *dp, RideItem *item, QString &output, bool &changed)
     return QString();
 }
 
+// a change thrown away (a dry run, a failure): the activity's fields and
+// metrics as its file has them again. A processor's changes notify the
+// activity, which computes them from the change in memory, and the ride
+// cache would keep (and save) those.
+static void
+discardChange(RideItem *item)
+{
+    item->setDirty(false);
+    item->close();
+    item->isstale = true;
+    item->refresh();
+}
+
 static CommandResult
 runProcessor(CommandEnvironment &env, const CommandRequest &request)
 {
@@ -349,7 +362,7 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
             r.insert("message", why);
             failed++;
             // throw away a half done change
-            item->close();
+            discardChange(item);
         } else if (!changed) {
             r.insert("status", "skipped");
             r.insert("message", "no change");
@@ -359,15 +372,13 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
             item->setDirty(true);
             QString saveError;
             if (dryRun) {
-                item->setDirty(false);  // thrown away below
-                item->close();
+                discardChange(item);
             } else if (cache->saveActivity(item, saveError)) {
                 saved++;
             } else {
                 r.insert("status", "failed");
                 r.insert("message", saveError);
-                item->setDirty(false);
-                item->close();
+                discardChange(item);
                 failed++;
             }
             if (!r.contains("status")) {
