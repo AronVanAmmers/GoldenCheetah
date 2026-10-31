@@ -399,8 +399,11 @@ cliMain(int argc, char **argv)
         const Command *command = registry.find(parsed.command);
         bool athleteCommand = command && command->spec.scope == Scope::Athlete;
         bool forward = athleteCommand || (command && command->spec.modifies && command->spec.name != "athlete.create");
-        QString target, error;
-        if (athleteCommand && QFileInfo(home).isDir()) target = CommandRunner::resolveAthlete(home, athlete, error);
+        // which athlete without --athlete means listing the athletes folder:
+        // only when a session is open there at all
+        QString target = athlete, error;
+        if (forward && athleteCommand && target.isEmpty() && !SessionClient::find(home, QString()).isEmpty())
+            target = CommandRunner::resolveAthlete(home, athlete, error);
         QString server = forward && (!athleteCommand || !target.isEmpty()) ? SessionClient::find(home, target) : QString();
         if (!server.isEmpty()) {
             CommandRequest request;

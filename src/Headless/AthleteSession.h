@@ -172,6 +172,7 @@ class SessionKeeper
         struct Kept {
             std::unique_ptr<AthleteSession> session;
             QElapsedTimer used;
+            QString home, name;     // as first asked for
         };
         std::vector<Kept> kept;
 };

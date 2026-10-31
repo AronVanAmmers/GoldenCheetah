@@ -178,17 +178,26 @@ live(const QJsonObject &info)
 QString
 SessionClient::find(const QString &home, const QString &athlete)
 {
-    if (!athlete.isEmpty()) {
-        QJsonObject info = readInfo(infoPath(athleteFolder(home, athlete)));
-        return live(info) ? info.value("server").toString() : QString();
-    }
-
-    QString canonicalHome = QFileInfo(home).canonicalFilePath();
-    if (canonicalHome.isEmpty()) return QString();
-    QStringList servers;
+    // the sessions' files are on this machine and cost nothing to read. The
+    // athletes folder may be on a slow one (a Windows drive from WSL): its
+    // canonical path is only looked up for a session whose home isn't
+    // spelled the way the caller spells it (a symbolic link)
+    QList<QJsonObject> candidates;
     for (const QFileInfo &f : QDir(AthleteLock::runtimeDirectory()).entryInfoList({ "*.session" }, QDir::Files)) {
         QJsonObject info = readInfo(f.absoluteFilePath());
-        if (live(info) && info.value("home").toString() == canonicalHome) servers << info.value("server").toString();
+        if (live(info) && (athlete.isEmpty() || info.value("athlete").toString() == athlete)) candidates << info;
+    }
+    if (candidates.isEmpty()) return QString();
+
+    QString canonicalHome;
+    QStringList servers;
+    for (const QJsonObject &info : candidates) {
+        bool same = info.value("given_home").toString() == home || info.value("home").toString() == home;
+        if (!same) {
+            if (canonicalHome.isNull()) canonicalHome = QFileInfo(home).canonicalFilePath();
+            same = !canonicalHome.isEmpty() && info.value("home").toString() == canonicalHome;
+        }
+        if (same) servers << info.value("server").toString();
     }
     return servers.count() == 1 ? servers.first() : QString();
 }
@@ -316,6 +325,7 @@ SessionServer::run(const Options &options)
     QJsonObject info;
     info.insert("pid", double(QCoreApplication::applicationPid()));
     info.insert("home", home);
+    info.insert("given_home", options.home);
     info.insert("athlete", options.athlete);
     info.insert("folder", folder);
     info.insert("server", name);
@@ -415,11 +425,16 @@ SessionServer::run(const Options &options)
 
         // ours to run: commands on this athlete, and on the athletes folder
         // it is in (they change what the athlete uses, as in the GUI)
+        // (spelled as the session was started, the client's usual case,
+        // without looking at the folder)
         CommandResult result;
         const Command *command = commandRegistry().find(request.command);
         bool athleteCommand = command && command->spec.scope == Scope::Athlete;
-        if (QFileInfo(r.value("home").toString()).canonicalFilePath() != home
-            || (athleteCommand && athleteFolder(r.value("home").toString(), r.value("athlete").toString()) != folder)) {
+        QString rHome = r.value("home").toString(), rAthlete = r.value("athlete").toString();
+        bool ours = rHome == options.home || QFileInfo(rHome).canonicalFilePath() == home;
+        if (ours && athleteCommand)
+            ours = (rHome == options.home && rAthlete == options.athlete) || athleteFolder(rHome, rAthlete) == folder;
+        if (!ours) {
             result = CommandResult::failure(Status::Usage, QString("this session is for athlete '%1' in %2").arg(options.athlete).arg(home));
         } else {
             CommandRunner::Options run;

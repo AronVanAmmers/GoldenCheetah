@@ -430,6 +430,8 @@ SessionKeeper::open(const QString &home, const QString &name, const AthleteSessi
     Kept k;
     k.session = std::move(session);
     k.used.start();
+    k.home = home;
+    k.name = name;
     kept.push_back(std::move(k));
     return kept.back().session.get();
 }
@@ -476,6 +478,9 @@ SessionKeeper::closeIdle(qint64 idleMs)
 AthleteSession *
 SessionKeeper::find(const QString &home, const QString &name) const
 {
+    // asked for the same way: no need to look at a (maybe slow) folder
+    for (const Kept &k : kept) if (k.home == home && k.name == name) return k.session.get();
+    if (kept.empty()) return nullptr;
     QString folder = QFileInfo(QDir(home).absoluteFilePath(name)).canonicalFilePath();
     for (const Kept &k : kept) if (k.session->folder() == folder) return k.session.get();
     return nullptr;
