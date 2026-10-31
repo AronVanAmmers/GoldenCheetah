@@ -551,7 +551,7 @@ RideItem::setStartTime(QDateTime newDateTime)
 
 // check if we need to be refreshed
 bool
-RideItem::checkStale()
+RideItem::checkStale(bool checkFiles)
 {
     // if we're marked stale already then just return that !
     if (isstale) return true;
@@ -604,9 +604,9 @@ RideItem::checkStale()
                 QString fullPath =  QString(context->athlete->home->activities().absolutePath()) + "/" + fileName;
                 QFile file(fullPath);
 
-                // has timestamp changed ?
-                qint64 modified = QFileInfo(file).lastModified().toSecsSinceEpoch();
-                if (timestamp < modified) {
+                // has timestamp changed ? (unless the caller knows it hasn't)
+                qint64 modified = checkFiles ? QFileInfo(file).lastModified().toSecsSinceEpoch() : 0;
+                if (checkFiles && timestamp < modified) {
 
                     // if timestamp has changed then check crc
                     unsigned long fcrc = RideFile::computeFileCRC(fullPath);
@@ -632,7 +632,7 @@ RideItem::checkStale()
     }
 
     // still reckon its clean? what about the cache ?
-    if (isstale == false) isstale = RideFileCache::checkStale(context, this);
+    if (isstale == false && checkFiles) isstale = RideFileCache::checkStale(context, this);
 
     // we need to mark stale in case "special" fields may have changed (e.g. CP)
     if (metacrc != metaCRC()) isstale = true;

@@ -24,6 +24,7 @@
 
 #include <QString>
 #include <QHash>
+#include <QSet>
 #include <QStringList>
 #include <QElapsedTimer>
 #include <memory>
@@ -74,6 +75,19 @@ class AthleteSession
         // check the files on disk again and recompute what changed
         void refresh();
 
+        // after a command saved activities: recompute those it saved or
+        // added, and any marked stale, as refresh() would, without checking
+        // the files of all the others (nothing else can have changed them
+        // while the athlete is locked; on a slow folder that check is most
+        // of a save's time). Changes every activity depends on (zones,
+        // measures, settings) need refresh().
+        void refreshChanged();
+
+        // after a change of settings every activity may depend on (weight,
+        // zones): each is checked against it, as refresh() does, but not
+        // against its files, which the athlete's lock keeps as they were
+        void refreshSettings();
+
         // number of activities that were recomputed when the session opened
         int refreshedOnOpen() const { return refreshedOnOpen_; }
 
@@ -111,6 +125,9 @@ class AthleteSession
         std::unique_ptr<AthleteLock> lock_;
         int refreshedOnOpen_ = 0;
         int commands_ = 0;          // started in this session
+        bool modifies_ = false;     // the running one changes the athlete
+        QSet<QString> known_;       // activities (path) when the command started
+        QSet<RideItem *> saved_;    // saved since
         bool readOnly_ = false;
         bool recomputed_ = false;   // a refresh changed what the cache holds
 };

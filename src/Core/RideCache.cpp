@@ -249,9 +249,12 @@ RideCache::configChanged(qint32 what)
     qint32 want = CONFIG_ATHLETE | CONFIG_ZONES | CONFIG_NOTECOLOR | CONFIG_DISCOVERY | CONFIG_GENERAL | CONFIG_USERMETRICS;
     if (what & want) {
 
-        // restart !
+        // restart ! A headless command checked the files when it opened
+        // the athlete, and nothing else changes them while it holds it:
+        // only what the change affects is checked (a slow folder takes most
+        // of a refresh to check the files)
         cancel();
-        refresh();
+        refresh(rides_, !context->isHeadless());
     }
 }
 
@@ -674,6 +677,11 @@ RideCache::refreshFinished()
     //fprintf(stderr,"refresh ended\n"); fflush(stderr);
     context->notifyRefreshEnd();
     garbageCollect();
+
+    // kept safe in case GoldenCheetah stops before closing the athlete. A
+    // headless session saves it when it closes the athlete: after every
+    // change would write the whole cache (tens of megabytes) each time
+    if (context->isHeadless()) return;
     QMetaObject::invokeMethod(saveWorker_, [this]() {
         save();
     }, Qt::QueuedConnection);
@@ -730,16 +738,22 @@ RideCache::cancel()
 void
 RideCache::refresh()
 {
+    refresh(rides_);
+}
+
+void
+RideCache::refresh(const QVector<RideItem*> &items, bool checkFiles)
+{
     // already on it !
     if (isRunning()) return;
 
     // how many need refreshing ?
     int staleCount = 0, touchedCount = 0;
 
-    foreach(RideItem *item, rides_) {
+    foreach(RideItem *item, items) {
         // ok set stale so we refresh
         unsigned long timestamp = item->timestamp;
-        if (item->checkStale())
+        if (item->checkStale(checkFiles))
             staleCount++;
         else if (item->timestamp != timestamp)
             touchedCount++;

@@ -533,6 +533,7 @@ Starting, checking and stopping:
 - `session start` when a session is already open for the athlete succeeds, says so (`already_open` in JSON) and leaves that session as it is. It doesn't read the files again: use `athlete refresh` for that.
 - `session status` says whether a session is open, since when and how many commands it ran. It exits with status 3 when none is open.
 - `session stop` returns once the athlete is saved and unlocked. When no session is open it succeeds too, and says so (`stopped: false`).
+- Activities are saved as each command changes them. The ride cache (`rideDB.json`, the metrics of every activity) is written once, when the session closes. A session that was killed leaves the previous one, and the next command recomputes what changed.
 - A session also closes after 30 minutes without a command (`--idle MINUTES`, 0 for never), and on SIGINT or SIGTERM. Commands after that open the athlete themselves again, as without a session. So does a command that finds the session gone or closing.
 
 While a session is open the athlete is locked, as if the GUI had it open. Other tools that edit the athlete folder directly aren't seen by the session as they are by a command that opens the athlete itself:

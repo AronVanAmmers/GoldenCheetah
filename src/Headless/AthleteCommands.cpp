@@ -996,7 +996,7 @@ saveMeasures(AthleteSession &s, MeasuresGroup *g, QList<Measure> list)
         return CommandResult::failure(Status::Failed, error);
     }
     // weight feeds per kg metrics: recompute what changed
-    s.refresh();
+    s.refreshSettings();
     return CommandResult::success();
 }
 

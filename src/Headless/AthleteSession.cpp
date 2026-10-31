@@ -131,14 +131,33 @@ AthleteSession::open(const QString &home, const QString &name, const Options &op
     }
 
     session->waitForRefresh();
+
+    // what a command saves is all a refresh after it needs to look at
+    AthleteSession *s = session.get();
+    RideCache *cache = s->rideCache();
+    QObject::connect(cache, &RideCache::itemSaved, cache, [s](RideItem *item) { s->saved_.insert(item); });
+
     session->refreshedOnOpen_ = session->rideCache()->lastStaleCount();
     session->recomputed_ = session->refreshedOnOpen_ > 0 || session->rideCache()->lastTouchedCount() > 0;
     return session;
 }
 
+// an activity, as the ride cache adds and deletes them
+static QString
+activityKey(const RideItem *item)
+{
+    return item->path + "/" + item->fileName;
+}
+
 void
 AthleteSession::commandStarts(bool modifies)
 {
+    known_.clear();
+    if (RideCache *cache = rideCache())
+        for (const RideItem *item : cache->rides()) known_.insert(activityKey(item));
+    saved_.clear();
+
+    modifies_ = modifies;
     if (commands_ == 0) {
         readOnly_ = !modifies;
     } else {
@@ -166,8 +185,9 @@ AthleteSession::commandEnds()
     // up in memory
     for (RideItem *item : cache->rides()) item->close();
 
-    // other processes read the settings from disk
-    appsettings->syncQSettings();
+    // other processes read the settings from disk. Syncing looks at every
+    // settings file, on a slow folder too: only after a change
+    if (modifies_) appsettings->syncQSettings();
 }
 
 AthleteSession::~AthleteSession()
@@ -267,6 +287,37 @@ AthleteSession::refresh()
     RideCache *cache = rideCache();
     if (!cache) return;
     cache->refresh();
+    if (cache->lastStaleCount() > 0 || cache->lastTouchedCount() > 0) recomputed_ = true;
+    waitForRefresh();
+}
+
+void
+AthleteSession::refreshSettings()
+{
+    RideCache *cache = rideCache();
+    if (!cache) return;
+    cache->refresh(cache->rides(), false);
+    if (cache->lastStaleCount() > 0) recomputed_ = true;
+    waitForRefresh();
+}
+
+void
+AthleteSession::refreshChanged()
+{
+    RideCache *cache = rideCache();
+    if (!cache) return;
+
+    QVector<RideItem *> changed;
+    for (RideItem *item : cache->rides())
+        if (item->isstale || saved_.contains(item) || !known_.contains(activityKey(item))) changed << item;
+
+    // a later call in the same command looks at what changed after this one
+    saved_.clear();
+    known_.clear();
+    for (const RideItem *item : cache->rides()) known_.insert(activityKey(item));
+    if (changed.isEmpty()) return;
+
+    cache->refresh(changed);
     if (cache->lastStaleCount() > 0 || cache->lastTouchedCount() > 0) recomputed_ = true;
     waitForRefresh();
 }

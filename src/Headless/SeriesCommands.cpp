@@ -374,7 +374,7 @@ setSeries(CommandEnvironment &env, const CommandRequest &request)
     if (!wasOpen) item->close();
 
     // metrics, trends and CP estimates follow the file on disk
-    if (status == "updated") env.session->refresh();
+    if (status == "updated") env.session->refreshChanged();
 
     // points went with the ride when the activity was closed: counts from data
     CommandResult result = CommandResult::success(data);

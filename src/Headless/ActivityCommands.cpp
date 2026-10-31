@@ -384,7 +384,7 @@ setFields(CommandEnvironment &env, const CommandRequest &request)
         if (!wasOpen) item->close();
     }
 
-    if (updated) env.session->refresh();
+    if (updated) env.session->refreshChanged();
 
     QJsonObject data;
     data.insert("activities", report);

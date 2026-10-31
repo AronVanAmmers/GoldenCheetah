@@ -3751,6 +3751,26 @@ class TestSessions(Headless):
         self.assertIn("Session surge", names)
         self.assertIn(300, [r["cp"] for r in self.gcj("zones", "show")["data"]["power"]["ranges"]])
 
+    def test_ride_cache_is_written_when_it_closes(self):
+        # tens of megabytes on a large library: once, not after every change
+        self.keep(os.path.join(self.folder, "activities"))
+        self.keep(os.path.join(self.folder, "cache"))
+        db = os.path.join(self.folder, "cache", "rideDB.json")
+        self.start()
+        before = os.stat(db).st_mtime_ns
+        # another activity out of date: a refresh of every activity would
+        # recompute it and write the cache. A change looks at what it changed
+        other = [a["id"] for a in self.gcj("activity", "list")["data"]["activities"] if a["id"] != self.ride][0]
+        os.remove(os.path.join(self.folder, "cache", other + ".cpx"))
+        self.gcj("activity", "set", self.ride, "--set", "Notes=cached at stop")
+        self.gcj("interval", "add", self.ride, "--name", "Cached at stop", "--start", "60", "--stop", "120")
+        self.assertEqual(os.stat(db).st_mtime_ns, before)
+        self.gcj("session", "stop")
+        with open(db, encoding="utf-8-sig") as f:
+            text = f.read()
+        self.assertIn("cached at stop", text)
+        self.assertIn("Cached at stop", text)
+
     def test_paths_and_stdin_are_the_callers(self):
         self.keep(os.path.join(self.folder, "config"))
         self.start()

@@ -19,6 +19,7 @@
 #include "SessionServer.h"
 #include "AthleteLock.h"
 #include "HeadlessCommands.h"
+#include "Settings.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -435,6 +436,9 @@ SessionServer::run(const Options &options)
             if (!cwd.isEmpty()) QDir::setCurrent(cwd);
             result = CommandRunner::run(commandRegistry(), request, run);
             QDir::setCurrent(here);
+            // settings shared by all athletes, for commands run elsewhere
+            // (an athlete's are synced when its command ends)
+            if (command && command->spec.modifies && !athleteCommand) appsettings->syncQSettings();
             commands++;
             // idle is time without a command: asking how it is doesn't count
             idle.start();

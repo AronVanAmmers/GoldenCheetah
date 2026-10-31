@@ -257,7 +257,7 @@ class IntervalChange
                 item->close();
                 wasOpen = true;
                 item->isstale = true;
-                env.session->refresh();
+                env.session->refreshChanged();
             }
             ride = nullptr;
             failure = CommandResult::failure(status, named ? why : QString("%1: %2").arg(id, why));
@@ -332,7 +332,7 @@ class IntervalChange
             }
             if (!wasOpen) item->close();
             wasOpen = true; // closed, or the caller's to close
-            env.session->refresh();
+            env.session->refreshChanged();
             return true;
         }
 

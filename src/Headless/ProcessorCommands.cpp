@@ -396,7 +396,7 @@ runProcessor(CommandEnvironment &env, const CommandRequest &request)
     }
 
     // the trends and CP estimates only use what is on disk
-    if (saved) env.session->refresh();
+    if (saved) env.session->refreshChanged();
 
     QJsonObject data;
     data.insert("processor", dp->id());

@@ -120,6 +120,14 @@ class RideCache : public QObject
 
         // the background refresher !
         void refresh();
+
+        // the same for these activities only, when nothing else can have
+        // changed (a headless command after saving the ones it changed):
+        // the files of the others aren't checked, which on a slow folder is
+        // most of the time a refresh takes. Without checkFiles the files of
+        // these aren't checked either, only what a change of settings
+        // affects (see RideItem::checkStale)
+        void refresh(const QVector<RideItem*> &items, bool checkFiles = true);
         double progress() { return progress_; }
 
         struct OperationPreCheck {

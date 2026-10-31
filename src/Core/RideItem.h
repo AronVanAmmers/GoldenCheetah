@@ -224,7 +224,11 @@ class RideItem : public QObject
         // state
         void setDirty(bool);
         bool isDirty() { return isdirty; }
-        bool checkStale(); // check if we need to refresh
+        // check if we need to refresh. Without checkFiles the activity and
+        // its .cpx aren't looked at, only what a change of settings affects
+        // (zones, weight, versions): for a caller that knows the files
+        // haven't changed since they were last checked
+        bool checkStale(bool checkFiles = true);
         bool isStale() { return isstale; }
 
         // Activity linking methods

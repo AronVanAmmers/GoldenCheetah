@@ -270,7 +270,7 @@ class Importer
             }
 
             // new activities get their metrics like any other change
-            if (!options.dryRun) session.refresh();
+            if (!options.dryRun) session.refreshChanged();
 
             // report the sport as computed by the refresh
             ActivityLookup lookup(session.rideCache());
