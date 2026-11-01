@@ -24,6 +24,7 @@
 #include "MetricSelect.h"
 #include "DataFilter.h"
 #include <QGraphicsItem>
+#include "MocGraphicsItem.h"
 #include "MetadataDialog.h"
 #include "MetricOverrideDialog.h"
 #include "Colors.h"

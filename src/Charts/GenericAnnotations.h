@@ -22,6 +22,7 @@
 #include <QPointF>
 #include <QtCharts>
 #include <QGraphicsItem>
+#include "MocGraphicsItem.h"
 
 class GenericPlot;
 

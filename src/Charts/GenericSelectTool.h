@@ -32,6 +32,7 @@
 #include <string.h>
 #include <QtCharts>
 #include <QGraphicsItem>
+#include "MocGraphicsItem.h"
 #include <QFontMetrics>
 #include "Quadtree.h"
 
