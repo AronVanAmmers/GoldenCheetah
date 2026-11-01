@@ -168,9 +168,10 @@ public slots:
 signals:
     void editingFinished(bool accepted);
     void pathChanged(QString path);
-#ifdef Q_OS_MACOS
+    // declared on every platform: Qt 6.12's moc on macOS does not see
+    // Q_OS_MACOS, so a signal hidden by that macro is missing at link time.
+    // Only the macOS delegate connects to it.
     void browseRequested();
-#endif
 
 private:
     bool delegateMode = false;
