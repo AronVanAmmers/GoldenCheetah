@@ -295,7 +295,10 @@ SessionServer::run(const Options &options)
     // the athlete first: a session that can't open it is no session
     SessionKeeper keeper;
     CommandResult failure;
+    QElapsedTimer opening;
+    opening.start();
     AthleteSession *opened = keeper.open(options.home, options.athlete, options.session, failure);
+    const double openSeconds = opening.elapsed() / 1000.0;
     if (!opened) {
         notifyStarter(failure);
         say(QString("error: %1\n").arg(failure.error));
@@ -348,9 +351,14 @@ SessionServer::run(const Options &options)
     data.insert("pid", double(QCoreApplication::applicationPid()));
     data.insert("idle_minutes", options.idleMinutes);
     data.insert("refreshed", refreshed);
+    data.insert("open_seconds", qRound(openSeconds * 10) / 10.0);
     CommandResult started = CommandResult::success(data);
-    started.text = QString("session open for %1 (pid %2) until session stop%3\n")
-                   .arg(options.athlete).arg(QCoreApplication::applicationPid()).arg(until);
+    // how long opening took, and what of it was recomputing: a slow start
+    // is a busy or slow folder, or activities that were out of date
+    started.text = QString("session open for %1 (pid %2) until session stop%3\n"
+                           "opened in %4 s, %5 %6 recomputed\n")
+                   .arg(options.athlete).arg(QCoreApplication::applicationPid()).arg(until)
+                   .arg(openSeconds, 0, 'f', 1).arg(refreshed).arg(refreshed == 1 ? "activity" : "activities");
     notifyStarter(started);
     if (!options.quiet) say(started.text);
 

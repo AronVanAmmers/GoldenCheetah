@@ -31,6 +31,7 @@
 #include "SessionServer.h"
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -38,6 +39,7 @@
 #include <QTemporaryFile>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 
 #ifdef Q_OS_WIN
 #include <io.h>
@@ -281,6 +283,18 @@ writeResult(const GlobalOptions &g, const QString &command, CommandResult result
 }
 
 
+// talking to a session needs an application object, not the one the core
+// needs: starting that (widgets, the platform, fonts) took most of the time
+// of a command in a session. Made when a session is found, and dropped
+// before the core's is made (the session gone meanwhile)
+static std::unique_ptr<QCoreApplication> sessionClient;
+
+static void
+needSessionClient(int &argc, char **argv)
+{
+    if (!QCoreApplication::instance()) sessionClient.reset(new QCoreApplication(argc, argv));
+}
+
 int
 cliMain(int argc, char **argv)
 {
@@ -319,10 +333,9 @@ cliMain(int argc, char **argv)
 
     if (parsed.version) parsed.command = "version";
 
-    // the core needs Qt (widgets for charts and metadata) and settings
-    HeadlessApp::createApplication(argc, argv);
-
-    // where are the athletes?
+    // where are the athletes? The folder the GUI would open is found with
+    // the core's application object, which is made first then; given, it
+    // isn't made unless the command runs here (not in a session)
     QString home = g.home, athlete = g.athlete;
     if (!g.athleteDir.isEmpty()) {
         // (tab completion adds a trailing slash)
@@ -330,6 +343,7 @@ cliMain(int argc, char **argv)
         home = dir.absolutePath();
         athlete = dir.fileName();
     }
+    if (home.isEmpty() && qEnvironmentVariableIsEmpty("GC_HOME")) HeadlessApp::createApplication(argc, argv);
     if (home.isEmpty()) home = HeadlessApp::defaultHome();
     home = QDir::cleanPath(QFileInfo(home).absoluteFilePath());
 
@@ -363,6 +377,7 @@ cliMain(int argc, char **argv)
             return finish(writeResult(g, parsed.command, CommandResult::failure(Status::NotFound, error)));
 
         QString server = SessionClient::find(home, session.athlete);
+        if (!sessionArgs.value("foreground").toBool()) needSessionClient(argc, argv);
         if (parsed.command == "session.status") {
             if (server.isEmpty())
                 return finish(writeResult(g, parsed.command, CommandResult::failure(Status::NotFound,
@@ -406,6 +421,7 @@ cliMain(int argc, char **argv)
             target = CommandRunner::resolveAthlete(home, athlete, error);
         QString server = forward && (!athleteCommand || !target.isEmpty()) ? SessionClient::find(home, target) : QString();
         if (!server.isEmpty()) {
+            needSessionClient(argc, argv);
             CommandRequest request;
             request.command = parsed.command;
             request.args = parsed.args;
@@ -443,6 +459,10 @@ cliMain(int argc, char **argv)
             // gone (or going) meanwhile: run here, as without one
         }
     }
+
+    // the core needs Qt (widgets for charts and metadata) and settings
+    sessionClient.reset();
+    HeadlessApp::createApplication(argc, argv);
 
     HeadlessApp::Options appOptions;
     appOptions.python = !g.noPython;

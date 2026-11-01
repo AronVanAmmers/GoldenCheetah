@@ -530,6 +530,7 @@ gc-cli -a Joe session stop           # saved and unlocked when it returns
 
 Starting, checking and stopping:
 
+- `session start` says how long opening the athlete took and how many activities it recomputed (`open_seconds` and `refreshed` in JSON), as does the session's log. A slow start with nothing recomputed is a slow or busy folder.
 - `session start` when a session is already open for the athlete succeeds, says so (`already_open` in JSON) and leaves that session as it is. It doesn't read the files again: use `athlete refresh` for that.
 - `session status` says whether a session is open, since when and how many commands it ran. It exits with status 3 when none is open.
 - `session stop` returns once the athlete is saved and unlocked. When no session is open it succeeds too, and says so (`stopped: false`).
